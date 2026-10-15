@@ -53,6 +53,8 @@ describe('R-MAP-003 ground alpha cutout', () => {
 		expect(shadeGround({ ...base, tex: [1, 1, 1, 0.09] })).toBeNull();
 		expect(shadeGround({ ...base, tex: [1, 1, 1, 0.1] })).not.toBeNull();
 		expect(SHADERS.groundFrag).toContain('tex.a < 0.1');
+		// R-MAP-007: the tile colour multiplies the whole rgba sample (legacy Ground.fs).
+		expect(SHADERS.groundFrag).toContain('tex *= texture(uTileColor, vTileColorCoord.st);');
 	});
 });
 
@@ -80,9 +82,29 @@ describe('R-MAP-005 ground texture atlas', () => {
 		expect(groundAtlasLayout(5)).toEqual({ cols: 2, rows: 3, cell: 258, width: 1024, height: 1024 });
 		expect(groundAtlasLayout(16)).toMatchObject({ cols: 4, width: 2048 });
 	});
-	// R-MAP-005 pending: 1 px border made by drawing the texture stretched to 258 first.
-	it.fails('[R-MAP-005] composes each cell with the stretched 1 px border', () => {
-		expect(composeGroundAtlas()).toBeDefined();
+	it('width from round(√N) columns, height from ceil(√N) rows (legacy Ground.initTextures)', () => {
+		expect(groundAtlasLayout(2)).toMatchObject({ cols: 1, rows: 2, width: 512, height: 1024 });
+	});
+	it('composes each cell with the stretched 1 px border, then the 256 px image inside', () => {
+		const draws = [];
+		const canvas = (width, height) => ({
+			width,
+			height,
+			getContext: (_type, attrs) => ({
+				attrs,
+				clearRect: () => draws.push(['clear', width, height, attrs?.willReadFrequently]),
+				drawImage: (img, x, y, w, h) => draws.push([img.id, x, y, w, h])
+			})
+		});
+		const atlas = composeGroundAtlas([{ id: 'a' }, null, { id: 'c' }], canvas);
+		expect([atlas.width, atlas.height]).toEqual([1024, 1024]);
+		expect(draws).toEqual([
+			['clear', 1024, 1024, true],
+			['a', 0, 0, 258, 258],
+			['a', 1, 1, 256, 256],
+			['c', 0, 258, 258, 258],
+			['c', 1, 259, 256, 256]
+		]);
 	});
 });
 
@@ -126,6 +148,7 @@ describe('R-MAP-010 water opacity (FLAG fixed; legacy R-MAP-010 squared it to 0.
 	it('type 0 has effective alpha 0.8, applied once', () => {
 		expect(waterAlpha(0)).toBe(0.8);
 		expect(SHADERS.waterFrag).toContain('vec4(rgb, uOpacity)');
+		expect(SHADERS.waterFrag).toContain('if (uOpacity == 0.0)');
 		expect(SHADERS.waterFrag).not.toMatch(/uOpacity\s*\*\s*uOpacity|\*=\s*uOpacity/);
 	});
 	it('types 4 and 6 are opaque', () => {
@@ -192,8 +215,9 @@ describe('R-MAP-013 animated RSM respects the lightmap pref (FLAG fixed; legacy 
 		const out = shadeModel({ tex: [1, 1, 1, 1], modelAlpha: 1, normal: [0, -1, 0], light: { ...light, diffuse: [0.5, 0.5, 0.5], ambient: [0, 0, 0] }, lightmapPref: false });
 		expect(out[0]).toBeCloseTo(0.5);
 	});
-	it('the shader branches on uLightmapUse for N·L', () => {
-		expect(SHADERS.modelsFrag).toContain('uLightmapUse ? max(dot(vNormal, uLightDir), 0.0) : 1.0');
+	it('static and animated models share models.frag, which branches on uLightmapUse for N·L', () => {
+		expect(SHADERS.modelsFrag).toContain('(uLightmapUse ? vLightWeighting : 1.0) * uLightDiffuse + uLightAmbient');
+		expect(SHADERS.animatedModelsVert).toContain('vLightWeighting = (1.0 - uLightOpacity) + lightWeight * uLightOpacity;');
 	});
 });
 
@@ -217,8 +241,29 @@ describe('R-MAP-015 RSM normals', () => {
 		expect(normalMode(2)).toBe('smooth');
 		expect(normalMode(9)).toBe('none');
 	});
-	it.fails('[R-MAP-015] SMOOTH averages normals within each smoothGroup', () => {
-		expect(computeRsmNormals()).toBeDefined();
+	it('FLAT per face; SMOOTH averages the face normals of each smoothGroup per vertex', () => {
+		const node = {
+			vertices: [
+				[0, 0, 0],
+				[1, 0, 0],
+				[0, 0, 1],
+				[0, 1, 0]
+			],
+			faces: [
+				{ vertidx: [0, 1, 2], smoothGroup: 0 },
+				{ vertidx: [0, 3, 1], smoothGroup: 0 },
+				{ vertidx: [0, 2, 3], smoothGroup: 1 }
+			]
+		};
+		const flat = computeRsmNormals(node, 1);
+		expect(Array.from(flat.flat)).toEqual([0, -1, 0, 0, 0, -1, -1, 0, 0]);
+		expect(flat.smooth).toBeNull();
+		const smooth = computeRsmNormals(node, 2).smooth;
+		const s = Math.SQRT1_2;
+		// vertex 0 in group 0: faces 0 and 1 → normalize((0,-1,0) + (0,0,-1))
+		expect(Array.from(smooth[0].slice(0, 3))).toEqual([0, Math.fround(-s), Math.fround(-s)]);
+		expect(Array.from(smooth[1].slice(0, 3))).toEqual([-1, 0, 0]);
+		expect(smooth[2]).toBeUndefined();
 	});
 });
 

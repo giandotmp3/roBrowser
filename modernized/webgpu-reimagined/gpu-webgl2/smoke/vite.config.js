@@ -58,12 +58,17 @@ export const LEGACY_STUBS = Object.freeze([
 const STUB_PREFIX = '\0legacy-stub:';
 
 /**
- * Stubbed seams a page drives for real: legacy module → the smoke path prefix whose
- * importers get the real module (the effects page imports the real StrEffect; every
- * other importer, e.g. the entity path's attachments, keeps the stub).
+ * Stubbed seams a page drives for real: legacy module → the path prefixes whose
+ * importers get the real module (the effects page imports the real StrEffect, the world
+ * page the real ground, water and altitude, with the legacy GridSelector reading the real
+ * Altitude; every other importer, e.g. the entity path, keeps the stub).
  */
+const WORLD_PAGE = path.join(packageRoot, 'smoke', 'world');
 const REAL_FOR = Object.freeze({
-	'Renderer/Effects/StrEffect.js': path.join(packageRoot, 'smoke', 'effects')
+	'Renderer/Effects/StrEffect.js': [path.join(packageRoot, 'smoke', 'effects')],
+	'Renderer/Map/Ground.js': [WORLD_PAGE],
+	'Renderer/Map/Water.js': [WORLD_PAGE],
+	'Renderer/Map/Altitude.js': [WORLD_PAGE, path.join(legacy, 'Renderer', 'Map', 'GridSelector.js')]
 });
 
 /**
@@ -91,7 +96,7 @@ export default {
 					return null;
 				}
 				const rel = path.relative(legacy, resolved.id.split('?')[0]).split(path.sep).join('/');
-				if (REAL_FOR[rel] && importer.split('?')[0].startsWith(REAL_FOR[rel])) {
+				if (REAL_FOR[rel]?.some(prefix => importer.split('?')[0].startsWith(prefix))) {
 					return null;
 				}
 				return LEGACY_STUBS.includes(rel) ? `${STUB_PREFIX}${rel}` : null;

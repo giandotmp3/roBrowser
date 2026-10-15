@@ -1,23 +1,42 @@
 #version 300 es
-// R-MAP-012 static and (R-MAP-013 fixed) animated RSM shading share this file.
+// R-MAP-012 static and (R-MAP-013 fixed) animated RSM shading share this file; same
+// arithmetic, in the same order, as legacy Models.fs / AnimatedModels.fs. R-MAP-020
+// occluder fade (shared include). Textures are layers of a per-size-class array,
+// sampled in their top-left size/class part (vScale, exact powers of two).
 precision highp float;
-uniform sampler2D uDiffuse;
-uniform bool uLightmapUse;
-uniform vec3 uLightDir;
-uniform vec3 uDiffuseLight;
-uniform vec3 uAmbient;
-uniform vec3 uEnv;
-in vec2 vUv;
-in vec3 vNormal;
+
+in vec2 vTextureCoord;
+in float vLightWeighting;
 in float vAlpha;
+in vec3 vWorldPos;
+flat in float vLayer;
+flat in vec2 vScale;
 out vec4 fragColor;
 
-#include "fog.glsl"
+uniform highp sampler2DArray uDiffuse;
+uniform bool uLightmapUse;
+uniform vec3 uLightAmbient;
+uniform vec3 uLightDiffuse;
+uniform vec3 uLightEnv;
 
-void main() {
-	vec4 tex = texture(uDiffuse, vUv);
-	if (tex.a == 0.0) { discard; }
-	float nl = uLightmapUse ? max(dot(vNormal, uLightDir), 0.0) : 1.0;
-	vec3 c = tex.rgb * clamp(nl * uDiffuseLight + uAmbient, 0.0, 1.0) * clamp(uEnv, 0.0, 1.0);
-	fragColor = applyFog(vec4(c, tex.a * vAlpha));
+#include "fog.glsl"
+#include "occluderFade.glsl"
+
+void main(void) {
+	vec4 textureSample = texture(uDiffuse, vec3(vTextureCoord.st * vScale, vLayer));
+
+	if (textureSample.a == 0.0) {
+		discard;
+	}
+
+	if (!occluderFade(vWorldPos, textureSample.a)) {
+		discard;
+	}
+
+	vec3 color = ((uLightmapUse ? vLightWeighting : 1.0) * uLightDiffuse + uLightAmbient);
+	textureSample.rgb *= clamp(color, 0.0, 1.0);
+	textureSample.rgb *= clamp(uLightEnv, 0.0, 1.0);
+	textureSample.a *= vAlpha;
+
+	fragColor = applyFog(textureSample);
 }

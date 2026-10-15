@@ -8,9 +8,20 @@ import modelsFrag from './models.frag?raw';
 import strVert from './str.vert?raw';
 import strFrag from './str.frag?raw';
 import gr2Frag from './gr2.frag?raw';
+import occluderFade from './occluderFade.glsl?raw';
+import groundVert from './world/ground.vert?raw';
+import waterVert from './world/water.vert?raw';
+import modelsVert from './world/models.vert?raw';
+import animatedModelsVert from './world/animatedModels.vert?raw';
+import gridVert from './world/grid.vert?raw';
+import gridFrag from './world/grid.frag?raw';
 import fxaaFrag from './fxaa.frag?raw';
 
-const INCLUDES = Object.freeze({ 'fog.glsl': fog, 'effectTexture.glsl': effectTexture });
+const INCLUDES = Object.freeze({
+	'fog.glsl': fog,
+	'effectTexture.glsl': effectTexture,
+	'occluderFade.glsl': occluderFade
+});
 
 /**
  * Resolve `#include "name"` lines. GLSL 300 es has no includes, so the shared
@@ -41,9 +52,15 @@ export function withDefines(src, defines) {
 export const SHADERS = Object.freeze({
 	spriteVert,
 	spriteFrag: resolveIncludes(spriteFrag),
+	groundVert,
 	groundFrag: resolveIncludes(groundFrag),
+	waterVert,
 	waterFrag: resolveIncludes(waterFrag),
+	modelsVert,
+	animatedModelsVert,
 	modelsFrag: resolveIncludes(modelsFrag),
+	gridVert,
+	gridFrag: resolveIncludes(gridFrag),
 	strVert,
 	strFrag: resolveIncludes(strFrag),
 	gr2Frag,

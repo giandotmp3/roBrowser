@@ -1,6 +1,7 @@
 import { chain, deg2rad, rotationX, rotationY, rotationZ, scaling, translation } from '../math.js';
 import { clamp01 } from '../math.js';
-import { NotImplementedError } from '../errors.js';
+
+export { computeRsmNormals } from './animatedRsm.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
@@ -64,14 +65,6 @@ export function rsmInstanceMatrix(m) {
 /** R-MAP-015: shadeType selector; unknown values are treated as NONE. */
 export function normalMode(shadeType) {
 	return { 0: 'none', 1: 'flat', 2: 'smooth' }[shadeType] ?? 'none';
-}
-
-/**
- * R-MAP-015: generate normals (NONE constant, FLAT per face, SMOOTH averaged per smoothGroup).
- * @returns {never}
- */
-export function computeRsmNormals() {
-	throw new NotImplementedError('R-MAP-015 normal generation');
 }
 
 /**

@@ -23,4 +23,4 @@ export const ASSIGNED_RULES = Object.freeze([
 ]);
 
 /** Rules with at least one `it.fails` test awaiting implementation. */
-export const PENDING_RULES = Object.freeze(['R-MAP-005', 'R-MAP-015']);
+export const PENDING_RULES = Object.freeze([]);

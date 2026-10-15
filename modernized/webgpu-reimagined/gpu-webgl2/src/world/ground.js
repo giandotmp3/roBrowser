@@ -7,7 +7,8 @@ import {
 } from '../constants.js';
 import { clamp01 } from '../math.js';
 import { nextPot } from '../residency/imageKey.js';
-import { NotImplementedError } from '../errors.js';
+
+export { composeGroundAtlas } from './worldImages.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
@@ -41,8 +42,11 @@ export function shadeGround(f) {
 		return null;
 	}
 	let rgb = f.tex.slice(0, 3);
+	let alpha = f.tex[3];
 	if (f.tileUV[0] !== 0 || f.tileUV[1] !== 0) {
+		// R-MAP-007: the whole rgba sample is multiplied (legacy `textureSample *= tileColor`).
 		rgb = rgb.map((c, i) => c * f.tileColor[i]);
+		alpha *= f.tileColor[3] ?? 1;
 	}
 	const nl = Math.max(dot(f.normal, f.light.dir), 0);
 	rgb = rgb.map((c, i) => c * clamp01(nl * f.light.diffuse[i] + f.light.ambient[i]));
@@ -52,27 +56,25 @@ export function shadeGround(f) {
 		const shadow = f.lightmap[3];
 		rgb = rgb.map((c, i) => c * shadow + clamp01(lm[i]));
 	}
-	return [...rgb, f.tex[3]];
+	return [...rgb, alpha];
 }
 
 /**
- * R-MAP-005 layout: grid round(√N) wide of 258 px cells, POT atlas.
+ * R-MAP-005 layout (legacy Ground.initTextures and Loaders/Ground.js ATLAS_*): a grid
+ * round(√N) wide and ceil(√N) high of 258 px cells; each side is the next power of two.
+ * The pixels are composed by `composeGroundAtlas` (worldImages.js).
  * @param {number} n
  */
 export function groundAtlasLayout(n) {
 	const cols = Math.max(1, Math.round(Math.sqrt(n)));
-	const rows = Math.ceil(n / cols);
-	const size = nextPot(Math.max(cols, rows) * GROUND_ATLAS_CELL);
-	return { cols, rows, cell: GROUND_ATLAS_CELL, width: size, height: size };
-}
-
-/**
- * R-MAP-005 pixels: each 256 px texture is first drawn stretched to 258 to form
- * the 1 px border, then the 256 px image in the centre.
- * @returns {never}
- */
-export function composeGroundAtlas() {
-	throw new NotImplementedError('R-MAP-005 atlas composition (needs OffscreenCanvas port)');
+	const rows = Math.ceil(Math.sqrt(n));
+	return {
+		cols,
+		rows,
+		cell: GROUND_ATLAS_CELL,
+		width: nextPot(cols * GROUND_ATLAS_CELL),
+		height: nextPot(rows * GROUND_ATLAS_CELL)
+	};
 }
 
 /**

@@ -30,6 +30,8 @@ npm run smoke:parity:effects     # real legacy STR / 3D / 2D effect classes
 npm run smoke:parity:effects:aa  # the same with MSAA
 npm run smoke:parity:effects2    # real legacy mesh effect classes (cylinder, quadhorn, RSM, auras, spheres, ...)
 npm run smoke:parity:effects2:aa # the same with MSAA
+npm run smoke:parity:world       # real legacy map renderers vs WebGL2Backend fed the MAP_* payloads
+npm run smoke:parity:world:aa    # the same with MSAA
 ```
 
 You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script never runs `playwright install`.
@@ -356,3 +358,35 @@ rebuild changes the object count or whose texture fails (#56, fixed in render-re
 - **Legacy's texture wrap leak.** `Cylinder` sets WRAP_S = REPEAT on its texture object for good; a later draw of the
   same texture without `repeatTextureX` would still wrap. Each legacy cylinder loads its own texture, so this is not
   observable; the rebuild follows the record (`params.textureRepeat`).
+
+## World parity: ground, water, static and animated RSM, grid selector, occluder fade
+
+`world.html` / `world.js` (`--page=world`). The **real** legacy map renderers (`Renderer/Map/Ground`, `Water`,
+`Models`, `AnimatedModels`, `GridSelector`, `Altitude`, `OccluderFade`, unmodified, with the real `Utils/WebGL.js`,
+`Utils/Texture.js` and SpriteRenderer depth state) draw a synthetic map into canvas A in `MapRenderer.onRender`
+order. gpu-webgl2's `WebGL2Backend` receives the same payloads through `acceptMapMessage` (MAP_ALTITUDE, MAP_WORLD,
+MAP_GROUND, MAP_MODELS, 2× MAP_ANIMATED_MODEL, plus a stale-request message that must be dropped) and draws them
+with `drawFrame` (R-CTX-010 world steps) into canvas B.
+
+- **Payloads** (`world/assets.js`): a 16×16-tile GND (5 textures, 21 lightmaps, BGRA tile colours, holes) and its
+  GAT are built as binaries and parsed + compiled by the real `Loaders/Ground.js` / `Loaders/Altitude.js`. MAP_MODELS
+  is merged and sorted as `MapLoader.mergeMeshes`; the animated models come from the root suite's RSM fixtures
+  (`tests/renderer/support/rsmEffectScene.js`: slerped rotation, position and scale keys, smooth groups, mat3,
+  `is_only`). Images are PNG data URLs (legacy revokes blob URLs).
+- **Frames** (`world/scene.js`): every tick from 600 to 2490 ms renders on both sides (animated matrices and the
+  occluder strength are stateful); 12 are captured: fog off/on, smoothlight 0/1/2, lightmap off, animated frames,
+  captcha grid range, occluder dither (strength 0, 0.4, 1) and alpha mode, plus a frame after a real
+  `WEBGL_lose_context` lose + restore (the backend rebuilds the map from the retained payloads, R-CTX-007).
+- **Declared divergences, compensated:** R-MAP-010 (legacy water alpha 0.8², fed to gpu-webgl2 as a `world`/`water`
+  record with alpha `fround(0.8·0.8)`; a check renders the fixed 0.8 and asserts only water pixels change, each by
+  the predicted 0.8·W + 0.2·D); R-MAP-013 (the lightmap-off frame runs legacy with `light.opacity` 0, which makes
+  its animated weighting the fix's full diffuse; ground and static models never read the opacity; a check shows
+  the uncompensated difference is confined to animated-model pixels).
+
+**Results (SwiftShader, 640×480):** 0 px on all 13 frames, with and without MSAA. Draw calls: legacy 15 / 39
+(captcha grid) / 27–39 (occluder) vs gpu-webgl2 12 / 12 / 21–30 (static models: one draw per same-size-class
+texture run; grid cells: one draw).
+
+**Legacy behaviour worth knowing, found here:** `SpriteRenderer.runWithDepth` is a no-op until the 3D context has
+been bound once (entity pass); before that, legacy water writes depth and the occluder query pass depth-tests.
+`?skip=ground,grid,models,animated,water` leaves passes out on both sides (diagnosis).

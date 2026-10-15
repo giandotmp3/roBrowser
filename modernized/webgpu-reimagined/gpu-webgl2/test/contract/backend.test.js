@@ -20,9 +20,12 @@ describe('gpu-webgl2 backend contract (same shape as gpu-webgpu)', () => {
 		expect(order).toHaveLength(25);
 	});
 
-	it('map upload (C-17) and capture (C-20) are stubs awaiting implementation', () => {
+	it('map upload (C-17) is accepted (async, stale requests dropped); capture (C-20) is a stub', async () => {
 		const b = make();
-		expect(() => b.acceptMapMessage({ type: 'MAP_GROUND', payload: {} })).toThrow(NotImplementedError);
+		b.beginMap(7);
+		await expect(b.acceptMapMessage({ type: 'MAP_UNKNOWN', payload: {} })).resolves.toBeUndefined();
+		await expect(b.acceptMapMessage({ type: 'MAP_GROUND', payload: {}, request: 6 })).resolves.toBeUndefined();
+		expect(b.world.ground).toBeNull();
 		expect(() => b.capture()).toThrow(NotImplementedError);
 	});
 });
