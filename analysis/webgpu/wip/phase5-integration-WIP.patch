@@ -1,0 +1,746 @@
+diff --git a/src/Renderer/Effects/Cylinder.js b/src/Renderer/Effects/Cylinder.js
+index 3bbaf7f..736a982 100644
+--- a/src/Renderer/Effects/Cylinder.js
++++ b/src/Renderer/Effects/Cylinder.js
+@@ -563,11 +563,21 @@ class Cylinder {
+ 			tick
+ 		);
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawCylinderRecord(gl, record, this.buffer);
++		if (!Cylinder.observeOnly) {
++			drawCylinderRecord(gl, record, this.buffer);
++		}
+ 
+ 		this.needCleanUp = this.endTick < tick;
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every cylinder draw as a backend-neutral record. Each observed draw gets
+ 	 * a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/FlatColorTile.js b/src/Renderer/Effects/FlatColorTile.js
+index 501f160..65bc13f 100644
+--- a/src/Renderer/Effects/FlatColorTile.js
++++ b/src/Renderer/Effects/FlatColorTile.js
+@@ -88,6 +88,9 @@ function addRecordSink(sink) {
+ }
+ 
+ createFlatColorTile.addRecordSink = addRecordSink;
++// Observe only (opt-in render backend, Renderer/RenderBackend.js): records still reach the
++// sinks, the legacy GL draw is skipped. Shared by every generated class; false in production.
++createFlatColorTile.observeOnly = false;
+ 
+ export default createFlatColorTile;
+ 
+@@ -144,7 +147,9 @@ function createFlatColorTile(name, spec) {
+ 			record.position = observed ? Array.from(this.position) : this.position;
+ 			record.color = [spec.r, spec.g, spec.b, spec.a];
+ 			_recordSinks.forEach(sink => sink(record));
+-			drawFlatColorTileRecord(gl, record, _program, _buffer);
++			if (!createFlatColorTile.observeOnly) {
++				drawFlatColorTileRecord(gl, record, _program, _buffer);
++			}
+ 		}
+ 
+ 		static init(gl) {
+diff --git a/src/Renderer/Effects/GroundAura.js b/src/Renderer/Effects/GroundAura.js
+index 6ed99a7..c9bc0ec 100644
+--- a/src/Renderer/Effects/GroundAura.js
++++ b/src/Renderer/Effects/GroundAura.js
+@@ -326,11 +326,21 @@ class GroundAura {
+ 					observed
+ 				);
+ 				_recordSinks.forEach(sink => sink(record));
+-				drawGroundAuraRecord(gl, record);
++				if (!GroundAura.observeOnly) {
++					drawGroundAuraRecord(gl, record);
++				}
+ 			}
+ 		});
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every GroundAura ring draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/LPEffect.js b/src/Renderer/Effects/LPEffect.js
+index 6ce48d6..42b4886 100644
+--- a/src/Renderer/Effects/LPEffect.js
++++ b/src/Renderer/Effects/LPEffect.js
+@@ -88,9 +88,19 @@ class LPEffect extends FlatTexture('data/texture/effect/aaa copy.bmp') {
+ 		record.params.size = 0.8 + 0.05 * sizeMult;
+ 		record.params.textureSize = this.constructor.textureSize;
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawRecord(gl, record, this.constructor._program, this.constructor._buffer);
++		if (!LPEffect.observeOnly) {
++			drawRecord(gl, record, this.constructor._program, this.constructor._buffer);
++		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every LPEffect draw as a backend-neutral record. Each observed draw gets a
+ 	 * fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/Level99Bubble.js b/src/Renderer/Effects/Level99Bubble.js
+index cda35c6..e0691de 100644
+--- a/src/Renderer/Effects/Level99Bubble.js
++++ b/src/Renderer/Effects/Level99Bubble.js
+@@ -544,13 +544,23 @@ class Level99Bubble {
+ 							observed
+ 						);
+ 						_recordSinks.forEach(sink => sink(record));
+-						drawLevel99BubbleRecord(gl, record);
++						if (!Level99Bubble.observeOnly) {
++							drawLevel99BubbleRecord(gl, record);
++						}
+ 					}
+ 				});
+ 			}
+ 		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every Level99Bubble anchor pass as a backend-neutral record. Each observed
+ 	 * draw gets a fresh record object, so sinks may keep it. The debug spawn volume
+diff --git a/src/Renderer/Effects/LockOnTarget.js b/src/Renderer/Effects/LockOnTarget.js
+index 43e17ad..a2499b2 100644
+--- a/src/Renderer/Effects/LockOnTarget.js
++++ b/src/Renderer/Effects/LockOnTarget.js
+@@ -196,11 +196,21 @@ class LockOnTarget {
+ 		const observed = _recordSinks.size > 0;
+ 		const record = fillLockOnDrawRecord(observed ? createLockOnDrawRecord() : _scratchRecord, this, tick, observed);
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawLockOnRecord(gl, record);
++		if (!LockOnTarget.observeOnly) {
++			drawLockOnRecord(gl, record);
++		}
+ 
+ 		this.needCleanUp = this.endTick < tick;
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every LockOnTarget draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/MagicRing.js b/src/Renderer/Effects/MagicRing.js
+index a5f6314..976a0ad 100644
+--- a/src/Renderer/Effects/MagicRing.js
++++ b/src/Renderer/Effects/MagicRing.js
+@@ -238,7 +238,9 @@ class MagicRing {
+ 		const observed = _recordSinks.size > 0;
+ 		const record = fillMagicRingDrawRecord(observed ? createMagicRingDrawRecord() : _scratchRecord, this, observed);
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawMagicRingRecord(gl, record);
++		if (!MagicRing.observeOnly) {
++			drawMagicRingRecord(gl, record);
++		}
+ 
+ 		this.needCleanUp = this.endTick < tick;
+ 		if (!this.target.cast.display) {
+@@ -246,6 +248,14 @@ class MagicRing {
+ 		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every MagicRing draw as a backend-neutral record. Each observed draw gets a
+ 	 * fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/MagicTarget.js b/src/Renderer/Effects/MagicTarget.js
+index 66464d5..68ff4a0 100644
+--- a/src/Renderer/Effects/MagicTarget.js
++++ b/src/Renderer/Effects/MagicTarget.js
+@@ -325,11 +325,21 @@ class MagicTarget {
+ 			observed
+ 		);
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawMagicTargetRecord(gl, record, this.buffer);
++		if (!MagicTarget.observeOnly) {
++			drawMagicTargetRecord(gl, record, this.buffer);
++		}
+ 
+ 		this.needCleanUp = this.endTick < tick;
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every MagicTarget draw as a backend-neutral record. Each observed draw gets
+ 	 * a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/PropertyGround.js b/src/Renderer/Effects/PropertyGround.js
+index 8db0a15..27b3bb8 100644
+--- a/src/Renderer/Effects/PropertyGround.js
++++ b/src/Renderer/Effects/PropertyGround.js
+@@ -261,9 +261,19 @@ class PropertyGround {
+ 			observed
+ 		);
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawPropertyGroundRecord(gl, record);
++		if (!PropertyGround.observeOnly) {
++			drawPropertyGroundRecord(gl, record);
++		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every PropertyGround draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/QuadHorn.js b/src/Renderer/Effects/QuadHorn.js
+index 2cf5923..087691d 100644
+--- a/src/Renderer/Effects/QuadHorn.js
++++ b/src/Renderer/Effects/QuadHorn.js
+@@ -424,9 +424,19 @@ class QuadHorn {
+ 			observed
+ 		);
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawQuadHornRecord(gl, record, this.buffer, this.texCoordBuffer);
++		if (!QuadHorn.observeOnly) {
++			drawQuadHornRecord(gl, record, this.buffer, this.texCoordBuffer);
++		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every QuadHorn draw as a backend-neutral record. Each observed draw gets
+ 	 * a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/RainWeather.js b/src/Renderer/Effects/RainWeather.js
+index 5593e27..3b29221 100644
+--- a/src/Renderer/Effects/RainWeather.js
++++ b/src/Renderer/Effects/RainWeather.js
+@@ -568,6 +568,14 @@ class RainWeatherEffect {
+ 		this.afterRender(gl);
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every puddle draw as a backend-neutral record. Each observed draw gets a
+ 	 * fresh record object, so sinks may keep it. Drops, splashes and the grey/flash
+@@ -1203,7 +1211,9 @@ class RainWeatherEffect {
+ 						fogUse
+ 					);
+ 					_recordSinks.forEach(sink => sink(record));
+-					drawPuddleRecord(gl, uniform, record);
++					if (!RainWeatherEffect.observeOnly) {
++						drawPuddleRecord(gl, uniform, record);
++					}
+ 				}
+ 
+ 				gl.disableVertexAttribArray(attribute.aPosition);
+diff --git a/src/Renderer/Effects/RsmEffect.js b/src/Renderer/Effects/RsmEffect.js
+index 75a1c69..0e159ba 100644
+--- a/src/Renderer/Effects/RsmEffect.js
++++ b/src/Renderer/Effects/RsmEffect.js
+@@ -981,11 +981,21 @@ class RsmEffect {
+ 			if (this.objects[i] && this.objects[i].complete) {
+ 				const record = fillRsmDrawRecord(observed ? createRsmDrawRecord() : _scratchRecord, this, i, observed);
+ 				_recordSinks.forEach(sink => sink(record));
+-				drawRsmRecord(gl, record);
++				if (!RsmEffect.observeOnly) {
++					drawRsmRecord(gl, record);
++				}
+ 			}
+ 		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every RsmEffect object draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/SpiderWeb.js b/src/Renderer/Effects/SpiderWeb.js
+index 2230c05..d287b32 100644
+--- a/src/Renderer/Effects/SpiderWeb.js
++++ b/src/Renderer/Effects/SpiderWeb.js
+@@ -88,9 +88,19 @@ class SpiderWeb extends FlatTexture('data/texture/effect/spiderweb.tga', 128) {
+ 		record.params.size = 1.5 + 0.05 * sizeMult;
+ 		record.params.textureSize = this.constructor.textureSize;
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawRecord(gl, record, this.constructor._program, this.constructor._buffer);
++		if (!SpiderWeb.observeOnly) {
++			drawRecord(gl, record, this.constructor._program, this.constructor._buffer);
++		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every SpiderWeb draw as a backend-neutral record. Each observed draw gets a
+ 	 * fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/SpiritSphere.js b/src/Renderer/Effects/SpiritSphere.js
+index 380cfb2..11113b4 100644
+--- a/src/Renderer/Effects/SpiritSphere.js
++++ b/src/Renderer/Effects/SpiritSphere.js
+@@ -351,7 +351,9 @@ class SpiritSphere {
+ 						observed
+ 					);
+ 					_recordSinks.forEach(sink => sink(record));
+-					drawSphereRecord(gl, record);
++					if (!SpiritSphere.observeOnly) {
++						drawSphereRecord(gl, record);
++					}
+ 				}
+ 			}
+ 		});
+@@ -361,6 +363,14 @@ class SpiritSphere {
+ 		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every sphere draw as a backend-neutral record. Each observed draw gets a
+ 	 * fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/StrEffect.js b/src/Renderer/Effects/StrEffect.js
+index 5ef1094..e85131d 100644
+--- a/src/Renderer/Effects/StrEffect.js
++++ b/src/Renderer/Effects/StrEffect.js
+@@ -551,13 +551,25 @@ class StrEffect {
+ 		if (_recordSinks.size) {
+ 			const record = fillStrDrawRecord(createStrDrawRecord(), this, material, animat, true);
+ 			_recordSinks.forEach(sink => sink(record));
+-			drawStrRecord(gl, record);
++			if (!StrEffect.observeOnly) {
++				drawStrRecord(gl, record);
++			}
+ 			return;
+ 		}
+ 
+-		drawStrRecord(gl, fillStrDrawRecord(_scratchRecord, this, material, animat, false));
++		if (!StrEffect.observeOnly) {
++			drawStrRecord(gl, fillStrDrawRecord(_scratchRecord, this, material, animat, false));
++		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every STR layer draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/SwirlingAura.js b/src/Renderer/Effects/SwirlingAura.js
+index 40f4d8a..d331346 100644
+--- a/src/Renderer/Effects/SwirlingAura.js
++++ b/src/Renderer/Effects/SwirlingAura.js
+@@ -410,11 +410,21 @@ class SwirlingAura {
+ 					observed
+ 				);
+ 				_recordSinks.forEach(sink => sink(record));
+-				drawSwirlingAuraRecord(gl, record, this.buffers[ec], this.indexBuffer);
++				if (!SwirlingAura.observeOnly) {
++					drawSwirlingAuraRecord(gl, record, this.buffers[ec], this.indexBuffer);
++				}
+ 			}
+ 		});
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every SwirlingAura band draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/ThreeDEffect.js b/src/Renderer/Effects/ThreeDEffect.js
+index 5d91750..667497c 100644
+--- a/src/Renderer/Effects/ThreeDEffect.js
++++ b/src/Renderer/Effects/ThreeDEffect.js
+@@ -168,8 +168,10 @@ const renderSprite = () => {
+  *
+  * @param {Set<function>} sinks record observers
+  * @param {object} record 2D/3D effect draw record
++ * @param {boolean} [observeOnly] skip the SpriteRenderer draw (opt-in render backend); the
++ *   SpriteRenderer state is still set, as later plain 3D records read it
+  */
+-export function drawSpriteEffectRecord(sinks, record) {
++export function drawSpriteEffectRecord(sinks, record, observeOnly = false) {
+ 	const sr = SpriteRenderer;
+ 	const params = record.params;
+ 
+@@ -188,7 +190,9 @@ export function drawSpriteEffectRecord(sinks, record) {
+ 	sr.angle = params.angle;
+ 	sr.zIndex = params.zIndex;
+ 
+-	sr.runWithDepth(record.depthTest, record.depthWrite, !record.depthCorrection, renderSprite);
++	if (!observeOnly) {
++		sr.runWithDepth(record.depthTest, record.depthWrite, !record.depthCorrection, renderSprite);
++	}
+ }
+ 
+ /**
+@@ -951,7 +955,7 @@ class ThreeDEffect {
+ 				params.size[1] = height;
+ 
+ 				// default true, false, false
+-				drawSpriteEffectRecord(_recordSinks, record);
++				drawSpriteEffectRecord(_recordSinks, record, ThreeDEffect.observeOnly);
+ 
+ 				++i;
+ 			} while (i < layercount);
+@@ -970,7 +974,7 @@ class ThreeDEffect {
+ 			params.paletteSize.set(SpriteRenderer.image.size);
+ 
+ 			// default true, false, false
+-			drawSpriteEffectRecord(_recordSinks, record);
++			drawSpriteEffectRecord(_recordSinks, record, ThreeDEffect.observeOnly);
+ 		}
+ 
+ 		this.needCleanUp = this.endTick < tick;
+@@ -985,6 +989,14 @@ class ThreeDEffect {
+ 		this.ready = false;
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every 3D effect draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/Tiles.js b/src/Renderer/Effects/Tiles.js
+index 419ad0f..5c5ca23 100644
+--- a/src/Renderer/Effects/Tiles.js
++++ b/src/Renderer/Effects/Tiles.js
+@@ -54,6 +54,11 @@ let _fogUse = false;
+  */
+ const _recordSinks = new Set();
+ 
++/**
++ * @var {boolean} observe only: skip the legacy GL draw of observed records (setObserveOnly)
++ */
++let _observeOnly = false;
++
+ /**
+  * Create an empty tile draw record (backend-neutral EffectDraw shape, see
+  * modernized/webgpu-reimagined/render-records).
+@@ -165,6 +170,17 @@ export function addRecordSink(sink) {
+ 	return () => _recordSinks.delete(sink);
+ }
+ 
++/**
++ * Observe only (opt-in render backend, Renderer/RenderBackend.js): FlatTexture and
++ * HoveringTexture draws still build their records for the sinks, but the legacy GL draw is
++ * skipped. False in production.
++ *
++ * @param {boolean} flag
++ */
++export function setObserveOnly(flag) {
++	_observeOnly = Boolean(flag);
++}
++
+ export const FlatTexture = (textureFilename, size = 64) =>
+ 	class {
+ 		static get renderBeforeEntities() {
+@@ -280,7 +296,9 @@ export const FlatTexture = (textureFilename, size = 64) =>
+ 				observed
+ 			);
+ 			_recordSinks.forEach(sink => sink(record));
+-			drawFlatTileRecord(gl, record, this.constructor._program, this.constructor._buffer);
++			if (!_observeOnly) {
++				drawFlatTileRecord(gl, record, this.constructor._program, this.constructor._buffer);
++			}
+ 		}
+ 	};
+ 
+@@ -309,6 +327,8 @@ export const HoveringTexture = (textureFilename, effectSize = 1, alpha = 1) =>
+ 			record.color[3] = this.alpha;
+ 			record.params.size = this.effectSize;
+ 			_recordSinks.forEach(sink => sink(record));
+-			drawHoverTileRecord(gl, record, this.constructor._program, this.constructor._buffer);
++			if (!_observeOnly) {
++				drawHoverTileRecord(gl, record, this.constructor._program, this.constructor._buffer);
++			}
+ 		}
+ 	};
+diff --git a/src/Renderer/Effects/TwoDEffect.js b/src/Renderer/Effects/TwoDEffect.js
+index d6bd06e..e5da809 100644
+--- a/src/Renderer/Effects/TwoDEffect.js
++++ b/src/Renderer/Effects/TwoDEffect.js
+@@ -687,7 +687,7 @@ class TwoDEffect {
+ 		}
+ 
+ 		// default true, true, false
+-		drawSpriteEffectRecord(_recordSinks, record);
++		drawSpriteEffectRecord(_recordSinks, record, TwoDEffect.observeOnly);
+ 
+ 		if (this.ownerEntity) {
+ 			if (this.endTick < tick) {
+@@ -713,6 +713,14 @@ class TwoDEffect {
+ 		this.ready = false;
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every 2D effect draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/WarlockSphere.js b/src/Renderer/Effects/WarlockSphere.js
+index 426afdb..836b0c9 100644
+--- a/src/Renderer/Effects/WarlockSphere.js
++++ b/src/Renderer/Effects/WarlockSphere.js
+@@ -364,7 +364,9 @@ class WarlockSphere {
+ 						observed
+ 					);
+ 					_recordSinks.forEach(sink => sink(record));
+-					drawSphereRecord(gl, record);
++					if (!WarlockSphere.observeOnly) {
++						drawSphereRecord(gl, record);
++					}
+ 				}
+ 			}
+ 		});
+@@ -374,6 +376,14 @@ class WarlockSphere {
+ 		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every sphere draw as a backend-neutral record. Each observed draw gets a
+ 	 * fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/Effects/WaterfallEffect.js b/src/Renderer/Effects/WaterfallEffect.js
+index 79579b3..2e31cda 100644
+--- a/src/Renderer/Effects/WaterfallEffect.js
++++ b/src/Renderer/Effects/WaterfallEffect.js
+@@ -422,9 +422,19 @@ class WaterfallEffect {
+ 		if (observed) {
+ 			records.forEach(record => _recordSinks.forEach(sink => sink(record)));
+ 		}
+-		drawWaterfallRecords(gl, records, this);
++		if (!WaterfallEffect.observeOnly) {
++			drawWaterfallRecords(gl, records, this);
++		}
+ 	}
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): records are still
++	 * built and handed to the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every waterfall draw (curtain quads and the spray) as a backend-neutral
+ 	 * record. Each observed draw gets a fresh record object, so sinks may keep it.
+diff --git a/src/Renderer/GR2/GR2ModelRenderer.js b/src/Renderer/GR2/GR2ModelRenderer.js
+index e7977b1..300f1fd 100644
+--- a/src/Renderer/GR2/GR2ModelRenderer.js
++++ b/src/Renderer/GR2/GR2ModelRenderer.js
+@@ -652,6 +652,9 @@ function normalize3(v) {
+  * production path stays allocation-free.
+  */
+ const _recordSinks = [];
++// Observe only (opt-in render backend, Renderer/RenderBackend.js): records still reach the
++// sinks, the legacy GL draw is skipped. False in production.
++let _observeOnly = false;
+ const NORMAL_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+ const _scratchRecord = {
+ 	kind: 'world',
+@@ -959,7 +962,9 @@ function render(gl, modelView, projection, normalMat, fog, light, tick) {
+ 			for (let k = 0; k < _recordSinks.length; k++) {
+ 				_recordSinks[k](record);
+ 			}
+-			drawGr2Record(gl, uniform, record, type, inst);
++			if (!_observeOnly) {
++				drawGr2Record(gl, uniform, record, type, inst);
++			}
+ 		}
+ 	});
+ 	gl.bindVertexArray(null);
+@@ -1262,6 +1267,13 @@ export default {
+ 	clear: clear,
+ 	// Observe the backend-neutral record of every GR2 instance draw (returns unsubscribe).
+ 	addRecordSink: addRecordSink,
++	// Observe only: skip the GL draw of observed instances (opt-in render backend).
++	get observeOnly() {
++		return _observeOnly;
++	},
++	set observeOnly(v) {
++		_observeOnly = Boolean(v);
++	},
+ 	FADE: FADE,
+ 	// Debug: highlight each instance's anchor cell (see _debugCell). Toggle from the dev console.
+ 	get debugCell() {
+diff --git a/src/Renderer/Map/AnimatedModels.js b/src/Renderer/Map/AnimatedModels.js
+index 170d5a5..a47f698 100644
+--- a/src/Renderer/Map/AnimatedModels.js
++++ b/src/Renderer/Map/AnimatedModels.js
+@@ -812,6 +812,9 @@ function uploadMatrices(gl, model, matrices) {
+  * the production path stays allocation-free.
+  */
+ const _recordSinks = [];
++// Observe only (opt-in render backend, Renderer/RenderBackend.js): records still reach the
++// sinks (matrices still computed and uploaded), the legacy GL draws are skipped. False in production.
++let _observeOnly = false;
+ const NORMAL_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+ const _scratchRecord = {
+ 	kind: 'world',
+@@ -969,8 +972,10 @@ function render(gl, modelView, projection, normalMat, fog, light, tick) {
+ 		}
+ 	}
+ 
+-	OccluderFade.renderOpaque(gl, _program.uniform, () => drawModels(gl));
+-	OccluderFade.renderQuery(gl, _program.uniform, () => drawModels(gl), OccluderFade.QUERY.ANIMATED);
++	if (!_observeOnly) {
++		OccluderFade.renderOpaque(gl, _program.uniform, () => drawModels(gl));
++		OccluderFade.renderQuery(gl, _program.uniform, () => drawModels(gl), OccluderFade.QUERY.ANIMATED);
++	}
+ 	// Disable attributes
+ 	gl.bindVertexArray(null);
+ }
+@@ -1007,5 +1012,12 @@ export default {
+ 	renderFaded: renderFaded,
+ 	hasAnimatedModels: hasAnimatedModels,
+ 	// Observe the per-frame node matrices of every animated model (returns unsubscribe).
+-	addRecordSink: addRecordSink
++	addRecordSink: addRecordSink,
++	// Observe only: skip the GL draws of the observed models (opt-in render backend).
++	get observeOnly() {
++		return _observeOnly;
++	},
++	set observeOnly(v) {
++		_observeOnly = Boolean(v);
++	}
+ };
+diff --git a/src/Renderer/SpriteRenderer.js b/src/Renderer/SpriteRenderer.js
+index 621f041..9891f89 100644
+--- a/src/Renderer/SpriteRenderer.js
++++ b/src/Renderer/SpriteRenderer.js
+@@ -184,7 +184,9 @@ function RenderCanvas3D(isBlendModeOne) {
+ 	if (_recordSinks.size) {
+ 		const record = fillSpriteDrawRecord(createSpriteDrawRecord(), this, isBlendModeOne);
+ 		_recordSinks.forEach(sink => sink(record));
+-		drawSpriteRecord3D(record);
++		if (!SpriteRenderer.observeOnly) {
++			drawSpriteRecord3D(record);
++		}
+ 		return;
+ 	}
+ 
+@@ -573,6 +575,14 @@ class SpriteRenderer {
+ 	 */
+ 	static ySize = 5;
+ 
++	/**
++	 * Observe only (opt-in render backend, Renderer/RenderBackend.js): 3D draws still build
++	 * their record for the sinks, but the legacy GL draw is skipped. False in production.
++	 *
++	 * @type {boolean}
++	 */
++	static observeOnly = false;
++
+ 	/**
+ 	 * Observe every 3D sprite draw as a backend-neutral record. Each observed draw
+ 	 * gets a fresh record object, so sinks may keep it.
