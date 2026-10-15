@@ -1,5 +1,3 @@
-import { notImplemented } from '../util/errors.js';
-
 export const HEAD_ATTACHMENT_LIFT_PX = 100;
 
 /**
@@ -155,14 +153,4 @@ export function strAttachmentTransform({ xSize, ySize, xOffset = 0, yOffset = 0 
 		verticalBase: 0,
 		offset: [xOffset * 0.2 * 35 * scale, yOffset * 0.2 * 35 * scale]
 	};
-}
-
-/**
- * R-SPR-032 persistent hat effect: reuse last valid frame on blank keys,
- * restart when all layers are blank. Pending.
- * @param {Object} _state
- * @param {number} _keyIndex
- */
-export function persistentHatFrame(_state, _keyIndex) {
-	return notImplemented('R-SPR-032', 'persistent hat effect frame reuse');
 }

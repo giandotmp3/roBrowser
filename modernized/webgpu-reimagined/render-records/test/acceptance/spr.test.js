@@ -35,7 +35,6 @@ import {
 	liftedBodyPosition,
 	lookTo,
 	offsetToWorld,
-	persistentHatFrame,
 	pixelsToWorld,
 	planPlayerLayers,
 	remapMagentaIndices,
@@ -58,7 +57,8 @@ import {
 	visualDirection,
 	walkFrame,
 	xSizeFor,
-	zIndexClipBias
+	zIndexClipBias,
+	StrPlayer
 } from '../../src/index.js';
 
 const bodyLayer = index => ({
@@ -435,8 +435,19 @@ describe('C-08 entity sprites', () => {
 		expect(strAttachmentTransform({ xSize: 10, ySize: 10 }).scale).toBe(2);
 	});
 
-	it.fails('R-SPR-032 [pending]: persistent hat effect reuses the last valid frame on blank keys', () => {
-		expect(persistentHatFrame({ lastValid: { aniframe: 2 } }, 5)).toMatchObject({ aniframe: 2 });
+	it('R-SPR-032: persistent hat effect reuses the last valid frame on blank keys (StrPlayer)', () => {
+		const key = o => ({ frame: 0, type: 0, pos: [320, 320], uv: [0, 0, 0, 0, 0, 0, 0, 0], xy: [-1, 1, -1, 1, -1, -1, 1, 1], aniframe: 0, anitype: 0, delay: 0, angle: 0, color: [1, 1, 1, 1], srcalpha: 5, destalpha: 2, ...o });
+		const delta = o => key({ type: 1, pos: [0, 0], xy: [0, 0, 0, 0, 0, 0, 0, 0], color: [0, 0, 0, 0], anitype: 1, ...o });
+		// layer a is blank after key 3; layer c keeps playing until key 6
+		const file = { fps: 10, maxKey: 10, layernum: 2, layers: [
+			{ texcnt: 1, materials: ['a'], animations: [key({}), delta({}), key({ frame: 3 })] },
+			{ texcnt: 1, materials: ['c'], animations: [key({}), delta({}), key({ frame: 6 })] }
+		] };
+		const entity = { position: [0, 0, 0], xSize: 5, ySize: 5 };
+		const player = new StrPlayer({ str: file, startTick: 0, persistent: true, attachment: { entity } });
+		expect(player.frame(100).map(r => r.texture)).toEqual(['a', 'c']);
+		// key 4: layer a is blank, so its last valid frame is reused
+		expect(player.frame(400).map(r => r.texture)).toEqual(['a', 'c']);
 	});
 
 	it('R-SPR-033: dropped item falls 25 cells/s and stops at the ground', () => {
