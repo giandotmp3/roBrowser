@@ -55,3 +55,7 @@ export * from './effects/PokJukWeather.js';
 export * from './effects/TargetMarkerEffect.js';
 export * from './effects/RainWeather.js';
 export * from './effects/WaterfallEffect.js';
+export * from './gr2/gr2World.js';
+export * from './gr2/gr2Actor.js';
+export { Gr2ModelSource } from './gr2/Gr2ModelSource.js';
+export * from './gr2/Gr2Composer.js';

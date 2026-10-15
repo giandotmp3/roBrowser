@@ -13,6 +13,9 @@
  *     (path, animIndex, quantize(t, 1/40)). Same-type / same-phase instances collapse to
  *     one poseAt; culled/absent instances never pose.
  *   - Bones: mat4 uBones[48] uniform + one draw per submesh per instance.
+ *   - Records: each instance draw is snapshotted into a backend-neutral WorldDraw-shaped
+ *     record (part 'gr2': alpha, bone palette, type path, world, emblem, light) and the GL is
+ *     issued from it; addRecordSink(fn) observes them.
  *
  * Wired at the AnimatedModels seam of MapRenderer.onRender, wrapped in
  * SpriteRenderer.runWithDepth(true, true, true). Each instance frustum-culls on its ground anchor
@@ -645,6 +648,141 @@ function normalize3(v) {
 }
 
 /**
+ * Record observers (addRecordSink). With none, every draw reuses one scratch record so the
+ * production path stays allocation-free.
+ */
+const _recordSinks = [];
+const NORMAL_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+const _scratchRecord = {
+	kind: 'world',
+	part: 'gr2',
+	alpha: 1,
+	matrices: null,
+	blend: NORMAL_BLEND,
+	depthTest: true,
+	depthWrite: true,
+	params: { type: '', world: null, emblem: null, light: { diffuse: null, ambient: null } }
+};
+
+/**
+ * fillGr2Record(inst, type, bones, alpha, light) -> the backend-neutral record of one GR2
+ * instance draw (WorldDraw-shaped, part 'gr2'), the shape the gpu-* backends consume:
+ *   alpha            entity alpha (effectColor[3] [× removal fade], clamped); < 1 blends
+ *   matrices         the bone palette (boneCount column-major mat4, the 40 Hz cached pose)
+ *   blend/depth*     normal alpha blend (applied only while fading), depth test + write on
+ *   params.type      the .gr2 path (residency key, roster lighting profile)
+ *   params.world     the instance world matrix (column-major, facing applied)
+ *   params.emblem    the guild emblem image drawn on the emblem submesh, or null (skipped)
+ *   params.light     the per-model diffuse / ambient uniforms (roster lighting)
+ * The scratch record is reused when nothing observes; observers get a fresh one per draw.
+ */
+function fillGr2Record(inst, type, bones, alpha, light) {
+	const observed = _recordSinks.length > 0;
+	const record = observed
+		? {
+				kind: 'world',
+				part: 'gr2',
+				alpha: 1,
+				matrices: null,
+				blend: NORMAL_BLEND,
+				depthTest: true,
+				depthWrite: true,
+				params: { type: '', world: null, emblem: null, light: { diffuse: null, ambient: null } }
+			}
+		: _scratchRecord;
+	record.alpha = alpha;
+	record.matrices = bones;
+	const params = record.params;
+	params.type = inst.path;
+	params.world = inst.world;
+	params.emblem = type.hasEmblem ? inst._emblemImg || null : null;
+
+	// Per-model lighting constants (gr2-lighting-shadow-mars26.md §6): the client shades each
+	// GR2 by a byte-decided grayscale diffuse/ambient, not the map light. Re-issued every
+	// instance because GL uniforms are stateful — a fixed-constant model must not leak its
+	// diffuse/ambient onto the next instance.
+	const profile = GR2_ROSTER[gr2Basename(inst.path)];
+	if (profile === 'flag') {
+		params.light.diffuse = _gr2FlagDiffuse;
+		params.light.ambient = grayBroadcast(
+			light.ambient || _phaseAmbient,
+			observed ? new Float32Array(3) : _gr2FlagAmbient
+		);
+	} else if (profile === 'emp') {
+		params.light.diffuse = _gr2EmpDiffuse;
+		params.light.ambient = _gr2EmpAmbient;
+	} else {
+		params.light.diffuse = light.diffuse || _phaseDiffuse;
+		params.light.ambient = light.ambient || _phaseAmbient;
+	}
+	return record;
+}
+
+/**
+ * drawGr2Record(gl, uniform, record, type, inst) — issue the GL of one GR2 instance draw from
+ * its record: the per-instance matrices (modelView = view * world, already in _mv; normalMat =
+ * inv-transpose of its 3x3), the bone palette, the per-model light, the alpha (blend only while
+ * fading), then one draw per submesh. The emblem submesh binds the instance's emblem texture
+ * (built from record.params.emblem) and is skipped while there is none.
+ */
+function drawGr2Record(gl, uniform, record, type, inst) {
+	mat4.toInverseMat3(_mv, _nmat);
+	mat3.transpose(_nmat, _nmat);
+	gl.uniformMatrix4fv(uniform.uModelViewMat, false, _mv);
+	gl.uniformMatrix3fv(uniform.uNormalMat, false, _nmat);
+	gl.uniformMatrix4fv(uniform.uBones, false, record.matrices);
+	gl.uniform3fv(uniform.uLightDiffuse, record.params.light.diffuse);
+	gl.uniform3fv(uniform.uLightAmbient, record.params.light.ambient);
+
+	// Removal fade / entity alpha: opaque instances (alpha 1) stay on the no-blend fast path;
+	// only a fading instance flips blend on and back off. The outer save/restore guards the
+	// BLEND enable bit; the blend func it may switch is reset to the resting default at pass end.
+	gl.uniform1f(uniform.uAlpha, record.alpha);
+	const fading = record.alpha < 1;
+	if (fading) {
+		gl.enable(gl.BLEND);
+		gl.blendFunc(gl[record.blend.src], gl[record.blend.dst]);
+	}
+
+	const submeshes = type.submeshes;
+	for (let s = 0; s < submeshes.length; s++) {
+		const sm = submeshes[s];
+		// The emblem submesh (Plane01) stays empty until the live guild emblem loads
+		// (Guild.requestGuildEmblem): skip it when there is no per-instance emblem —
+		// a dev spawn with no entity, or a flag whose emblem hasn't arrived. Every other
+		// submesh uses its baked texture.
+		if (sm.emblem) {
+			if (!record.params.emblem || !inst.emblemTex) {
+				continue;
+			}
+			gl.bindTexture(gl.TEXTURE_2D, inst.emblemTex);
+		} else {
+			gl.bindTexture(gl.TEXTURE_2D, sm.tex);
+		}
+		gl.bindVertexArray(sm.vao);
+		gl.drawElements(gl.TRIANGLES, sm.count, gl.UNSIGNED_SHORT, 0);
+	}
+
+	if (fading) {
+		gl.disable(gl.BLEND);
+	}
+}
+
+/**
+ * addRecordSink(fn) -> unsubscribe. fn(record) receives one backend-neutral record per GR2
+ * instance draw (see fillGr2Record), in draw order; observing never changes the GL issued.
+ */
+function addRecordSink(fn) {
+	_recordSinks.push(fn);
+	return function unsubscribe() {
+		const idx = _recordSinks.indexOf(fn);
+		if (idx !== -1) {
+			_recordSinks.splice(idx, 1);
+		}
+	};
+}
+
+/**
  * Render every live GR2 instance. Signature mirrors AnimatedModels.render (the seam it
  * sits next to): (gl, modelView, projection, normalMat, fog, light, tick). modelView is
  * Camera.modelView (the view matrix); the per-instance world is composed on top.
@@ -774,29 +912,8 @@ function render(gl, modelView, projection, normalMat, fog, light, tick) {
 			}
 			seen[key] = bones;
 
-			// Per-instance matrices: modelView = view * world, normalMat = inv-transpose of its 3x3.
+			// Per-instance modelView = view * world (the pick box below reuses it).
 			mat4.multiply(_mv, modelView, inst.world);
-			mat4.toInverseMat3(_mv, _nmat);
-			mat3.transpose(_nmat, _nmat);
-			gl.uniformMatrix4fv(uniform.uModelViewMat, false, _mv);
-			gl.uniformMatrix3fv(uniform.uNormalMat, false, _nmat);
-			gl.uniformMatrix4fv(uniform.uBones, false, bones);
-
-			// Per-model lighting constants (gr2-lighting-shadow-mars26.md §6): the client shades each
-			// GR2 by a byte-decided grayscale diffuse/ambient, not the map light. Re-issued every
-			// iteration because GL uniforms are stateful — a fixed-constant model must not leak its
-			// diffuse/ambient onto the next instance.
-			const profile = GR2_ROSTER[gr2Basename(inst.path)];
-			if (profile === 'flag') {
-				gl.uniform3fv(uniform.uLightDiffuse, _gr2FlagDiffuse);
-				gl.uniform3fv(uniform.uLightAmbient, grayBroadcast(light.ambient || _phaseAmbient, _gr2FlagAmbient));
-			} else if (profile === 'emp') {
-				gl.uniform3fv(uniform.uLightDiffuse, _gr2EmpDiffuse);
-				gl.uniform3fv(uniform.uLightAmbient, _gr2EmpAmbient);
-			} else {
-				gl.uniform3fv(uniform.uLightDiffuse, light.diffuse || _phaseDiffuse);
-				gl.uniform3fv(uniform.uLightAmbient, light.ambient || _phaseAmbient);
-			}
 
 			// Project a screen-space pick box for EntityManager's hover/click test. Stashed on the
 			// instance (not entity.boundingRect) because Entity.render() resets that rect after this
@@ -836,35 +953,13 @@ function render(gl, modelView, projection, normalMat, fog, light, tick) {
 				}
 				alpha = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
 			}
-			gl.uniform1f(uniform.uAlpha, alpha);
-			const fading = alpha < 1;
-			if (fading) {
-				gl.enable(gl.BLEND);
-				gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-			}
 
-			const submeshes = type.submeshes;
-			for (let s = 0; s < submeshes.length; s++) {
-				const sm = submeshes[s];
-				// The emblem submesh (Plane01) stays empty until the live guild emblem loads
-				// (Guild.requestGuildEmblem): skip it when there is no per-instance emblem texture —
-				// a dev spawn with no entity, or a flag whose emblem hasn't arrived. Every other
-				// submesh uses its baked texture.
-				if (sm.emblem) {
-					if (!inst.emblemTex) {
-						continue;
-					}
-					gl.bindTexture(gl.TEXTURE_2D, inst.emblemTex);
-				} else {
-					gl.bindTexture(gl.TEXTURE_2D, sm.tex);
-				}
-				gl.bindVertexArray(sm.vao);
-				gl.drawElements(gl.TRIANGLES, sm.count, gl.UNSIGNED_SHORT, 0);
+			// Snapshot the draw into a backend-neutral record, then issue the GL from it.
+			const record = fillGr2Record(inst, type, bones, alpha, light);
+			for (let k = 0; k < _recordSinks.length; k++) {
+				_recordSinks[k](record);
 			}
-
-			if (fading) {
-				gl.disable(gl.BLEND);
-			}
+			drawGr2Record(gl, uniform, record, type, inst);
 		}
 	});
 	gl.bindVertexArray(null);
@@ -1165,6 +1260,8 @@ export default {
 	spawn: spawn,
 	spawnMany: spawnMany,
 	clear: clear,
+	// Observe the backend-neutral record of every GR2 instance draw (returns unsubscribe).
+	addRecordSink: addRecordSink,
 	FADE: FADE,
 	// Debug: highlight each instance's anchor cell (see _debugCell). Toggle from the dev console.
 	get debugCell() {

@@ -4,6 +4,10 @@
  * Render animated RSM models on the map
  * These models have animation keyframes and need per-frame geometry updates
  *
+ * Each frame, every model's node x instance matrices are snapshotted into a backend-neutral
+ * WorldDraw-shaped record (part 'animatedModel') and the matrix texture is uploaded from it;
+ * addRecordSink(fn) observes them.
+ *
  * This file is part of ROBrowser, (http://www.robrowser.com/).
  */
 
@@ -533,7 +537,9 @@ function add(gl, modelData) {
 	_animatedModels.push(animModel);
 
 	// Force first update to calculate and upload initial matrices
-	updateModelBuffer(gl, animModel, 0, true);
+	if (updateModelMatrices(animModel, 0, true)) {
+		uploadMatrices(gl, animModel, animModel.matrixData);
+	}
 }
 
 /**
@@ -703,18 +709,19 @@ function writeNodeGeometry(node, textureId, offset, buffer, alpha, matrixIndex, 
 }
 
 /**
- * Update model buffer at frame
+ * Recompute the model's node x instance matrices (CPU) at a keyframe position when due.
+ * Returns whether model.matrixData changed (and so needs uploading).
  */
-function updateModelBuffer(gl, model, frame, force) {
+function updateModelMatrices(model, frame, force) {
 	const frameDuration = 1000 / (model.fps / (GraphicsSettings.performanceMode ? 2 : 1.14));
 	const currentAnimFrame = Math.floor(frame / frameDuration);
 
 	if (!force && model.lastAnimFrame === currentAnimFrame && !model.staticModel) {
-		return;
+		return false;
 	}
 
 	if (model.staticModel && model.lastAnimFrame !== -1 && !force) {
-		return;
+		return false;
 	}
 
 	model.lastAnimFrame = currentAnimFrame;
@@ -787,11 +794,87 @@ function updateModelBuffer(gl, model, frame, force) {
 			matrixData.set(destMat, matrixIndex * 16);
 		}
 	}
+	return true;
+}
 
-	// 3. Upload Matrix Texture to GPU (1 row of width totalMatrices * 4)
+/**
+ * Upload a model's node x instance matrices to its matrix texture
+ * (1 row of width totalMatrices * 4, RGBA32F).
+ */
+function uploadMatrices(gl, model, matrices) {
 	gl.bindTexture(gl.TEXTURE_2D, model.matrixTexture);
-	gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, model.totalMatrices * 4, 1, gl.RGBA, gl.FLOAT, matrixData);
+	gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, model.totalMatrices * 4, 1, gl.RGBA, gl.FLOAT, matrices);
 	gl.bindTexture(gl.TEXTURE_2D, null);
+}
+
+/**
+ * Record observers (addRecordSink). With none, every model reuses one scratch record so
+ * the production path stays allocation-free.
+ */
+const _recordSinks = [];
+const NORMAL_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+const _scratchRecord = {
+	kind: 'world',
+	part: 'animatedModel',
+	alpha: 1,
+	matrices: null,
+	blend: NORMAL_BLEND,
+	depthTest: true,
+	depthWrite: true,
+	params: { model: -1, filename: '', frame: 0, animFrame: 0, updated: false }
+};
+
+/**
+ * fillAnimatedRecord(model, index, updated) -> the backend-neutral record of one animated
+ * model this frame (WorldDraw-shaped, part 'animatedModel'), the shape the gpu-* backends
+ * consume:
+ *   alpha             the model alpha (per-vertex aAlpha)
+ *   matrices          node x instance matrices (16 floats each, index node * instances +
+ *                     instance), as last computed
+ *   params.model      the model's load index; params.filename
+ *   params.frame      keyframe position the matrices were computed at (tick % animLen)
+ *   params.animFrame  their recompute bucket; params.updated: recomputed this frame
+ * The scratch record (sharing model.matrixData) is reused when nothing observes; observers
+ * get a fresh record with a copy of the matrices.
+ */
+function fillAnimatedRecord(model, index, updated) {
+	const observed = _recordSinks.length > 0;
+	const record = observed
+		? {
+				kind: 'world',
+				part: 'animatedModel',
+				alpha: 1,
+				matrices: null,
+				blend: NORMAL_BLEND,
+				depthTest: true,
+				depthWrite: true,
+				params: { model: -1, filename: '', frame: 0, animFrame: 0, updated: false }
+			}
+		: _scratchRecord;
+	record.alpha = model.alpha;
+	record.matrices = observed ? Float32Array.from(model.matrixData) : model.matrixData;
+	const params = record.params;
+	params.model = index;
+	params.filename = model.filename;
+	params.frame = model.lastFrame;
+	params.animFrame = model.lastAnimFrame;
+	params.updated = updated;
+	return record;
+}
+
+/**
+ * addRecordSink(fn) -> unsubscribe. fn(record) receives one backend-neutral record per
+ * animated model per render() (see fillAnimatedRecord), in load order; observing never
+ * changes the GL issued.
+ */
+function addRecordSink(fn) {
+	_recordSinks.push(fn);
+	return function unsubscribe() {
+		const idx = _recordSinks.indexOf(fn);
+		if (idx !== -1) {
+			_recordSinks.splice(idx, 1);
+		}
+	};
 }
 
 /**
@@ -873,9 +956,17 @@ function render(gl, modelView, projection, normalMat, fog, light, tick) {
 
 	bind(gl, modelView, projection, normalMat, fog, light);
 
+	// Per model: recompute the matrices when due, snapshot them into a record, upload from it.
 	for (let m = 0; m < _animatedModels.length; m++) {
 		const model = _animatedModels[m];
-		updateModelBuffer(gl, model, tick % (model.animLen || 1), false);
+		const updated = updateModelMatrices(model, tick % (model.animLen || 1), false);
+		const record = fillAnimatedRecord(model, m, updated);
+		for (let k = 0; k < _recordSinks.length; k++) {
+			_recordSinks[k](record);
+		}
+		if (record.params.updated) {
+			uploadMatrices(gl, model, record.matrices);
+		}
 	}
 
 	OccluderFade.renderOpaque(gl, _program.uniform, () => drawModels(gl));
@@ -914,5 +1005,7 @@ export default {
 	add: add,
 	render: render,
 	renderFaded: renderFaded,
-	hasAnimatedModels: hasAnimatedModels
+	hasAnimatedModels: hasAnimatedModels,
+	// Observe the per-frame node matrices of every animated model (returns unsubscribe).
+	addRecordSink: addRecordSink
 };

@@ -34,7 +34,7 @@ describe('C-14 GR2 skeletal models (record side)', () => {
 		expect(() => assertBoneCount(49)).toThrow(RangeError);
 	});
 
-	it.fails('R-GR2-003 [pending]: GR2 renders one frame behind the entity state (kept parity)', () => {
+	it('R-GR2-003: GR2 renders one frame behind the entity state (kept parity)', () => {
 		const prev = { action: 1 };
 		const curr = { action: 2 };
 		expect(gr2FrameState(prev, curr)).toBe(prev);
@@ -67,7 +67,7 @@ describe('C-05 animated RSM (CPU matrices)', () => {
 		expect(matrixUpdateBucket(67, 30, true)).toBe(1);
 	});
 
-	it.fails('R-MAP-017 [pending]: single-node identity model yields identity × instance matrix', () => {
+	it('R-MAP-017: single-node identity model yields identity × instance matrix', () => {
 		const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 		const model = {
 			instances: [identity],

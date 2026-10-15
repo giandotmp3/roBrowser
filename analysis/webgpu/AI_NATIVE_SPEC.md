@@ -1613,6 +1613,15 @@ Source paths below are relative to `src/`.
 
 67. **R-GR2-006 (clarification):** legacy does not apply the ≥248/<8/≥248 magenta key in the emblem path itself. Emblems are already keyed upstream by `Texture.load`, with the looser image threshold (R-MAP-024). The rebuild still applies the stricter key; it is a no-op on emblems that `Texture.load` has already keyed, and pixel parity confirms this. The emblem is drawn 24×24 onto a 32×32 canvas and quantised to A4R4G4B4.
 
+**Found by the GR2 and animated-RSM record-diffs** (2026-10-16):
+
+68. **R-GR2-003:**
+    - The pose bucket is `Math.round(t·40)` on clip-relative seconds, not floor. The pose cache persists across frames, so a cached palette is the first sample taken in its bucket.
+    - If an action starts before its animation bank has loaded, the instance cuts to standby until the action is re-issued.
+    - Instances of a model that is still loading skip entity sync, so an action's clock starts when the model becomes ready.
+    - The one-frame lag also covers detaches.
+69. **[PROPOSED FLAG, parity kept pending a fix pass] R-MAP-017:** before a node's first key, when that key is later than frame 0, legacy interpolates with t = −∞. The node and its children get NaN matrices and are invisible until the key is reached, on every loop. The gpu-webgl2 world 'spin' fixture exercises this. Under the delegated HITL policy this is an unintended bug, to be fixed in render-records and both backends' world paths as a narrowly declared divergence.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|

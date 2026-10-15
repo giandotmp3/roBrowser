@@ -1,11 +1,11 @@
-import { notImplemented } from '../util/errors.js';
-
 export const GR2_POSE_HZ = 40;
 export const GR2_MAX_BONES = 48;
 export const GR2_CULL_MARGIN = 0.2;
 
 /**
- * R-GR2-003 pose time quantised to 40 Hz.
+ * R-GR2-003 pose time quantised to 40 Hz (floor of the elapsed ms). Note: legacy keys its
+ * pose cache on the NEAREST bucket of the clip-relative time in seconds (see
+ * Gr2Composer.gr2PoseBucket, which the composer uses for parity).
  * @param {number} modelClockMs  ms since the last action change
  */
 export function quantisePoseTime(modelClockMs) {
@@ -47,13 +47,19 @@ export function assertBoneCount(boneCount) {
 }
 
 /**
- * R-GR2-003 one-frame lag: GR2 poses use the entity state of the previous
- * frame (intentional legacy parity, architecture §7 m8). Pending.
- * @param {Object} _prevEntityState
- * @param {Object} _currentEntityState
+ * R-GR2-003 one-frame lag (kept on purpose, architecture §7 m8): legacy runs the GR2 pass
+ * before the entity pass, so a GR2 model is drawn from the entity state the previous frame
+ * left (walk interpolation, actions and alpha applied by this frame's entity pass show one
+ * frame later). Given the state at the end of the previous frame and this frame's state,
+ * the GR2 composer must be fed the former; before any previous frame exists, the current
+ * one.
+ * @template T
+ * @param {T|undefined} prevEntityState
+ * @param {T} currentEntityState
+ * @returns {T}
  */
-export function gr2FrameState(_prevEntityState, _currentEntityState) {
-	return notImplemented('R-GR2-003', 'one-frame-behind GR2 entity state');
+export function gr2FrameState(prevEntityState, currentEntityState) {
+	return prevEntityState === undefined ? currentEntityState : prevEntityState;
 }
 
 /**
