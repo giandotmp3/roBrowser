@@ -1,0 +1,25 @@
+{
+	"name": "@robrowser-webgpu/test-harness",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "test-harness of the reimagined WebGPU renderer: seeded RNG + injectable clock, legacy SpriteRenderer record shim, record-diff oracle for all 143 behaviour rules, perceptual smoke goldens (Playwright + Chromium WebGPU on SwiftShader).",
+	"main": "src/index.js",
+	"exports": {
+		".": "./src/index.js"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:contract": "vitest run test/contract",
+		"test:acceptance": "vitest run test/acceptance",
+		"smoke": "playwright test"
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.56.1",
+		"vitest": "^4.1.2"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

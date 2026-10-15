@@ -1,0 +1,21 @@
+{
+	"name": "@robrowser/render-records",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Backend-neutral SpriteDraw / EffectDraw / WorldDraw record layer for the reimagined roBrowser renderer (no GPU).",
+	"type": "module",
+	"main": "src/index.js",
+	"exports": {
+		".": "./src/index.js"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.2"
+	}
+}

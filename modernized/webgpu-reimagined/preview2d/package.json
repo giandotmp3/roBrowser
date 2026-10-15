@@ -1,0 +1,21 @@
+{
+	"name": "@robrowser-webgpu/preview2d",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "preview2d module of the reimagined WebGPU renderer: synchronous Canvas2D composer for baked outputs (cursor sheet, guild portrait, ItemInfo/ItemCompare icons, CartDecoration, PvPCount) driven by SpriteDraw records.",
+	"main": "src/index.js",
+	"exports": {
+		".": "./src/index.js"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.2"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

@@ -1,0 +1,130 @@
+import { blendFromEffectMode } from '../records/blend.js';
+import { defaultClock, defaultRng } from '../util/injectables.js';
+import { notImplemented } from '../util/errors.js';
+import { duplicateOffsets, effectTiming, effectsEnabled, normalizeDuplicate, resolveStrFile } from './rules.js';
+
+/**
+ * @typedef {Object} EffectInstance
+ * @property {number} effectId
+ * @property {string} family      Constructor name alias used by remove(ctor, ...)
+ * @property {number} ownerAID
+ * @property {number} startTick
+ * @property {number} endTick
+ * @property {string|undefined} file
+ * @property {import('../records/blend.js').BlendState|null} blend  null for STR (per-layer blend)
+ * @property {import('./EffectSpec.js').EffectSpec} spec
+ */
+
+const FAMILY_BY_TYPE = Object.freeze({
+	STR: 'StrEffect',
+	'2D': 'TwoDEffect',
+	'3D': 'ThreeDEffect',
+	CYLINDER: 'Cylinder',
+	RSM: 'RsmEffect',
+	QuadHorn: 'QuadHorn'
+});
+
+/**
+ * Effect lifecycle and record emission. Replaces the legacy EffectManager
+ * logic side; GPU drawing lives in the backends.
+ */
+export class EffectSystem {
+	/**
+	 * @param {Object} opts
+	 * @param {Record<number, import('./EffectSpec.js').EffectSpec[]>} opts.table  EffectTable data
+	 * @param {Omit<import('./EffectSpec.js').EffectContext, 'effects'>} opts.ctx  Injected services
+	 * @param {{effect?: boolean, mineffect?: boolean, performanceMode?: boolean, viewArea?: number}} [opts.prefs]
+	 * @param {import('../util/injectables.js').Rng} [opts.rng]
+	 * @param {import('../util/injectables.js').Clock} [opts.now]
+	 */
+	constructor({ table, ctx, prefs = {}, rng = defaultRng, now = defaultClock }) {
+		this.table = table;
+		this.prefs = prefs;
+		this.rng = rng;
+		this.now = now;
+		/** @type {import('./EffectSpec.js').EffectContext} */
+		this.ctx = Object.freeze({ ...ctx, effects: this });
+		/** @type {EffectInstance[]} */
+		this.instances = [];
+	}
+
+	/**
+	 * effects.spam (spec §3.1). FUNC specs are invoked as FUNC(params, ctx);
+	 * other specs create instances (with duplication and timing).
+	 * @param {import('./EffectSpec.js').EffectParams} params
+	 * @returns {EffectInstance[]} Instances created by this call
+	 */
+	spam(params) {
+		if (!effectsEnabled(this.prefs)) {
+			return [];
+		}
+		const specs = this.table[params.effectId] ?? [];
+		/** @type {EffectInstance[]} */
+		const created = [];
+		for (const spec of specs) {
+			if (typeof spec.FUNC === 'function') {
+				spec.FUNC(params, this.ctx);
+			}
+			if (!spec.type || spec.type === 'FUNC') {
+				continue;
+			}
+			const count = normalizeDuplicate(spec.duplicate);
+			duplicateOffsets(count, spec.timeBetweenDupli).forEach((offset, duplicateID) => {
+				const { startTick, endTick } = effectTiming({ spawnTick: params.startTick + offset, spec, duplicateID });
+				created.push({
+					effectId: params.effectId,
+					family: FAMILY_BY_TYPE[spec.type] ?? spec.type,
+					ownerAID: params.ownerAID ?? 0,
+					startTick,
+					endTick,
+					file: spec.type === 'STR' ? resolveStrFile(spec, this.prefs) : spec.file,
+					blend: spec.type === 'STR' ? null : blendFromEffectMode(spec.blendMode ?? 0),
+					spec
+				});
+			});
+		}
+		this.instances.push(...created);
+		return created;
+	}
+
+	/**
+	 * effects.remove(ctorOrNull, AID, effectID). `ctor` may be a constructor
+	 * (matched by its name) or a class-name alias string.
+	 * @param {Function|string|null} ctor
+	 * @param {number} [aid]
+	 * @param {number} [effectId]
+	 * @returns {number} Number of instances removed
+	 */
+	remove(ctor, aid, effectId) {
+		const family = typeof ctor === 'function' ? ctor.name : ctor;
+		const before = this.instances.length;
+		this.instances = this.instances.filter(
+			i =>
+				!(
+					(!family || i.family === family) &&
+					(aid === undefined || i.ownerAID === aid) &&
+					(effectId === undefined || i.effectId === effectId)
+				)
+		);
+		return before - this.instances.length;
+	}
+
+	/**
+	 * Advance lifetimes and repeats (R-EFX-004). Pending.
+	 * @param {number} _tick
+	 */
+	tick(_tick) {
+		notImplemented('R-EFX-004', 'effect repeat / respawn');
+	}
+
+	/**
+	 * Emit EffectDraw records for one pass, applying distance culling
+	 * (R-EFX-005) and pass selection (R-EFX-006). Pending.
+	 * @param {import('../records/RecordStream.js').RecordStream} _records
+	 * @param {'before'|'after'} _pass
+	 * @param {{tick: number, playerPosition: number[], fog: {use: boolean}}} _frame
+	 */
+	emit(_records, _pass, _frame) {
+		notImplemented('R-EFX-005', 'EffectSystem.emit record emission');
+	}
+}

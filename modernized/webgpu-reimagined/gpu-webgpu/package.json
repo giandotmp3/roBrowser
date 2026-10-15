@@ -1,0 +1,21 @@
+{
+	"name": "@robrowser-webgpu/gpu-webgpu",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "gpu-webgpu backend of the reimagined renderer: device, MSAA offscreen target + blit, precompiled pipelines, texture-array residency, world, sprite runs, effects, GR2, post chain, live previews, capture, device-loss rebuild with WebGL2 fallback. Consumes render-records; owns no rendering rules beyond the GPU side.",
+	"main": "src/index.js",
+	"exports": {
+		".": "./src/index.js"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.2"
+	}
+}

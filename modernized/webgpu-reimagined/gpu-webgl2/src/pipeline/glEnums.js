@@ -1,0 +1,57 @@
+/**
+ * Numeric WebGL2 enums used by this backend. Kept as plain numbers so the
+ * fake GL in tests and a real WebGL2RenderingContext agree without a browser.
+ * Values are the Khronos-registered constants.
+ */
+export const GL = Object.freeze({
+	// capabilities
+	DEPTH_TEST: 0x0b71,
+	BLEND: 0x0be2,
+	CULL_FACE: 0x0b44,
+	// depth funcs
+	LEQUAL: 0x0203,
+	ALWAYS: 0x0207,
+	// blend factors
+	ZERO: 0,
+	ONE: 1,
+	SRC_COLOR: 0x0300,
+	ONE_MINUS_SRC_COLOR: 0x0301,
+	SRC_ALPHA: 0x0302,
+	ONE_MINUS_SRC_ALPHA: 0x0303,
+	DST_ALPHA: 0x0304,
+	ONE_MINUS_DST_ALPHA: 0x0305,
+	DST_COLOR: 0x0306,
+	ONE_MINUS_DST_COLOR: 0x0307,
+	SRC_ALPHA_SATURATE: 0x0308,
+	CONSTANT_COLOR: 0x8001,
+	ONE_MINUS_CONSTANT_COLOR: 0x8002,
+	CONSTANT_ALPHA: 0x8003,
+	ONE_MINUS_CONSTANT_ALPHA: 0x8004,
+	// clear bits
+	DEPTH_BUFFER_BIT: 0x0100,
+	COLOR_BUFFER_BIT: 0x4000,
+	// textures
+	TEXTURE_2D: 0x0de1,
+	TEXTURE_2D_ARRAY: 0x8c1a,
+	NEAREST: 0x2600,
+	LINEAR: 0x2601,
+	LINEAR_MIPMAP_LINEAR: 0x2703,
+	TEXTURE_MAG_FILTER: 0x2800,
+	TEXTURE_MIN_FILTER: 0x2801,
+	CLAMP_TO_EDGE: 0x812f,
+	R8: 0x8229,
+	RGBA8: 0x8058,
+	RGB8: 0x8051,
+	RGBA32F: 0x8814,
+	DEPTH_COMPONENT16: 0x81a5,
+	// draw
+	TRIANGLES: 0x0004,
+	TRIANGLE_STRIP: 0x0005,
+	// queries
+	ANY_SAMPLES_PASSED_CONSERVATIVE: 0x8d6a,
+	QUERY_RESULT: 0x8866,
+	QUERY_RESULT_AVAILABLE: 0x8867,
+	// limits
+	MAX_TEXTURE_SIZE: 0x0d33,
+	MAX_ARRAY_TEXTURE_LAYERS: 0x88ff
+});

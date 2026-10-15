@@ -1,0 +1,21 @@
+{
+	"name": "@robrowser-webgpu/gpu-webgl2",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "gpu-webgl2 fallback backend of the reimagined renderer: the legacy WebGL2 renderer refactored to consume backend-neutral render records, with run-length batching (instanced quads), texture-array residency, the same GPU-side rules as gpu-webgpu, and context lost/restored handling. GLSL 300 es.",
+	"main": "src/index.js",
+	"exports": {
+		".": "./src/index.js"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.2"
+	}
+}

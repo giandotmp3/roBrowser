@@ -1,0 +1,21 @@
+{
+	"name": "@robrowser-webgpu/scene",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "scene module of the reimagined WebGPU renderer: public renderer API compatibility, frame clock and UI scheduler, camera, Altitude/GAT, CPU picking, DOM overlay projection, culling/perf-mode, map-less ViewerScene.",
+	"main": "src/index.js",
+	"exports": {
+		".": "./src/index.js"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.2"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}
