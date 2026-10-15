@@ -2,7 +2,8 @@ import { GL } from '../../src/pipeline/glEnums.js';
 
 /**
  * Recording fake WebGL2 context. Every method call is appended to `calls`
- * as [name, ...args]. Enough surface for device, state, run and post tests.
+ * as [name, ...args]. Explicit methods cover device, state, run and post
+ * tests; any other method is recorded through a Proxy fallback.
  */
 export function createFakeGl({ limits = {} } = {}) {
 	const calls = [];
@@ -32,7 +33,38 @@ export function createFakeGl({ limits = {} } = {}) {
 			calls.length = 0;
 		}
 	};
-	return gl;
+	// Any other WebGL2 method (program, buffer, texture and VAO setup) records its call
+	// and returns a plausible value: an opaque handle for create*/getUniformLocation,
+	// success for status queries, '' for info logs.
+	let handles = 0;
+	const fallback = name => {
+		const log = record(name);
+		return (...args) => {
+			log(...args);
+			if (name.startsWith('create')) {
+				return { fake: name, id: ++handles };
+			}
+			if (name === 'getUniformLocation') {
+				return { uniform: args[1] };
+			}
+			if (name === 'getShaderParameter' || name === 'getProgramParameter') {
+				return true;
+			}
+			if (name.endsWith('InfoLog')) {
+				return '';
+			}
+			return undefined;
+		};
+	};
+	return new Proxy(gl, {
+		get(target, prop) {
+			if (prop in target || typeof prop !== 'string' || !/^[a-z]/.test(prop) || prop === 'then') {
+				return target[prop];
+			}
+			target[prop] = fallback(prop);
+			return target[prop];
+		}
+	});
 }
 
 /**

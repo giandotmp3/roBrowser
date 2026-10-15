@@ -17,8 +17,27 @@ describe('R-SPR-005 billboard depth correction (shader side)', () => {
 	it('depthCorrection and ignoreDepthMinCap reach the shader as instance attributes', () => {
 		expect(SHADERS.spriteVert).toContain('aDepthFlags');
 	});
-	it.fails('[R-SPR-005] corrected z = depth of the camera ray hitting the vertical plane through the sprite centre', () => {
-		expect(correctedClipZ()).toBeTypeOf('number');
+	it('[R-SPR-005] corrected z = depth of the camera ray hitting the vertical plane through the sprite centre', () => {
+		// Camera 20 units back, pitched 45° down (legacy-style view matrix), 45° fov.
+		const c = Math.SQRT1_2;
+		const modelView = [1, 0, 0, 0, 0, c, -c, 0, 0, c, c, 0, 0, 0, -20, 1];
+		const f = 1 / Math.tan(Math.PI / 8);
+		const projection = [f, 0, 0, 0, 0, f, 0, 0, 0, 0, -1.002, -1, 0, 0, -0.2002, 0];
+		const position = [0, 0, 0];
+		// The quad centre lies on the plane: corrected == original.
+		const centre = correctedClipZ({ modelView, projection, position, local: [0, 0] });
+		expect(centre.corrected).toBeCloseTo(centre.original, 5);
+		// The head of a billboard tilts toward the camera; the plane puts it farther away.
+		const head = correctedClipZ({ modelView, projection, position, local: [0, 1.5] });
+		expect(head.corrected).toBeGreaterThan(head.original);
+		expect(head.z).toBe(head.original);
+		const npc = correctedClipZ({ modelView, projection, position, local: [0, 1.5], ignoreDepthMinCap: true });
+		expect(npc.z).toBe(npc.corrected);
+		// The feet tilt away: corrected is nearer and wins the min cap.
+		const feet = correctedClipZ({ modelView, projection, position, local: [0, -1] });
+		expect(feet.z).toBe(feet.corrected);
+		expect(feet.corrected).toBeLessThan(feet.original);
+		expect(SHADERS.spriteVert).toContain('clip.z = aDepthFlags.y > 0.5 ? correctedZBase : min(clip.z, correctedZBase)');
 	});
 });
 

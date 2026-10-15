@@ -12,7 +12,7 @@ import { nextPot } from './imageKey.js';
 export class Residency {
 	/**
 	 * @param {{
-	 *   uploader: {allocLayer(pool: string, size: number, layer: number, data: ArrayBufferView): void, uploadPalette(row: number, rgba: Uint8Array): void},
+	 *   uploader: {allocLayer(pool: string, size: number, layer: number, data: ArrayBufferView, width?: number, height?: number): void, uploadPalette(row: number, rgba: Uint8Array): void, purge?(): void},
 	 *   layersPerPool?: number,
 	 *   now: () => number
 	 * }} deps
@@ -23,7 +23,7 @@ export class Residency {
 		this._now = now;
 		/** @type {Map<string, {free: number[], next: number}>} */
 		this._pools = new Map();
-		/** @type {Map<string|number, {pool: string, layer: number, lastUsed: number}>} */
+		/** @type {Map<string|number, {pool: string, layer: number, classIndex: number, width: number, height: number, lastUsed: number}>} */
 		this._slots = new Map();
 		/** @type {Map<string|number, number>} */
 		this._paletteRows = new Map();
@@ -40,15 +40,27 @@ export class Residency {
 		if (size > POT_CLASSES[POT_CLASSES.length - 1]) {
 			throw new DeviceLimitError('spritePotClass', size, POT_CLASSES[POT_CLASSES.length - 1]);
 		}
-		return { pool: `${format}:${size}`, size };
+		return { pool: `${format}:${size}`, size, classIndex: POT_CLASSES.indexOf(size) };
 	}
 
 	/**
 	 * @param {string|number} handle
-	 * @param {{format: 'r8'|'rgba8', width: number, height: number, data: ArrayBufferView}} image  Already POT-padded
+	 * Legacy frames are already POT-padded, so a frame maps to one array layer of its
+	 * class (max(width, height) rounded up to a POT, 32–512), in the layer's top-left corner.
+	 * @param {{format: 'r8'|'rgba8', width: number, height: number, data: ArrayBufferView}} image  Tightly packed
 	 */
 	upload(handle, image) {
-		const { pool, size } = Residency.poolFor(image.format, image.width, image.height);
+		const { pool, size, classIndex } = Residency.poolFor(image.format, image.width, image.height);
+		const previous = this._slots.get(handle);
+		if (previous && previous.pool === pool) {
+			// Re-upload in place (same class): keep the layer.
+			this._uploader.allocLayer(pool, size, previous.layer, image.data, image.width, image.height);
+			Object.assign(previous, { width: image.width, height: image.height, lastUsed: this._now() });
+			return;
+		}
+		if (previous) {
+			this.release(handle);
+		}
 		let p = this._pools.get(pool);
 		if (!p) {
 			p = { free: [], next: 0 };
@@ -58,8 +70,15 @@ export class Residency {
 		if (layer >= this._layersPerPool) {
 			throw new DeviceLimitError(`layers:${pool}`, layer + 1, this._layersPerPool);
 		}
-		this._uploader.allocLayer(pool, size, layer, image.data);
-		this._slots.set(handle, { pool, layer, lastUsed: this._now() });
+		this._uploader.allocLayer(pool, size, layer, image.data, image.width, image.height);
+		this._slots.set(handle, {
+			pool,
+			layer,
+			classIndex,
+			width: image.width,
+			height: image.height,
+			lastUsed: this._now()
+		});
 	}
 
 	/**
@@ -79,19 +98,28 @@ export class Residency {
 	}
 
 	/**
+	 * Instance lookup for one record. A miss gives layer −1 (the shader discards it).
 	 * @param {{texture: string|number|null, palette?: string|number|null}} record
-	 * @returns {{layer: number, paletteRow: number, pool: string|null}}
+	 * @param {object} [out]  Reused result object (allocation-free packing)
+	 * @returns {{layer: number, paletteRow: number, pool: string|null, classIndex: number, width: number, height: number}}
 	 */
-	slotOf(record) {
+	slotOf(record, out = {}) {
 		const slot = this._slots.get(record.texture);
 		if (slot) {
 			slot.lastUsed = this._now();
 		}
-		return {
-			layer: slot ? slot.layer : -1,
-			pool: slot ? slot.pool : null,
-			paletteRow: this._paletteRows.get(record.palette) ?? -1
-		};
+		out.layer = slot ? slot.layer : -1;
+		out.pool = slot ? slot.pool : null;
+		out.classIndex = slot ? slot.classIndex : 0;
+		out.width = slot ? slot.width : 1;
+		out.height = slot ? slot.height : 1;
+		out.paletteRow = this._paletteRows.get(record.palette) ?? -1;
+		return out;
+	}
+
+	/** GPU uploader behind this residency (TextureArrayPools in production). */
+	get uploader() {
+		return this._uploader;
 	}
 
 	/** @param {string|number} handle */
@@ -116,6 +144,7 @@ export class Residency {
 
 	/** R-CTX-006: on loss, every GPU slot is gone; assets re-upload on demand. */
 	purgeAll() {
+		this._uploader.purge?.();
 		this._pools.clear();
 		this._slots.clear();
 		this._paletteRows.clear();

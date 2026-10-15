@@ -3,6 +3,7 @@ import { ContextLossController } from './device/ContextLossController.js';
 import { onRenderError } from './device/frameErrorPolicy.js';
 import { GLStateCache } from './pipeline/GLStateCache.js';
 import { Residency } from './residency/Residency.js';
+import { TextureArrayPools } from './residency/TextureArrayPools.js';
 import { RunRenderer } from './batching/RunRenderer.js';
 import { PostChain } from './post/PostChain.js';
 import { runMapFrame } from './frame/passOrder.js';
@@ -48,7 +49,7 @@ export class WebGL2Backend {
 		const gl = this.device.init();
 		this.state = new GLStateCache(gl);
 		this.residency = new Residency({
-			uploader: this._ports.uploader ?? { allocLayer() {}, uploadPalette() {} },
+			uploader: this._ports.uploader ?? new TextureArrayPools({ gl }),
 			now: this._ports.now
 		});
 		this.runs = new RunRenderer({ gl, state: this.state, residency: this.residency });
@@ -60,6 +61,7 @@ export class WebGL2Backend {
 			onLost: () => {
 				this.running = false;
 				this.residency.purgeAll();
+				this.runs.sprites.reset();
 				this.state.reset();
 			},
 			reinitPost: () => this.post.reinit(),
@@ -86,8 +88,8 @@ export class WebGL2Backend {
 
 	/**
 	 * Draw one frame in R-CTX-010 order.
-	 * @param {{passes: Record<string, ReadonlyArray<import('./ports.js').DrawRecord>>}} frame
-	 *   Records per GPU step, each in legacy order.
+	 * @param {{passes: Record<string, ReadonlyArray<import('./ports.js').DrawRecord>>, view?: import('./sprites/SpritePipeline.js').SpriteView}} frame
+	 *   Records per GPU step, each in legacy order; `view` carries the camera matrices, zoom and fog.
 	 */
 	drawFrame(frame) {
 		if (!this.running) {
@@ -95,7 +97,7 @@ export class WebGL2Backend {
 		}
 		const gpuPasses = {};
 		for (const [name, records] of Object.entries(frame.passes ?? {})) {
-			gpuPasses[name] = () => this.runs.draw(records);
+			gpuPasses[name] = () => this.runs.draw(records, frame.view);
 		}
 		return runMapFrame(gpuPasses, this._ports.scene);
 	}
@@ -121,6 +123,7 @@ export class WebGL2Backend {
 
 	dispose() {
 		this.running = false;
+		this.residency?.uploader.dispose?.();
 		this.residency?.purgeAll();
 	}
 }
