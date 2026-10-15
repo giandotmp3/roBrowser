@@ -23,6 +23,7 @@ import { GLStateCache } from '../src/pipeline/GLStateCache.js';
 import { Residency } from '../src/residency/Residency.js';
 import { TextureArrayPools } from '../src/residency/TextureArrayPools.js';
 import { RunRenderer } from '../src/batching/RunRenderer.js';
+import { batchKey } from '../src/batching/runs.js';
 import { fromLegacySpriteRecord } from '../src/sprites/legacyRecord.js';
 
 const params = new URLSearchParams(location.search);
@@ -70,28 +71,28 @@ function installClock(seed) {
 }
 
 /**
- * Why runs break: for each pair of consecutive records in different runs, which
- * pipeline-state fields changed (a break may count under several).
+ * Why runs break. `changes`: for each pair of consecutive records, which
+ * pipeline-state fields changed (pipelineKey boundaries; a pair may count under
+ * several). `batch`: the same, only at the boundaries gpu-webgl2 actually draws
+ * (batchKey: texture class no longer splits sprite runs).
  */
-function runBreaks(records) {
-	const breaks = { textureClass: 0, blend: 0, depthTest: 0, depthWrite: 0 };
+function runBreaks(records, mixTextureClasses) {
+	const changes = { textureClass: 0, blend: 0, depthTest: 0, depthWrite: 0 };
+	const batch = { textureClass: 0, blend: 0, depthTest: 0, depthWrite: 0 };
 	for (let i = 1; i < records.length; i++) {
 		const a = records[i - 1];
 		const b = records[i];
-		if (a.textureClass !== b.textureClass) {
-			breaks.textureClass++;
-		}
-		if (a.blend !== b.blend) {
-			breaks.blend++;
-		}
-		if (a.depthTest !== b.depthTest) {
-			breaks.depthTest++;
-		}
-		if (a.depthWrite !== b.depthWrite) {
-			breaks.depthWrite++;
+		const split = batchKey(a, { mixTextureClasses }) !== batchKey(b, { mixTextureClasses });
+		for (const field of Object.keys(changes)) {
+			if (a[field] !== b[field]) {
+				changes[field]++;
+				if (split) {
+					batch[field]++;
+				}
+			}
 		}
 	}
-	return breaks;
+	return { changes, batch };
 }
 
 /** Entities still in the legacy manager (dying mobs leave after their fade). */
@@ -214,7 +215,7 @@ function run() {
 				legacyDrawCalls,
 				modernDrawCalls: modernDraws.drawArraysInstanced,
 				runs: runCounts,
-				breaks: runBreaks(records),
+				breaks: runBreaks(records, runs.sprites.mixedClasses),
 				images: {
 					legacy: legacy.canvas.toDataURL('image/png'),
 					modern: modern.canvas.toDataURL('image/png'),

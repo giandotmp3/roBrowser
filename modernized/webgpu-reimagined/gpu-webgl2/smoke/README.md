@@ -68,16 +68,16 @@ The exit code is 1 on failure. The run also fails if the **sensitivity control**
 
 | Frame        | Max channel diff | Pixels differing |    Legacy draws |         gpu-webgl2 draws |
 | ------------ | ---------------: | ---------------: | --------------: | -----------------------: |
-| no fog       |                0 |                0 | 39 `drawArrays` | 23 `drawArraysInstanced` |
-| fog          |                0 |                0 |              39 |                       23 |
-| no fog, MSAA |                0 |                0 |              39 |                       23 |
-| fog, MSAA    |                0 |                0 |              39 |                       23 |
+| no fog       |                0 |                0 | 39 `drawArrays` | 15 `drawArraysInstanced` |
+| fog          |                0 |                0 |              39 |                       15 |
+| no fog, MSAA |                0 |                0 |              39 |                       15 |
+| fog, MSAA    |                0 |                0 |              39 |                       15 |
 
 The sensitivity control shows about 600 differing pixels (max 58).
 
 **Why 40 records give 39 legacy draws:** legacy skips the zero-alpha layer before drawing. gpu-webgl2 packs it, and the shader discards it.
 
-**Why 23 runs:** the scene changes state on purpose (blend, depth flags, texture class), so the run count is high for its size. Same-state layers of consecutive entities merge into one run.
+**Why 15 runs:** the scene changes state on purpose (blend, depth flags), so the run count is high for its size. It was 23 before sprite runs could mix indexed and RGBA layers (see the batching section below). Same-state layers of consecutive entities merge into one run.
 
 **Legacy behaviour reproduced, and worth flagging:** the palette lookup `texture(LUT, vec2(index/255, 1.0))` runs on a 256-wide `NEAREST` texture with the default `REPEAT` wrap. As a result, **index 255 shows palette entry 0**. The new shader reproduces this, and parity confirms it: a variant that looks up entry 255 differs on about 6.8 % of pixels. The bilinear palette step is also `1/uTextSize` with `uTextSize = 2 × frame size`, half a texel. Records may carry `paletteSize`; otherwise it defaults to 2× the frame size.
 
@@ -131,30 +131,40 @@ therefore the realistic ones.
 
 | Frame                                | Records | Max channel diff | Pixels differing | Legacy `drawArrays` | gpu-webgl2 `drawArraysInstanced` | Uploads on miss |
 | ------------------------------------ | ------: | ---------------: | ---------------: | ------------------: | -------------------------------: | --------------: |
-| t = 120 ms                           |    1052 |                0 |                0 |                1052 |                      648 (1.62×) |              86 |
-| t = 520 ms, fog, after full eviction |    1043 |                0 |                0 |                1043 |                      594 (1.76×) |              91 |
-| t = 1240 ms, after context purge     |     954 |                0 |                0 |                 954 |                      537 (1.78×) |              88 |
+| t = 120 ms                           |    1052 |                0 |                0 |                1052 |                      330 (3.19×) |              86 |
+| t = 520 ms, fog, after full eviction |    1043 |                0 |                0 |                1043 |                      327 (3.19×) |              91 |
+| t = 1240 ms, after context purge     |     954 |                0 |                0 |                 954 |                      282 (3.38×) |              88 |
 
 - The MSAA run (`:aa`) also gives 0 px on all three frames.
 - The sensitivity control differs on about 9.2k px (max 72).
 - The #64 control differs on about 18.2k px (max 210).
 - GL errors: none on either context.
 
-**Why the batching ratio is only about 1.7×.** Runs never reorder; they break only on state changes. In this stream:
+**Batching: about 3.2× since sprite runs mix texture classes.** Runs never reorder; they break only on state changes.
+Before, they also broke on every indexed ↔ RGBA change (648 / 594 / 537 draws, about 1.7×). Now gpu-webgl2 batches by a
+backend-local `batchKey` (`src/batching/runs.js`): render-records' `pipelineKey` without the sprite texture class.
+`pipelineKey` itself stays identical to render-records (`test/contract/recordsDrift.test.js`), and that test also
+proves batchKey ⊆ pipelineKey: two records share a batch only if kind, blend pair, depth test, depth write and STR
+attachment are equal, so a batch is always a union of whole render-records runs.
 
-| Frame | Breaks on texture class (indexed ↔ RGBA) | Breaks on depth write | Breaks on blend |
-| ----- | ---------------------------------------: | --------------------: | --------------: |
-| 1     |                                      452 |                   326 |              74 |
-| 2     |                                      390 |                   323 |              74 |
-| 3     |                                      368 |                   279 |              24 |
+- **Shader.** `aLayer.w` carries a per-instance sampling mode (`SPRITE_SAMPLING`: 0 RGBA nearest, 1 RGBA linear,
+  2 indexed) in place of the `uIndexedRun` uniform; `sprite.frag` branches on it per instance.
+- **Texture units.** Every sprite run binds the palette table and both array sets (r8 and rgba8, 5 POT classes each):
+  11 fragment units, under the 16 every WebGL2 context guarantees. If `MAX_TEXTURE_IMAGE_UNITS` reports fewer than 11,
+  `SpritePipeline.mixedClasses` is false: the program is built with `SPRITE_SPLIT_CLASSES` (one set on units 1..5,
+  6 units), the run's class set is rebound per run, and `splitBatches` splits on texture class again (verified by
+  forcing it on this page: 0 px, 648 / 594 / 537 draws).
 
-A break can count under more than one column. A typical PC alternates:
+What still breaks runs in this stream (`changes`: consecutive records whose state differs; `batch`: the subset at real
+draw boundaries):
 
-- shadow (RGBA, no depth write);
-- body and head (indexed);
-- headgears and weapon (RGBA).
+| Frame | Texture-class changes (all / at a draw boundary) | Depth-write changes | Blend changes |
+| ----- | -----------------------------------------------: | ------------------: | ------------: |
+| 1     |                                        452 / 134 |                 326 |            74 |
+| 2     |                                        390 / 123 |                 323 |            74 |
+| 3     |                                        368 / 113 |                 279 |            24 |
 
-Mob bodies draw without depth write. So the realistic stream gives short runs: 1.6–1.8 layers per run on average,
-and up to 7 for groups of same-state layers. The largest remaining win is to let one run mix indexed and RGBA layers, for example with
-a per-instance class flag in place of the `uIndexedRun` uniform. That removes the texture-class breaks without
-reordering anything.
+The texture-class changes left at a boundary coincide with a depth-write or blend change; they no longer cause a break
+on their own. **Depth write is now the dominant break** (about 280–326 per frame): a PC's shadow and a mob's body draw
+without depth write, the rest with it. `depthMask` is GL pipeline state, not per-fragment state, so it cannot change
+inside one draw call, so runs keep splitting on it; merging them is not attempted.

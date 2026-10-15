@@ -24,6 +24,18 @@ export function resolveIncludes(src) {
 	});
 }
 
+/**
+ * Insert `#define` lines right after the `#version` line.
+ * @param {string} src
+ * @param {ReadonlyArray<string>} defines
+ */
+export function withDefines(src, defines) {
+	if (defines.length === 0) {
+		return src;
+	}
+	return src.replace(/^(\s*#version[^\n]*\n)/, `$1${defines.map(d => `#define ${d}\n`).join('')}`);
+}
+
 export const SHADERS = Object.freeze({
 	spriteVert,
 	spriteFrag: resolveIncludes(spriteFrag),

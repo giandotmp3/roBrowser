@@ -4,10 +4,15 @@ export { ContextLossController } from './device/ContextLossController.js';
 export { onRenderError } from './device/frameErrorPolicy.js';
 export { GLStateCache } from './pipeline/GLStateCache.js';
 export { toGlBlend, GL_BLEND_FACTOR } from './pipeline/blendMap.js';
-export { splitRuns, pipelineKey } from './batching/runs.js';
+export { splitRuns, pipelineKey, splitBatches, batchKey } from './batching/runs.js';
 export { RunRenderer } from './batching/RunRenderer.js';
 export { InstanceRing } from './batching/InstanceRing.js';
-export { packSpriteInstance, SPRITE_INSTANCE_ATTRIBUTES, SPRITE_INSTANCE_FLOATS } from './batching/instanceLayout.js';
+export {
+	packSpriteInstance,
+	SPRITE_INSTANCE_ATTRIBUTES,
+	SPRITE_INSTANCE_FLOATS,
+	SPRITE_SAMPLING
+} from './batching/instanceLayout.js';
 export { SpritePipeline } from './sprites/SpritePipeline.js';
 export { fromLegacySpriteRecord } from './sprites/legacyRecord.js';
 export { Residency } from './residency/Residency.js';

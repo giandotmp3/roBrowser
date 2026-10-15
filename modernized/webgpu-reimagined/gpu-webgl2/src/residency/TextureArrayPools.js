@@ -2,12 +2,19 @@ import { GL } from '../pipeline/glEnums.js';
 import { PALETTE_WIDTH, POT_CLASSES } from '../constants.js';
 import { DeviceLimitError } from '../errors.js';
 
-/** Texture units used by the sprite program (11 of the 16 WebGL2 guarantees). */
+/**
+ * Texture units used by the sprite program. Mixed-class runs bind both sets:
+ * 11 units, within the 16 WebGL2 guarantees (MAX_TEXTURE_IMAGE_UNITS ≥ 16).
+ * The split-class fallback binds one set on the `indexed` units: 6 units.
+ */
 export const SPRITE_TEXTURE_UNITS = Object.freeze({
 	palette: 0,
-	indexed: 1, // 1..5: r8 pools by POT class
+	indexed: 1, // 1..5: r8 pools by POT class (split fallback: the run's class)
 	rgba: 1 + POT_CLASSES.length // 6..10: rgba8 pools by POT class
 });
+
+/** Fragment texture units a mixed-class sprite run needs (palette + 2 sets). */
+export const SPRITE_MIXED_TEXTURE_UNITS = 1 + 2 * POT_CLASSES.length;
 
 /**
  * Copy a tightly packed `width`×`height` image into the top-left corner of a
@@ -166,8 +173,13 @@ export class TextureArrayPools {
 		return this._dummies[format];
 	}
 
-	/** Bind the palette table and every class pool to the units in SPRITE_TEXTURE_UNITS. */
-	bind() {
+	/**
+	 * Bind the palette table and every class pool to the units in SPRITE_TEXTURE_UNITS.
+	 * With `only` (split-class fallback), bind just that class's pools, on the
+	 * `indexed` units.
+	 * @param {'indexed'|'rgba'} [only]
+	 */
+	bind(only) {
 		const { gl } = this;
 		if (!this.paletteTexture) {
 			this.uploadPalette(0, new Uint8Array(PALETTE_WIDTH * 4));
@@ -180,6 +192,11 @@ export class TextureArrayPools {
 		gl.activeTexture(GL.TEXTURE0 + SPRITE_TEXTURE_UNITS.palette);
 		gl.bindTexture(GL.TEXTURE_2D, this.paletteTexture);
 		POT_CLASSES.forEach((_, i) => {
+			if (only) {
+				gl.activeTexture(GL.TEXTURE0 + SPRITE_TEXTURE_UNITS.indexed + i);
+				gl.bindTexture(GL.TEXTURE_2D_ARRAY, arrays[2 * i + (only === 'indexed' ? 0 : 1)]);
+				return;
+			}
 			gl.activeTexture(GL.TEXTURE0 + SPRITE_TEXTURE_UNITS.indexed + i);
 			gl.bindTexture(GL.TEXTURE_2D_ARRAY, arrays[2 * i]);
 			gl.activeTexture(GL.TEXTURE0 + SPRITE_TEXTURE_UNITS.rgba + i);

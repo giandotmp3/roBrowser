@@ -1,11 +1,13 @@
-import { splitRuns } from './runs.js';
+import { splitBatches } from './runs.js';
 import { packSpriteInstance, SPRITE_INSTANCE_FLOATS } from './instanceLayout.js';
 import { SpritePipeline } from '../sprites/SpritePipeline.js';
 
 /**
- * Draws an ordered record stream as contiguous runs. Sprites are instanced
- * quads (4-vertex strip × N instances) sampling texture-array pools; effects
- * and world records dispatch to their family renderers.
+ * Draws an ordered record stream as contiguous runs (`splitBatches`: pipeline
+ * state runs, with indexed and RGBA sprite layers merged into one run when the
+ * sprite program can bind both array sets). Sprites are instanced quads
+ * (4-vertex strip × N instances) sampling texture-array pools; effects and
+ * world records dispatch to their family renderers.
  *
  * Holds no rendering rules: every value comes from the records.
  */
@@ -44,7 +46,7 @@ export class RunRenderer {
 		// Upload-on-miss before anything is bound: a first upload may create a pool
 		// texture, and creating or filling one rebinds texture units.
 		this.lastUploads = this.residency.prepare?.(records) ?? 0;
-		this.lastRuns = splitRuns(records);
+		this.lastRuns = splitBatches(records, { mixTextureClasses: this.sprites.mixedClasses });
 		let spritesBound = false;
 		for (const run of this.lastRuns) {
 			const head = /** @type {any} */ (records[run.start]);
@@ -79,7 +81,7 @@ export class RunRenderer {
 	 * @param {ReadonlyArray<import('../ports.js').SpriteRecord>} records
 	 * @param {number} start
 	 * @param {number} count
-	 * @param {string} textureClass
+	 * @param {'indexed'|'rgba'} textureClass  Head record's class (split fallback only)
 	 */
 	_drawSpriteRun(records, start, count, textureClass) {
 		const need = count * SPRITE_INSTANCE_FLOATS;
@@ -91,7 +93,7 @@ export class RunRenderer {
 			const record = records[i];
 			offset = packSpriteInstance(record, this.residency.slotOf(record, this._slot), this._instances, offset);
 		}
-		this.sprites.drawRun(this._instances.subarray(0, offset), count, textureClass === 'indexed');
+		this.sprites.drawRun(this._instances.subarray(0, offset), count, textureClass);
 		this.lastDrawCalls++;
 	}
 }

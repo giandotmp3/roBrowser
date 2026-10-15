@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { Residency } from '../../src/residency/Residency.js';
-import { padLayer, SPRITE_TEXTURE_UNITS, TextureArrayPools } from '../../src/residency/TextureArrayPools.js';
+import {
+	padLayer,
+	SPRITE_MIXED_TEXTURE_UNITS,
+	SPRITE_TEXTURE_UNITS,
+	TextureArrayPools
+} from '../../src/residency/TextureArrayPools.js';
 import {
 	packSpriteInstance,
 	SPRITE_INSTANCE_ATTRIBUTES,
 	SPRITE_INSTANCE_FLOATS,
-	SPRITE_INSTANCE_STRIDE
+	SPRITE_INSTANCE_STRIDE,
+	SPRITE_SAMPLING
 } from '../../src/batching/instanceLayout.js';
 import { InstanceRing } from '../../src/batching/InstanceRing.js';
 import { RunRenderer } from '../../src/batching/RunRenderer.js';
@@ -14,6 +20,7 @@ import { GL } from '../../src/pipeline/glEnums.js';
 import { SHADERS } from '../../src/shaders/index.js';
 import { invert, multiply } from '../../src/math.js';
 import { DeviceLimitError } from '../../src/errors.js';
+import { POT_CLASSES } from '../../src/constants.js';
 import { createFakeGl } from '../support/fakeGl.js';
 import { ADDITIVE, effect, sprite } from '../support/records.js';
 
@@ -169,17 +176,30 @@ describe('instance packing (one record → one instance)', () => {
 		expect(out[5]).toBe(Math.fround((-64 / 175) * 4)); // mirror = negative width
 		expect(out[6]).toBe(Math.fround((128 / 175) * 5));
 		expect([out[7], out[8]]).toEqual([1, 0]); // angle 0 → identity rotation
-		expect(Array.from(out.subarray(18, 26))).toEqual([3, 2, 2, 0, 64, 128, 128, 256]);
+		expect(Array.from(out.subarray(18, 26))).toEqual([3, 2, 2, SPRITE_SAMPLING.indexed, 64, 128, 128, 256]);
 	});
 
 	it('rotation is (cos, sin) of −angle; paletteSize overrides the 2× default; linear sampler flag', () => {
 		const out = new Float32Array(SPRITE_INSTANCE_FLOATS);
-		const r = sprite({ angle: 90, sampler: 'linear', paletteSize: [10, 20] });
+		const r = sprite({ angle: 90, textureClass: 'rgba', palette: null, sampler: 'linear', paletteSize: [10, 20] });
 		packSpriteInstance(r, { layer: 0, paletteRow: -1, width: 32, height: 32 }, out, 0);
 		expect(out[7]).toBe(Math.fround(Math.cos(-Math.PI / 2)));
 		expect(out[8]).toBe(-1);
-		expect(out[21]).toBe(1);
+		expect(out[21]).toBe(SPRITE_SAMPLING.rgbaLinear);
 		expect([out[24], out[25]]).toEqual([10, 20]);
+	});
+
+	it('aLayer.w carries the texture class: indexed ignores the sampler, RGBA keeps nearest/linear', () => {
+		const out = new Float32Array(SPRITE_INSTANCE_FLOATS);
+		const slot = { layer: 0, paletteRow: 0 };
+		const mode = r => (packSpriteInstance(r, slot, out, 0), out[21]);
+		expect(mode(sprite({ sampler: 'linear' }))).toBe(SPRITE_SAMPLING.indexed);
+		expect(mode(sprite({ textureClass: 'rgba', palette: null }))).toBe(SPRITE_SAMPLING.rgbaNearest);
+		expect(mode(sprite({ textureClass: 'rgba', palette: null, sampler: 'linear' }))).toBe(
+			SPRITE_SAMPLING.rgbaLinear
+		);
+		expect(SHADERS.spriteFrag).toContain('vLayer.w > 1.5 ? sampleIndexed() : sampleRgba()');
+		expect(SHADERS.spriteFrag).not.toContain('uIndexedRun');
 	});
 
 	it('packs depth flags, zIndex, depth bias, colour and shadow in place', () => {
@@ -234,19 +254,45 @@ describe('sprite runs on the GL pipeline', () => {
 
 	it('compiles the program once and issues one drawArraysInstanced per run, in record order', () => {
 		const { gl, rr } = setup();
-		const recs = [sprite(), sprite(), sprite({ blend: ADDITIVE }), sprite({ textureClass: 'rgba', palette: null })];
+		const rgba = sprite({ textureClass: 'rgba', palette: null });
+		const recs = [sprite(), sprite(), sprite({ blend: ADDITIVE }), rgba];
 		rr.draw(recs);
 		rr.draw(recs);
 		expect(gl.callsTo('createProgram')).toHaveLength(1);
 		expect(gl.callsTo('drawArraysInstanced').map(c => c[4])).toEqual([2, 1, 1, 2, 1, 1]);
 		expect(rr.lastDrawCalls).toBe(3);
 		expect(rr.lastRuns.map(r => r.count)).toEqual([2, 1, 1]);
-		// uIndexedRun follows the run's texture class
-		const indexedFlags = gl
-			.callsTo('uniform1i')
-			.filter(c => c[1]?.uniform === 'uIndexedRun')
-			.map(c => c[2]);
-		expect(indexedFlags).toEqual([1, 0, 1, 0]);
+	});
+
+	it('mixes indexed and RGBA layers in one run, binding both array sets once per frame', () => {
+		const { gl, rr } = setup();
+		const rgba = sprite({ textureClass: 'rgba', palette: null, sampler: 'linear' });
+		rr.draw([sprite(), rgba, sprite(), rgba, sprite({ depthWrite: false })]);
+		expect(gl.callsTo('drawArraysInstanced').map(c => c[4])).toEqual([4, 1]);
+		expect(rr.lastRuns.map(r => r.count)).toEqual([4, 1]);
+		const modes = Array.from(gl.callsTo('bufferSubData')[0][3]).filter((_, i) => i % SPRITE_INSTANCE_FLOATS === 21);
+		expect(modes).toEqual([2, 1, 2, 1]);
+		const arrayBinds = gl.callsTo('bindTexture').filter(c => c[1] === GL.TEXTURE_2D_ARRAY);
+		expect(arrayBinds).toHaveLength(2 * POT_CLASSES.length + 2); // + the two dummy arrays' creation binds
+		expect(SPRITE_MIXED_TEXTURE_UNITS).toBe(11);
+	});
+
+	it('falls back to class-split runs below 11 texture units, one array set per run', () => {
+		const gl = createFakeGl({ limits: { [GL.MAX_TEXTURE_IMAGE_UNITS]: 8 } });
+		const residency = new Residency({ uploader: new TextureArrayPools({ gl }), now: () => 0 });
+		const rr = new RunRenderer({ gl, state: new GLStateCache(gl), residency });
+		const rgba = sprite({ textureClass: 'rgba', palette: null });
+		rr.draw([sprite(), rgba, rgba, sprite()]);
+		expect(rr.sprites.mixedClasses).toBe(false);
+		expect(gl.callsTo('drawArraysInstanced').map(c => c[4])).toEqual([1, 2, 1]);
+		const fragment = gl.callsTo('shaderSource').map(c => c[2])[1];
+		expect(fragment).toMatch(/^#version 300 es\r?\n#define SPRITE_SPLIT_CLASSES\n/);
+		// Units 1..5 only, rebound when the run class changes: indexed, rgba, indexed.
+		const units = gl.callsTo('activeTexture').map(c => c[1] - GL.TEXTURE0);
+		expect(Math.max(...units)).toBe(POT_CLASSES.length);
+		expect(gl.callsTo('bindTexture').filter(c => c[1] === GL.TEXTURE_2D_ARRAY)).toHaveLength(
+			3 * POT_CLASSES.length + 2 // + the two dummy arrays' creation binds
+		);
 	});
 
 	it('points the instance attributes at each run’s base offset in the ring', () => {

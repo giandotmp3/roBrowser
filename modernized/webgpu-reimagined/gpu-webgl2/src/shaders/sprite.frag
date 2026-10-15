@@ -9,10 +9,19 @@ precision highp float;
 precision highp int;
 precision highp sampler2DArray;
 
+// One run may mix indexed and RGBA layers: both array sets are bound for every run
+// (11 units) and each instance picks its path from vLayer.w (SPRITE_SAMPLING:
+// 0 RGBA nearest, 1 RGBA linear, 2 indexed). SPRITE_SPLIT_CLASSES is the fallback for
+// a context with fewer than 11 fragment texture units: one set on units 1..5, and
+// runs split on texture class again (SpritePipeline.mixedClasses).
+#ifdef SPRITE_SPLIT_CLASSES
+uniform sampler2DArray uIndexed[5];   // the run's class pools (r8 NEAREST or rgba8 LINEAR)
+#define uRgba uIndexed
+#else
 uniform sampler2DArray uIndexed[5];   // r8 pools, NEAREST
 uniform sampler2DArray uRgba[5];      // rgba8 pools, LINEAR
+#endif
 uniform highp sampler2D uPalettes;    // 256xN RGBA table, NEAREST
-uniform bool uIndexedRun;
 
 in vec2 vUv;
 flat in vec4 vColor;
@@ -118,7 +127,8 @@ void main() {
 		discard;
 	}
 
-	vec4 textureSample = uIndexedRun ? sampleIndexed() : sampleRgba();
+	// Per-instance class branch (flat varying: uniform within a primitive).
+	vec4 textureSample = vLayer.w > 1.5 ? sampleIndexed() : sampleRgba();
 	if (textureSample.a == 0.0) {
 		discard;
 	}

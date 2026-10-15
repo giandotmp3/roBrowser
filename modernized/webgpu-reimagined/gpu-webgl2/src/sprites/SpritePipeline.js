@@ -1,9 +1,9 @@
 import { GL } from '../pipeline/glEnums.js';
 import { createProgram } from '../pipeline/glProgram.js';
-import { SHADERS } from '../shaders/index.js';
+import { SHADERS, withDefines } from '../shaders/index.js';
 import { InstanceRing } from '../batching/InstanceRing.js';
 import { SPRITE_INSTANCE_ATTRIBUTES, SPRITE_INSTANCE_STRIDE } from '../batching/instanceLayout.js';
-import { SPRITE_TEXTURE_UNITS } from '../residency/TextureArrayPools.js';
+import { SPRITE_MIXED_TEXTURE_UNITS, SPRITE_TEXTURE_UNITS } from '../residency/TextureArrayPools.js';
 import { POT_CLASSES } from '../constants.js';
 import { identity, invert } from '../math.js';
 
@@ -21,9 +21,11 @@ const UNIFORMS = Object.freeze([
 	'uFogColor',
 	'uIndexed[0]',
 	'uRgba[0]',
-	'uPalettes',
-	'uIndexedRun'
+	'uPalettes'
 ]);
+
+/** WebGL2's guaranteed MAX_TEXTURE_IMAGE_UNITS, assumed when the query gives nothing. */
+const WEBGL2_MIN_TEXTURE_UNITS = 16;
 
 /**
  * @typedef {Object} SpriteView  Per-frame inputs (legacy SpriteRenderer.bind3DContext)
@@ -52,7 +54,25 @@ export class SpritePipeline {
 		/** @type {Record<string, WebGLUniformLocation|null>} */
 		this.uniform = {};
 		this._viewModel = new Float32Array(16);
-		this._indexedRun = null;
+		/** @type {boolean|null} */
+		this._mixed = null;
+		/** Split fallback: class whose pools are bound on the `indexed` units. */
+		this._boundClass = null;
+	}
+
+	/**
+	 * Whether one run may mix indexed and RGBA layers: true when the context has
+	 * the SPRITE_MIXED_TEXTURE_UNITS (11) fragment texture units both array sets
+	 * need. Every WebGL2 context has at least 16, so the split fallback (one set
+	 * per run, runs split on texture class) exists only for non-conformant
+	 * drivers. RunRenderer passes this to `splitBatches`.
+	 */
+	get mixedClasses() {
+		if (this._mixed === null) {
+			const units = this.gl.getParameter(GL.MAX_TEXTURE_IMAGE_UNITS) || WEBGL2_MIN_TEXTURE_UNITS;
+			this._mixed = units >= SPRITE_MIXED_TEXTURE_UNITS;
+		}
+		return this._mixed;
 	}
 
 	_ensure() {
@@ -60,7 +80,8 @@ export class SpritePipeline {
 			return;
 		}
 		const { gl } = this;
-		this.program = createProgram(gl, SHADERS.spriteVert, SHADERS.spriteFrag);
+		const fragment = withDefines(SHADERS.spriteFrag, this.mixedClasses ? [] : ['SPRITE_SPLIT_CLASSES']);
+		this.program = createProgram(gl, SHADERS.spriteVert, fragment);
 		for (const name of UNIFORMS) {
 			this.uniform[name] = gl.getUniformLocation(this.program, name);
 		}
@@ -106,30 +127,33 @@ export class SpritePipeline {
 			uniform['uIndexed[0]'],
 			POT_CLASSES.map((_, i) => SPRITE_TEXTURE_UNITS.indexed + i)
 		);
-		gl.uniform1iv(
-			uniform['uRgba[0]'],
-			POT_CLASSES.map((_, i) => SPRITE_TEXTURE_UNITS.rgba + i)
-		);
-		this._indexedRun = null;
-		this.pools?.bind?.();
+		if (this.mixedClasses) {
+			gl.uniform1iv(
+				uniform['uRgba[0]'],
+				POT_CLASSES.map((_, i) => SPRITE_TEXTURE_UNITS.rgba + i)
+			);
+			this.pools?.bind?.();
+		}
+		this._boundClass = null;
 		gl.bindVertexArray(this.vao);
 	}
 
 	/**
 	 * One run = one instanced draw.
-	 * @param {Float32Array} instances  Packed with packSpriteInstance
+	 * @param {Float32Array} instances  Packed with packSpriteInstance (aLayer.w carries the class)
 	 * @param {number} count
-	 * @param {boolean} indexed  Run texture class (runs never mix classes)
+	 * @param {'indexed'|'rgba'} [textureClass]  Run texture class; used only by the split
+	 *   fallback, where a run never mixes classes
 	 */
-	drawRun(instances, count, indexed) {
+	drawRun(instances, count, textureClass) {
 		const { gl } = this;
 		const base = this.ring.write(instances);
 		for (const { location, size, offset } of SPRITE_INSTANCE_ATTRIBUTES) {
 			gl.vertexAttribPointer(location, size, GL.FLOAT, false, SPRITE_INSTANCE_STRIDE, base + offset);
 		}
-		if (this._indexedRun !== indexed) {
-			gl.uniform1i(this.uniform.uIndexedRun, indexed ? 1 : 0);
-			this._indexedRun = indexed;
+		if (!this.mixedClasses && this._boundClass !== textureClass) {
+			this.pools?.bind?.(textureClass);
+			this._boundClass = textureClass;
 		}
 		gl.drawArraysInstanced(GL.TRIANGLE_STRIP, 0, 4, count);
 	}
@@ -145,6 +169,7 @@ export class SpritePipeline {
 		this.vao = null;
 		this.quad = null;
 		this.uniform = {};
+		this._mixed = null;
 		this.ring.reset();
 	}
 }
