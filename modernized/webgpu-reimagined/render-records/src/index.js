@@ -31,7 +31,6 @@ export * from './damage/DamageNumber.js';
 export * from './gr2/GR2Pose.js';
 export * from './world/water.js';
 export * from './world/animatedRsm.js';
-export * from './ui/lifeBar.js';
 
 export { NotImplementedError } from './util/errors.js';
 export { defaultClock, defaultRng } from './util/injectables.js';

@@ -3,7 +3,9 @@
  * WebGPU/SwiftShader; bloom golden WebGPU-only.
  *
  * Page contract (served by the app under test at HARNESS_SMOKE_URL, never hard-coded):
- *   window.__harness.load({ scene, renderer, seed }) -> Promise<void>   scene id from GoldenSet
+ *   window.__harness.load({ scene, renderer, seed, allowSoftwareAdapter }) -> Promise<void>
+ *     scene id from GoldenSet; allowSoftwareAdapter is passed to gpu-webgpu's bloomSupported so
+ *     R-PP-004's SwiftShader bloom disable does not blank the WebGPU bloom golden
  *   window.__harness.settle(ms)                       -> Promise<void>  advance the FakeClock
  *   window.__harness.capture()                        -> Promise<{ width, height, data: number[] }>
  *     (in-frame capture after VerticalFlip, architecture §2.2 Capture)
@@ -62,7 +64,8 @@ test.describe('smoke goldens', () => {
 			await page.evaluate(args => window.__harness.load(args), {
 				scene: golden.id,
 				renderer: backend,
-				seed: golden.seed
+				seed: golden.seed,
+				allowSoftwareAdapter: backend === 'webgpu'
 			});
 			await page.evaluate(ms => window.__harness.settle(ms), golden.settle);
 			const actual = await page.evaluate(() => window.__harness.capture());

@@ -1,6 +1,7 @@
 /**
  * C-14 GR2 pose/anim (R-GR2-003..005), C-05 animated RSM CPU matrices
- * (R-MAP-016/017), water alpha fix (R-MAP-010) and life-bar fix (R-UI-002).
+ * (R-MAP-016/017),
+ * and water alpha fix (R-MAP-010). The R-UI-002 life-bar fix is owned by scene.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -11,9 +12,7 @@ import {
 	gr2FrameState,
 	gr2Visible,
 	gr2Yaw,
-	hpColor,
 	keyframePosition,
-	lifeBarLayout,
 	matrixUpdateBucket,
 	poseCacheKey,
 	quantisePoseTime,
@@ -88,26 +87,5 @@ describe('flagged-bug fixes shared by both backends', () => {
 		expect(w.alpha).toBe(0.8);
 		expect(w.alpha).not.toBeCloseTo(0.64);
 		expect(w).toMatchObject({ depthTest: true, depthWrite: false });
-	});
-
-	it('R-UI-002 FIX (legacy drew AP and hunger both at y = 9): every extra bar gets its own row', () => {
-		const full = lifeBarLayout({ kind: 'other', hp: 50, hpMax: 100, sp: 1, spMax: 2, ap: 1, apMax: 2, fourthClass: true, hunger: 1, hungerMax: 2, isPc: true });
-		expect(full.bars.map(b => [b.name, b.y])).toEqual([
-			['hp', 1],
-			['sp', 5],
-			['ap', 9],
-			['hunger', 13]
-		]);
-		expect(full.height).toBe(17);
-		expect(full.width).toBe(60);
-		expect(full.zIndex).toBe(2);
-		const noAp = lifeBarLayout({ kind: 'other', hp: 1, hpMax: 1, ap: 1, apMax: 2, fourthClass: false });
-		expect(noAp.bars.map(b => b.name)).toEqual(['hp']);
-		expect(noAp.height).toBe(5);
-		expect(hpColor('mob', 0.5)).toBe('#FF00E7');
-		expect(hpColor('pet', 0.5)).toBe('#FFE7E7');
-		expect(hpColor('other', 0.5)).toBe('#10ef21');
-		expect(hpColor('other', 0.2)).toBe('#FF0000');
-		expect(hpColor('mob', 0.2)).toBe('#FFFF00');
 	});
 });

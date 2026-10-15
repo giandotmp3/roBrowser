@@ -115,7 +115,7 @@ R-EFX-018|gpu|record|Poison screen tint
 R-DMG-001|render-records|record|Lifetime and colour
 R-DMG-002|render-records|record|Normal hit motion
 R-DMG-003|render-records|record|Heal motion
-!R-DMG-004|render-records|record|Miss and Lucky visible for their whole life (fixed)
+!R-DMG-004|render-records|record|Miss and Lucky live exactly as long as visible, 800 ms (fixed)
 R-DMG-005|render-records|record|Combo title
 R-DMG-006|render-records|record|Critical background
 R-DMG-007|render-records|record|Number texture

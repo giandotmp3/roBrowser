@@ -117,6 +117,8 @@ describe('R-MAP-009 water texture animation', () => {
 	it('index = floor(frame/animSpeed) % 32', () => {
 		expect(waterFrameIndex(1100, 3)).toBe(Math.floor(66 / 3) % 32);
 		expect(waterFrameIndex(1000 * 10, 1)).toBe(600 % 32);
+		// exact on frame boundaries (legacy tick/(1000/60) gave 59.99… at tick 1000)
+		expect(waterFrameIndex(1000, 1)).toBe(60 % 32);
 	});
 });
 

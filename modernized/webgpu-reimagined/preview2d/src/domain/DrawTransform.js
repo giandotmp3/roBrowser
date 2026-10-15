@@ -4,8 +4,9 @@ import { CELL_MIDDLE_Y } from '../constants.js';
  * Canvas2D transform for one SpriteDraw record (legacy RenderCanvas2D,
  * SpriteRenderer.js:252-290).
  *
- * In the 2D path the record's `offset` and `size` are **pixels** (render-records
- * emits them with the bind2DContext sprite size of 5, i.e. 1 px per sprite px).
+ * SpriteDraw `offset` and `size` are sprite **pixels** (render-records contract,
+ * same as legacy `SpriteRenderer.size/offset`); the 2D path draws them as-is.
+ * Only the 3D backends convert to world units (render-records `spriteToWorld`).
  *
  * Mirroring: a negative size component, or `mirror: true` on the record, flips
  * that axis via `scale(-1, ...)`; the drawn size is always positive.

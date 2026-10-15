@@ -70,10 +70,10 @@ npm test               # vitest run
 | scene | 87 | 16 | 0 |
 | render-records | 129 | 12 | 0 |
 | gpu-webgpu | 128 | 8 | 0 |
-| gpu-webgl2 | 189 | 3 | 0 |
+| gpu-webgl2 | 192 | 3 | 0 |
 | preview2d | 30 | 3 | 0 |
 | test-harness | 34 | 143 (all rule tests, until a subject adapter exists) | 10 (parity, until reference and subject modules are set) |
-| **Total** | **597** | **185** | **10** |
+| **Total** | **600** | **185** | **10** |
 
 **Not yet validated:**
 - WGSL has not been compiled; no GPU or WGSL compiler was available.
@@ -100,7 +100,7 @@ Rule IDs are defined in spec §5. Legacy paths are relative to `src/`.
 | R-PP-001…010/012 | `Effects/PostProcess.js`, `Effects/Shaders/*` | gpu-webgpu, gpu-webgl2 |
 | R-PP-011 (Illusion flip; fix mirrors picking and overlays) | `ScreenEffectManager.js`, `Map/Altitude.js`, `SignboardManager.js` | scene (+ backends for the flip pass) |
 | R-PICK-* | `Map/Altitude.js`, `EntityManager.js`, `Entity/EntityRender.js`, `GR2/GR2ModelRenderer.js` | scene |
-| R-UI-001…004 | `Entity/Entity{Life,Display,Dialog,Cast,Room,Emblem}.js`, `SignboardManager.js` | scene (R-UI-002 layout fix also in render-records; see open issues) |
+| R-UI-001…004 | `Entity/Entity{Life,Display,Dialog,Cast,Room,Emblem}.js`, `SignboardManager.js` | scene |
 | R-UI-005 (cursor) | `UI/CursorManager.js` | preview2d (CursorDriver) + scene (calls it) |
 | R-PERF-001/002 | `EntityManager.js`, `EffectManager.js`, `PostProcess.js` | scene |
 | R-PERF-003/004 (mipmaps, model batching) | `Utils/WebGL.js`, `Map/Models.js` | gpu-webgpu, gpu-webgl2 |
@@ -109,25 +109,30 @@ Rule IDs are defined in spec §5. Legacy paths are relative to `src/`.
 | GPU uploads outside the renderer (C-16) | `Core/Client.js:291-372`, `Core/MemoryManager.js:205-261` | gpu-webgpu / gpu-webgl2 residency |
 | Map-loader worker (C-17) | `Loaders/MapLoader.js`, `Core/Thread.js`, `Core/ThreadEventHandler.js` | backends (`acceptMapMessage`), payload shapes unchanged, transferable |
 
-## Open issues found during scaffolding (resolve before integration)
+## Integration decisions (resolved after scaffolding)
 
-1. **R-DMG-004 fix disagreement.** render-records shortens the Miss/Lucky lifetime to 800 ms. The test-harness test asserts that the text stays visible until removal. Both remove the invisible tail, but the assertions conflict, so pick one.
-2. **R-PP-004 vs smoke goldens.** The rule disables bloom on Chrome + SwiftShader + Intel. gpu-webgpu added an `allowSoftwareAdapter` opt-in, which the harness must set to produce bloom goldens.
-3. **R-MAP-008/009 water frame.** gpu-webgpu computes `tick*60/1000`, which fixes frame drops at boundaries. gpu-webgl2 keeps the legacy `tick/(1000/60)`. The backends must agree.
-4. **Ownership overlaps:**
-   - The life-bar layout exists in both `scene/src/domain/LifeBar.js` and `render-records/src/ui/lifeBar.js`.
-   - The cursor boundary sits between preview2d and scene.
-   - R-MAP-010 and R-EFX-010 are split between the record side and the shader side.
-5. **Record units for 2D.** preview2d assumes `SpriteDraw` records aimed at 2D targets are in pixels, while render-records documents world units. Agree on a field or a conversion.
-6. **Copied record shapes.** gpu-webgl2 duplicates the record shapes and pipeline key in `test/support/records.js` and `src/batching/runs.js`. Replace them with imports from render-records once the shapes stabilise.
-7. **Spec ambiguities that need an SME:**
-   - the curve for the R-PP-006 fix (`fxaaSubpix`);
+These were found at scaffold time and settled before phase 1.
+
+1. **R-DMG-004 Miss/Lucky.** The record lives exactly as long as it is visible: **800 ms**. This is the legacy visible window with no invisible tail. render-records and the test-harness now assert the same thing.
+2. **R-PP-004 vs smoke goldens.** The smoke spec passes `allowSoftwareAdapter: true` for the WebGPU backend, so the bloom golden renders on SwiftShader. The rule still holds in production.
+3. **R-MAP-008/009 water frame.** Both backends use `frame = tick·60/1000`. It is exact on integer ticks; the legacy `tick/(1000/60)` dropped a frame at boundaries.
+4. **Ownership:**
+   - **R-UI-002 life bar:** scene owns it (DOM overlay). The render-records copy was removed.
+   - **Cursor (R-UI-005):** preview2d's `CursorDriver` owns the bake, frame rate and hotspots. scene calls `render(tick)` and applies the returned style.
+   - **R-MAP-010 / R-EFX-010:** the record field lives in render-records; the shader applies it in the backends.
+5. **SpriteDraw units.** `size`/`offset` are **sprite pixels**, plus `xSize`/`ySize` (default 5), matching legacy `SpriteRenderer` and the legacy record shim. The 3D backends convert with `spriteToWorld` (render-records); preview2d uses the pixels directly.
+6. **Copied record shapes in gpu-webgl2** stay, so the package builds on its own. `gpu-webgl2/test/contract/recordsDrift.test.js` fails as soon as they diverge from render-records.
+
+## Still open
+
+1. **Spec ambiguities that need an SME:**
+   - the curve for the R-PP-006 fix (`fxaaSubpix`; scaffold: 0 = legacy result);
    - the R-MAP-022 cloud envelope;
    - the R-MAP-011 corner convention;
-   - the R-UI-005 multiplier ("others 1.0" vs the legacy DEFAULT 2.0);
+   - the R-UI-005 multiplier (legacy table kept; one `it.fails` pins the spec wording);
    - the R-SPR-007 zIndex list vs the appendix.
-8. **gpu-webgl2 is not yet a working renderer.** Shader compilation, VAOs, the instance buffer, texture binding and post-processing framebuffers are still no-op ports.
-9. **Tooling.**
+2. **gpu-webgl2 is not yet a working renderer.** Shader compilation, VAOs, the instance buffer, texture binding and post-processing framebuffers are still no-op ports.
+3. **Tooling.**
    - `npm install` hits an npm arborist error in this container; use `--legacy-peer-deps`.
    - The root ESLint config needs `globals` installed.
    - The module files use LF line endings, but the repo's `.prettierrc` says CRLF.

@@ -1,14 +1,21 @@
 import { deg2rad } from '../math.js';
-import { WATER_FRAMES, WATER_FRAME_MS, WATER_OPACITY_DEFAULT, WATER_OPAQUE_TYPES, WATER_RSW_SCALE, WATER_UV_REPEAT_TILES } from '../constants.js';
+import { WATER_FRAMES, WATER_OPACITY_DEFAULT, WATER_OPAQUE_TYPES, WATER_RSW_SCALE, WATER_UV_REPEAT_TILES } from '../constants.js';
 
 /** R-MAP-008: RSW wave height and water level are /5. */
 export function waterParamsFromRsw({ level, waveHeight, waveSpeed, wavePitch, animSpeed, type }) {
 	return { level: level / WATER_RSW_SCALE, waveHeight: waveHeight / WATER_RSW_SCALE, waveSpeed, wavePitch, animSpeed, type };
 }
 
-/** R-MAP-008: offset = (frame·speed mod 360) − 180, frame = tick/(1000/60). */
+/**
+ * Frame number at 60 fps. Computed as tick·60/1000 rather than tick/(1000/60):
+ * identical in intent, but exact on integer ticks (the division form yields
+ * 59.999… at tick 1000 and drops a frame at boundaries). Must match gpu-webgpu.
+ */
+const frameAt = tick => (tick * 60) / 1000;
+
+/** R-MAP-008: offset = (frame·speed mod 360) − 180, frame = tick·60/1000. */
 export function waveOffset(tick, waveSpeed) {
-	const frame = tick / WATER_FRAME_MS;
+	const frame = frameAt(tick);
 	return ((frame * waveSpeed) % 360) - 180;
 }
 
@@ -30,9 +37,9 @@ export function waveY(y, x, z, offset, pitch, height) {
 	return y + Math.sin(deg2rad(offset + 0.5 * pitch * (x + z + checkerDiff(x, z)))) * height;
 }
 
-/** R-MAP-009: index = floor(frame/animSpeed) % 32, frame = tick/16.67. */
+/** R-MAP-009: index = floor(frame/animSpeed) % 32, frame = tick·60/1000. */
 export function waterFrameIndex(tick, animSpeed) {
-	return Math.floor(tick / WATER_FRAME_MS / animSpeed) % WATER_FRAMES;
+	return Math.floor(frameAt(tick) / animSpeed) % WATER_FRAMES;
 }
 
 /**

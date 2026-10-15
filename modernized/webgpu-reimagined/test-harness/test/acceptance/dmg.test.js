@@ -48,7 +48,7 @@ describe('DMG', () => {
 
 	rule(
 		'R-DMG-004',
-		'Miss/Lucky stay visible until removed (legacy: invisible 800–1500 ms); Miss only with `miss` pref',
+		'Miss/Lucky live exactly as long as visible: 800 ms (legacy: invisible 800–1500 ms); Miss only with `miss` pref',
 		async s => {
 			const r = await run(
 				s,
@@ -56,10 +56,13 @@ describe('DMG', () => {
 					.damage({ amount: 0, gid: G, type: 'miss' })
 					.frames(100, 16)
 			);
-			// present from spawn through 1500 ms (incl. the legacy-invisible 800–1500 ms window)
-			const live = r.frames.filter(f => f.tick < 1500);
-			expect(live.length).toBeGreaterThan(50);
+			// present and visible for its 800 ms motion, then removed (no invisible tail)
+			const live = r.frames.filter(f => f.tick < 800);
+			expect(live.length).toBeGreaterThan(25);
 			live.forEach(f => expect(damages(f, { damageType: 'miss' })).toHaveLength(1));
+			r.frames
+				.filter(f => f.tick >= 800)
+				.forEach(f => expect(damages(f, { damageType: 'miss' })).toHaveLength(0));
 			for (const f of r.frames) {
 				const m = damages(f, { damageType: 'miss' });
 				m.forEach(d => {
