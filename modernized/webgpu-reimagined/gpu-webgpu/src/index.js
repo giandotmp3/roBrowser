@@ -14,7 +14,16 @@ export { DeviceLossController } from './device/DeviceLossController.js';
 export { OffscreenTarget, sceneSize } from './target/OffscreenTarget.js';
 export { Blit } from './target/Blit.js';
 
-export { toGpuFactor, toGpuBlend, blendConstantFor, D3D_TO_GPU, LEGACY_BLEND_CONSTANT } from './pipelines/blendMap.js';
+export {
+	toGpuFactor,
+	toGpuBlend,
+	blendConstantFor,
+	resolveBlend,
+	usesBlendConstant,
+	isMixedConstantBlend,
+	D3D_TO_GPU,
+	LEGACY_BLEND_CONSTANT
+} from './pipelines/blendMap.js';
 export { pipelineSpecKey, NORMAL, ADDITIVE } from './pipelines/pipelineKey.js';
 export { PipelineSet, describePipeline, expandCensus } from './pipelines/PipelineSet.js';
 
@@ -27,7 +36,8 @@ export {
 	spriteSampler
 } from './residency/spriteFrames.js';
 export { Residency, ArrayPool, PaletteTable } from './residency/Residency.js';
-export { SpriteResidency } from './residency/SpriteResidency.js';
+export { SpriteResidency, RESIDENT_EFFECT_FAMILIES } from './residency/SpriteResidency.js';
+export { decodeImageTexture, unpackViaGl } from './residency/imageTexture.js';
 export { TextureArrayPools, padLayer } from './residency/TextureArrayPools.js';
 
 export { globalLight, skyForMap } from './world/lighting.js';
@@ -74,6 +84,7 @@ export {
 	spriteCensus,
 	packFrameUniforms,
 	spriteBindGroupLayoutEntries,
+	spriteProgramClass,
 	FRAME_UNIFORM_BYTES
 } from './sprites/SpriteRunRenderer.js';
 export {
@@ -88,7 +99,20 @@ export {
 } from './sprites/instanceLayout.js';
 export { fromLegacySpriteRecord } from './sprites/legacyRecord.js';
 export { InstanceRing } from './sprites/InstanceRing.js';
-export { splitRuns, splitBatches, recordRunKey, batchKey } from './sprites/runs.js';
+export { splitRuns, splitBatches, recordRunKey, batchKey, effectProgram, programOf } from './sprites/runs.js';
+export { RunRenderer } from './batching/RunRenderer.js';
+export { encodeBatches } from './batching/encodeBatches.js';
+export { StrPipeline, STR_FAMILY, strSpec, strBindGroupLayoutEntries } from './effects/StrPipeline.js';
+export {
+	packStrInstance,
+	STR_INSTANCE_FIELDS,
+	STR_INSTANCE_ATTRIBUTES,
+	STR_INSTANCE_FLOATS,
+	STR_INSTANCE_STRIDE,
+	STR_VERTEX_BUFFERS
+} from './effects/strInstance.js';
+export { spriteEffectView, spriteEffectClass, isSpriteEffect, SPRITE_EFFECT_FAMILIES } from './effects/spriteEffect.js';
+export { fromLegacyEffectRecord } from './effects/legacyRecord.js';
 export * from './effects/effectState.js';
 export { EffectRenderers } from './effects/EffectRenderers.js';
 export * from './gr2/gr2.js';

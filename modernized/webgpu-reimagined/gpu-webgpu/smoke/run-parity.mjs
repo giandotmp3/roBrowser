@@ -3,13 +3,15 @@
  * WebGPU and WebGL2 both on SwiftShader. Serves smoke/<page>.html with Vite,
  * reads `window.__parity`, prints the stats and writes legacy/modern/diff PNGs.
  *
- *   node smoke/run-parity.mjs [--page=parity|entities] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir] [--flags="--a --b"]
+ *   node smoke/run-parity.mjs [--page=parity|entities|post|effects] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir] [--flags="--a --b"]
  *
  * Pages: `parity` (synthetic SpriteDraw records through the legacy SpriteRenderer
  * API, 40 records), `entities` (the real legacy entity path's captured record
  * stream, ~200 entities, replayed with upload-on-miss residency) and `post` (the
  * legacy PostProcess chain vs gpu-webgpu's PostChain on one synthetic scene image,
- * per configuration; the gate applies to each configuration, or its declared `gatePct`).
+ * per configuration; the gate applies to each configuration, or its declared `gatePct`)
+ * and `effects` (the real legacy STR, 3D and 2D effect classes' captured record stream,
+ * drawn by RunRenderer; plus the page's `checks`: texels, R-EFX-010 fog, controls).
  *
  * Needs `vite` and `playwright` resolvable from this package (devDependencies,
  * or a symlinked node_modules) and a Chromium for Playwright
@@ -33,7 +35,7 @@ const tolerance = Number(args.tol ?? 2);
 const maxOverPct = Number(args['max-diff-pct'] ?? 0);
 const outDir = path.resolve(args.out ?? path.join(here, '.out'));
 const pageName = args.page ?? 'parity';
-if (!['parity', 'entities', 'post'].includes(pageName)) {
+if (!['parity', 'entities', 'post', 'effects'].includes(pageName)) {
 	console.error(`unknown --page=${pageName}`);
 	process.exit(1);
 }
@@ -124,7 +126,7 @@ try {
 	const logs = [];
 	page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
 	page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
-	const query = `?tol=${tolerance}${args.aa ? '&aa=1' : ''}${args.isolate ? '&isolate=1' : ''}`;
+	const query = `?tol=${tolerance}${args.aa ? '&aa=1' : ''}${args.isolate ? '&isolate=1' : ''}${args.only ? `&only=${args.only}` : ''}`;
 	await page.goto(`${base}smoke/${pageName}.html${query}`);
 	await page.waitForFunction(() => window.__parity !== undefined, null, { timeout: 300000 });
 	const result = await page.evaluate(() => window.__parity);
@@ -157,14 +159,23 @@ try {
 		console.log(
 			`gl error: ${result.glError}; WebGPU errors: ${result.gpuErrors.length ? result.gpuErrors.join(' | ') : 'none'}`
 		);
+		if (result.assets) {
+			console.log(
+				`assets: ${JSON.stringify(result.assets)}; residency (upload on miss): ${JSON.stringify(result.residency)}`
+			);
+		}
 		if (result.shaderMessages.length) {
-			console.log(`sprite.wgsl compilation messages:\n  ${result.shaderMessages.join('\n  ')}`);
+			console.log(`WGSL compilation messages:\n  ${result.shaderMessages.join('\n  ')}`);
 		}
 		if (result.gpuErrors.length || result.glError) {
 			exitCode = 1;
 		}
 		for (const frame of result.frames) {
-			console.log(`\nframe ${frame.name}`);
+			const gate = frame.gatePct ?? maxOverPct;
+			console.log(`\nframe ${frame.name}${frame.gatePct !== undefined ? ` (declared gate ${gate} %)` : ''}`);
+			if (frame.detail !== undefined) {
+				console.log(`  ${frame.detail}`);
+			}
 			if (frame.entities !== undefined) {
 				console.log(
 					`  ${frame.entities} entities, ${frame.records} records (${frame.indexed} indexed, ${frame.additive} additive, ${frame.unmapped} unmapped), ${frame.uploads} uploads on miss, resident ${frame.resident.frames} frames / ${frame.resident.palettes} palettes`
@@ -192,7 +203,7 @@ try {
 				const file = path.join(outDir, `${frame.name}-${kind}${args.aa ? '-aa' : ''}.png`);
 				fs.writeFileSync(file, Buffer.from(url.split(',')[1], 'base64'));
 			}
-			if (frame.overTolerancePct > maxOverPct) {
+			if (frame.overTolerancePct > gate) {
 				exitCode = 1;
 			}
 		}
@@ -204,12 +215,20 @@ try {
 			console.error('control frame shows no difference: the comparison is not sensitive');
 			exitCode = 1;
 		}
-		console.log(
-			`#64 control (index 255 wrapped to entry 0 on one side): ${control64.differing} pixels differ, max ${control64.maxDiff}`
-		);
-		if (control64.differing === 0) {
-			console.error('#64 control shows no difference: the scene does not exercise palette index 255');
-			exitCode = 1;
+		if (control64) {
+			console.log(
+				`#64 control (index 255 wrapped to entry 0 on one side): ${control64.differing} pixels differ, max ${control64.maxDiff}`
+			);
+			if (control64.differing === 0) {
+				console.error('#64 control shows no difference: the scene does not exercise palette index 255');
+				exitCode = 1;
+			}
+		}
+		for (const check of result.checks ?? []) {
+			console.log(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}: ${check.detail}`);
+			if (!check.ok) {
+				exitCode = 1;
+			}
 		}
 		for (const r of result.isolated ?? []) {
 			console.log(`  record ${r.i} ${r.texture}: ${r.differing} px differ, max ${r.maxDiff}`);

@@ -15,7 +15,9 @@
 		"smoke:parity:aa": "node smoke/run-parity.mjs --aa --max-diff-pct=0.05",
 		"smoke:parity:entities": "node smoke/run-parity.mjs --page=entities --max-diff-pct=0.05",
 		"smoke:parity:entities:aa": "node smoke/run-parity.mjs --page=entities --aa --max-diff-pct=0.1",
-		"smoke:parity:post": "node smoke/run-parity.mjs --page=post --max-diff-pct=0.05"
+		"smoke:parity:post": "node smoke/run-parity.mjs --page=post --max-diff-pct=0.05",
+		"smoke:parity:effects": "node smoke/run-parity.mjs --page=effects --max-diff-pct=0.05",
+		"smoke:parity:effects:aa": "node smoke/run-parity.mjs --page=effects --aa --max-diff-pct=0.05"
 	},
 	"engines": {
 		"node": ">=22"

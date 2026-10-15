@@ -22,21 +22,24 @@ npm run smoke:parity:aa          # MSAA on: 4x target + resolve, WebGL antialias
 npm run smoke:parity:entities    # real legacy entity stream, ~200 entities (gate 0.05 %)
 npm run smoke:parity:entities:aa # the same with MSAA (gate 0.1 %, see below)
 npm run smoke:parity:post        # legacy PostProcess chain vs gpu-webgpu PostChain, 26 configurations (gate 0.05 %)
+npm run smoke:parity:effects     # real legacy STR / 3D / 2D effect classes (gate 0.05 %)
+npm run smoke:parity:effects:aa  # the same with MSAA (0.05 % in ANGLE's raster orientation; native 0.75 %, see below)
 ```
 
 You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script never runs `playwright install`.
 
 **Options** (`node smoke/run-parity.mjs …`):
 
-| Option             | Meaning                                                                                              |
-| ------------------ | ---------------------------------------------------------------------------------------------------- |
-| `--page=P`         | `parity` (default, synthetic records), `entities` (real legacy entity stream) or `post` (post chain) |
-| `--aa`             | Turn MSAA on                                                                                         |
-| `--tol=N`          | Per-channel tolerance (default 2)                                                                    |
-| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                                   |
-| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)                   |
-| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count                         |
-| `--flags="…"`      | Replace the Chromium flags (space-separated)                                                         |
+| Option             | Meaning                                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `--page=P`         | `parity` (default, synthetic records), `entities` (real legacy entity stream), `post` or `effects` |
+| `--aa`             | Turn MSAA on                                                                                       |
+| `--tol=N`          | Per-channel tolerance (default 2)                                                                  |
+| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                                 |
+| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)                 |
+| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count                       |
+| `--only=F`         | `effects` page diagnostics: keep one legacy class, `str`, `3d` or `2d`                             |
+| `--flags="…"`      | Replace the Chromium flags (space-separated)                                                       |
 
 **Exit codes:**
 
@@ -77,6 +80,8 @@ The page must be served from `http://127.0.0.1`. WebGPU needs a secure context, 
 | `entities/`, `common.js`          | Copies of `gpu-webgl2/smoke/entities/*` and `common.js` (scene, assets, seam stubs, compare helpers); gpu-webgpu imports nothing from gpu-webgl2                       |
 | `webgpuKit.js`                    | Adapter/device, opaque canvas, offscreen target + blit, canvas read-back                                                                                               |
 | `post.html`, `post.js`            | The post-processing page (below)                                                                                                                                       |
+| `effects.html`, `effects.js`      | The effect page (below); `vite.config.js` serves it the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`), every other importer keeps the stub                         |
+| `effects/`                        | Copies of `gpu-webgl2/smoke/effects/*` (`assets.js`: 26 images, 3 SPRs; `scene.js`: STR, 3D and 2D spawns); keep them identical                                        |
 | `run-parity.mjs`                  | Starts Vite, launches Chromium, prints the results, writes the PNGs, sets the exit code                                                                                |
 
 ## Results (SwiftShader, 320×240, 40 records)
@@ -241,4 +246,92 @@ Removing modules one at a time (diagnostic runs) showed two mechanisms:
 
 So no single pass diverges. The chain amplifies per-pass cross-API rounding. The same chain at 0.75× (`all on +
 performance`, where texel steps stay canvas-sized as in legacy) is 0 px over tolerance. Raise the gate only with a new
+analysis.
+
+## Effect page (`--page=effects`)
+
+The port of `gpu-webgl2/smoke/effects.js`, on the same scene (`effects/scene.js`, `effects/assets.js`: copies). The
+**real legacy effect classes**, unmodified (`StrEffect.js`, `ThreeDEffect.js`, `TwoDEffect.js`, drawing through the real
+`SpriteRenderer.js`, textures from the real `Utils/WebGL.texture` / `Utils/Texture.load`), play the scripted scene into
+the WebGL2 canvas, one pass per class per tick (3D, STR, 2D) as `EffectManager.render` does. On five ticks each class's
+`addRecordSink` captures every draw; `fromLegacyEffectRecord` (`src/effects/legacyRecord.js`) maps them to EffectDraws
+(GL textures → residency handles, `null` blend → normal for #41/#49, STR `fog` = scene fog for R-EFX-010), and
+`RunRenderer` (`src/batching/RunRenderer.js`) draws them into the WebGPU canvas in **one render pass, stream order**:
+
+- **STR layers:** `StrPipeline` + `str.wgsl`, legacy `StrEffect.vs/.fs` operation for operation (same as gpu-webgl2
+  `str.vert/.frag`): one 26-float instance per layer (`effects/strInstance.js`, byte-identical to gpu-webgl2), no
+  per-vertex buffer (`vertex_index` picks the keyframe corner and the uv), `Project()` billboard, 1/35 px, `yLower`,
+  clip-z bias −0.1 in GL clip space, then the GL → WebGPU depth remap `z' = (z + w)/2` as `sprite.wgsl` does. Clip y is
+  up in both APIs and texel row 0 is the image's top row on both sides, so nothing is flipped.
+- **2D/3D:** the sprite pipeline (`spriteEffectView` maps SpriteRenderer-shaped params; same `SpriteRunRenderer`).
+- **Batches:** `batchKey` = run key + drawing program for effects (`effectProgram`, as gpu-webgl2), so a render-records
+  run holding an STR layer and a 3D effect with equal state splits at the program change; never reordered.
+  `encodeBatches` rebinds vertex buffers only on a program switch and sets bind group/pipeline only when they change.
+- **Blend:** pairs map 1:1 onto `GPUBlendState`; all 13×13 factor pairs pass Dawn's pipeline validation. Constant
+  factors read the legacy constant (0, 0, 0, 0): legacy never calls `blendColor`, and it is WebGPU's default at pass
+  begin (`setBlendConstant` only if a pair needs another value; `blendConstantFor` splats alpha for CONSTANT_ALPHA).
+  `resolveBlend` draws normal alpha for a `null`/unknown pair (#41/#49) and for a pair mixing constant colour with
+  constant alpha (STR 14/15): WebGPU's single constant expresses it only for a splat constant, WebGL rejects it, so
+  legacy keeps the previous blend; both backends draw normal alpha (gpu-webgl2 `isWebGLInvalidBlend`).
+- **No destination alpha:** legacy draws into buffers without alpha (context `alpha: false`; the PostProcess FBO is
+  `gl.RGB`), so DST_ALPHA reads 1 and SRC_ALPHA_SATURATE = min(As, 0) = 0. Scene pipelines therefore write RGB only
+  (`SCENE_WRITE_MASK`, `PipelineSet.js`) and the target keeps its clear alpha 1. Before this, the D3D 7/8 and 11 pairs
+  of `blends.str` gave ≈2.1k px over tolerance per frame.
+- **Images:** residency uploads on miss through `decodeImageTexture` (`src/residency/imageTexture.js`, copy of
+  gpu-webgl2's): magenta key on a `willReadFrequently` canvas, POT stretch on a second canvas, texels from a WebGL
+  unpack of that canvas, top-left of an rgba8 layer, edge-replicated, sampled at uv × size/class (LINEAR). The page
+  passes a **scratch WebGL2 context** for the unpack (`gl`), which makes the texels legacy's exactly. A WebGPU-only
+  client has no GL context and falls back to `getImageData`, whose un-premultiply rounds differently in Chromium: 505
+  channel values of 129 792 texels differ by one level (translucent texels only), reported by the texel check.
+
+Declared divergences and kept-out cases are gpu-webgl2's (its README, "Effect parity"): R-EFX-010 (parity frames
+with the STR fog off; the fog frame redrawn with it on must differ from legacy, and what the fog changes against the
+STR-fog-off frame must lie inside the STR footprint; an isolated STR must match the CPU fog mix within 2 levels),
+#41/#49 and STR 14/15 (normal alpha), the #47 leak and a missing STR file (kept out of the scene). The page also fails
+on a skipped batch or a normal-alpha fallback (`RunRenderer.warm` compiles the stream's pipelines first).
+
+### Results (SwiftShader, 640×480, tolerance 2)
+
+| Frame         | Records (STR / 3D / 2D) | Max diff | Over tol 2 (MSAA off) | Over tol 2, MSAA, ANGLE orientation | Over tol 2, MSAA, native | Legacy draws | gpu-webgpu draws |
+| ------------- | ----------------------: | -------: | --------------------: | ----------------------------------: | -----------------------: | -----------: | ---------------: |
+| t = 1040 ms   |       52 (14 / 25 / 13) |       36 |          20 (0.007 %) |                         3 (0.001 %) |           1401 (0.456 %) |           52 |       31 (1.68×) |
+| t = 1200 ms   |       65 (17 / 30 / 18) |       58 |          44 (0.014 %) |                        69 (0.023 %) |           1840 (0.599 %) |           65 |       45 (1.44×) |
+| t = 1300, fog |       72 (16 / 35 / 21) |       52 |          44 (0.014 %) |                        70 (0.023 %) |           1493 (0.486 %) |           72 |       51 (1.41×) |
+| t = 1400 ms   |       79 (16 / 38 / 25) |       60 |          44 (0.014 %) |                        69 (0.023 %) |           1351 (0.440 %) |           79 |       57 (1.39×) |
+| t = 1560 ms   |        65 (7 / 35 / 23) |       68 |           6 (0.002 %) |                         2 (0.001 %) |            851 (0.277 %) |           65 |       38 (1.71×) |
+
+- Same draw counts as gpu-webgl2 (equal batch boundaries); 46 pipelines compiled, 0 fallbacks, 0 skipped batches, no
+  WebGPU validation error, no GL error.
+- STR alone (`--only=str`, MSAA off): max diff 1, 0 px over tolerance on all five frames.
+- Texels: 26 images, 129 792 texels, 0 differ (WebGL unpack).
+- Fog frame, STR fog on: 47 586 px differ from legacy; the STR fog changes 47 585 px, 0 outside the STR footprint
+  (57 581 px). CPU fog mix: f = 0.3167, 15 600 interior px (2-px erosion), max error 0.84 levels (MSAA: ANGLE
+  orientation, 0.86).
+- Sensitivity controls (0.01 world units, gpu-webgpu side only): an STR layer ≈14.7k px, a 3D record 32 px (MSAA:
+  15.9k and 1.6k).
+
+**Residual without MSAA** (≤ 44 px): 2D only (`--only=2d` gives the same 20/43/44/43/6). At t = 1200 the 43 px are one
+5×17 px strip where two depth-writing, depth-corrected 2D quads (`effect/c.tga`, blend modes 4 and 5) overlap;
+removing either record from the stream changes the strip and nothing else. Their centres differ by a vector at 25.00°,
+the camera yaw, so both lie in one depth-correction plane: their depths tie, and `less-equal` resolves the tie per pixel
+on sub-ulp differences between the ANGLE and Tint depth paths (rows alternate between the two quads). Changing the
+WebGPU depth-remap arithmetic does not remove it. Same class as the entity page's depth ties.
+
+### Gate for `smoke:parity:effects:aa`
+
+With MSAA every frame is compared twice:
+
+- **ANGLE raster orientation** (`<frame>-angle-orientation`, gate 0.05 %): the same records drawn with a y-flipped
+  projection (`F·P`, `F = diag(1, −1, 1, 1)`; depth and fog unchanged) and read back top-down. ≤ 0.023 %.
+- **Native orientation** (declared gate **0.75 %**, `NATIVE_AA_GATE_PCT` in `effects.js`): ≤ 0.599 %.
+
+The native residual sits on triangle edges that are not axis-aligned (see `effects-*-diff-aa.png`): STR quads are
+rotated, and STR keyframe quads with corners 0, 1, 3, 2 against the strip uv split into overlapping triangles whose
+shared edges are diagonals inside the effect. ANGLE draws a WebGL default framebuffer upside down, which mirrors the
+standard 4× sample pattern relative to the scene. Mirroring keeps the set of x and the set of y sample offsets, so
+horizontal and vertical edges (sprites, entities) resolve the same coverage; diagonal edges do not. Drawing the WebGPU
+frame upside down, as ANGLE does, removes it (0.6 % → 0.023 %; the CPU fog check, which crosses such an internal
+diagonal, goes from 34 to 0.86 levels), so the CPU fog check runs in that orientation under MSAA. Production keeps
+WebGPU's native orientation: a y-flipped scene target would have to be flipped back by the blit and the post chain, and
+the difference is a sub-pixel coverage step on antialiased diagonal edges. Raise the native gate only with a new
 analysis.

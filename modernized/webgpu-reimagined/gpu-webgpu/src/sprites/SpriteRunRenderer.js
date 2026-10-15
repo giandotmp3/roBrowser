@@ -2,10 +2,13 @@ import { POT_CLASSES, ZINDEX_BIAS } from '../constants.js';
 import { identity, invert } from '../math.js';
 import { PipelineSet } from '../pipelines/PipelineSet.js';
 import { ADDITIVE, NORMAL } from '../pipelines/pipelineKey.js';
+import { resolveBlend } from '../pipelines/blendMap.js';
 import { SHADERS } from '../shaders/index.js';
+import { encodeBatches } from '../batching/encodeBatches.js';
+import { spriteEffectClass, spriteEffectView } from '../effects/spriteEffect.js';
 import { InstanceRing } from './InstanceRing.js';
 import { SPRITE_INSTANCE_FLOATS, SPRITE_QUAD, SPRITE_VERTEX_BUFFERS, packSpriteInstance } from './instanceLayout.js';
-import { splitBatches, splitRuns } from './runs.js';
+import { programOf, splitBatches, splitRuns } from './runs.js';
 
 export { SPRITE_INSTANCE_FLOATS };
 
@@ -228,13 +231,15 @@ const DEPTH_STATES = Object.freeze([
 ]);
 
 /**
- * Pipeline spec of a sprite record (run head).
- * @param {{textureClass?: string, blend: {src: string, dst: string}, depthTest: boolean, depthWrite: boolean}} record
+ * Pipeline spec of a sprite-program record (batch head: a sprite or a 2D/3D effect).
+ * The blend pair is resolved (`resolveBlend`: invalid or WebGPU-inexpressible pairs
+ * draw normal alpha, #41/#49).
+ * @param {{textureClass?: string, blend: {src: string, dst: string}|null, depthTest: boolean, depthWrite: boolean}} record
  */
 export function spriteSpec(record) {
 	return {
 		family: SPRITE_FAMILY,
-		blend: record.blend,
+		blend: resolveBlend(record.blend),
 		depthTest: record.depthTest,
 		depthWrite: record.depthWrite,
 		topology: 'triangle-strip'
@@ -314,10 +319,26 @@ export function spriteBindGroupLayoutEntries({ mixTextureClasses = true } = {}) 
 }
 
 /**
- * Draws SpriteDraw batches (contiguous, legacy order; runs.js `splitBatches`, unions
- * of whole render-records runs that mix texture classes) as instanced quads: one
- * pipeline switch (when the state changes) and one `draw(4, count, 0, first)` per
- * batch, all instances of the frame in one instance-step vertex buffer write.
+ * Texture class of a sprite-program record (split fallback bind group).
+ * @param {{kind: string, textureClass?: string, params?: {palette?: unknown}}} record
+ * @returns {'indexed'|'rgba'}
+ */
+export function spriteProgramClass(record) {
+	return record.kind === 'sprite' ? (record.textureClass === 'rgba' ? 'rgba' : 'indexed') : spriteEffectClass(record);
+}
+
+/** @param {{kind: string, family?: string}} record */
+const isSpriteProgram = record => programOf(record) === 'sprite';
+
+/**
+ * Draws sprite-program batches (contiguous, legacy order; runs.js `splitBatches`,
+ * unions of whole render-records runs that mix texture classes): SpriteDraw records
+ * and the 2D/3D EffectDraw records (SpriteRenderer draws in legacy, mapped by
+ * `spriteEffectView`), as instanced quads: one pipeline switch (when the state
+ * changes) and one `draw(4, count, 0, first)` per batch, all instances of the frame
+ * in one instance-step vertex buffer write. `encode` draws only this program's
+ * batches; RunRenderer interleaves them with STR batches (`stage`/`bind`/`groupFor`/
+ * `pipelineFor`, batching/encodeBatches.js).
  */
 export class SpriteRunRenderer {
 	/**
@@ -352,6 +373,8 @@ export class SpriteRunRenderer {
 		this._uniformData = new ArrayBuffer(FRAME_UNIFORM_BYTES);
 		this._instances = new Float32Array(SPRITE_INSTANCE_FLOATS * 256);
 		this._slot = {};
+		this._view = {};
+		this._staged = null;
 		/** Draw calls issued by the last `encode()` (draw count is measured, §5 phase 3). */
 		this.lastDrawCalls = 0;
 		/** Sprite render-records runs of the last `encode()` (pipeline-state boundaries), for diagnostics. */
@@ -453,11 +476,71 @@ export class SpriteRunRenderer {
 	}
 
 	/**
-	 * Encode every sprite batch of `records` into `pass`. Uploads missing frames and
-	 * palettes through the residency's source first (C-16), then writes the frame
-	 * uniforms and instance data with queue writes, so call once per submitted frame
-	 * (after `residency.beginFrame()`).
-	 * Non-sprite runs are skipped (their family renderers are not wired here).
+	 * Pack the sprite-program batches of one frame (stream order) and write them with
+	 * the frame uniforms. Records must be resident already (`residency.prepare`).
+	 * @param {ReadonlyArray<any>} records
+	 * @param {ReadonlyArray<{start: number, count: number}>} batches  Sprite-program batches only
+	 * @param {SpriteView} [view]
+	 * @returns {number[]} first instance of each batch
+	 */
+	stage(records, batches, view) {
+		const total = batches.reduce((n, batch) => n + batch.count, 0);
+		if (this._instances.length < total * SPRITE_INSTANCE_FLOATS) {
+			this._instances = new Float32Array(total * SPRITE_INSTANCE_FLOATS * 2);
+		}
+		const firsts = [];
+		let offset = 0;
+		let first = 0;
+		for (const batch of batches) {
+			firsts.push(first);
+			for (let i = batch.start; i < batch.start + batch.count; i++) {
+				const record = records[i];
+				const sprite = record.kind === 'sprite' ? record : spriteEffectView(record, this._view);
+				offset = packSpriteInstance(sprite, this.residency.slotOf(sprite, this._slot), this._instances, offset);
+			}
+			first += batch.count;
+		}
+		this._staged = null;
+		if (total) {
+			this.ring.beginFrame();
+			this._staged = this.ring.write(this._instances.subarray(0, offset));
+			this.device.queue.writeBuffer(this.uniforms, 0, packFrameUniforms(view, this._uniformData));
+		}
+		return firsts;
+	}
+
+	/**
+	 * Switch the pass to the sprite program: quad (slot 0) and staged instances (slot 1).
+	 * @param {GPURenderPassEncoder} pass
+	 */
+	bind(pass) {
+		pass.setVertexBuffer(0, this.quad);
+		pass.setVertexBuffer(1, this._staged.buffer, this._staged.offset);
+	}
+
+	/**
+	 * Group 0 of a batch: the mixed group, or its class's group in split mode.
+	 * @param {any} head
+	 */
+	groupFor(head) {
+		return this._bindGroupFor(spriteProgramClass(head));
+	}
+
+	/**
+	 * Pipeline of a batch (normal-alpha fallback while an uncommon pair compiles).
+	 * @param {any} head
+	 * @returns {{pipeline: GPURenderPipeline|null, fellBack: boolean}}
+	 */
+	pipelineFor(head) {
+		return this.pipelines.get(spriteSpec(head));
+	}
+
+	/**
+	 * Encode every sprite-program batch of `records` (sprites, 2D/3D effects) into
+	 * `pass`. Uploads missing frames and palettes through the residency's source first
+	 * (C-16), then writes the frame uniforms and instance data with queue writes, so
+	 * call once per submitted frame (after `residency.beginFrame()`).
+	 * Other batches (STR and the remaining effect families) are skipped; RunRenderer draws STR.
 	 * @param {GPURenderPassEncoder} pass
 	 * @param {ReadonlyArray<any>} records  Legacy order
 	 * @param {SpriteView} [view]
@@ -468,60 +551,17 @@ export class SpriteRunRenderer {
 		this.lastFallbacks = 0;
 		// C-16 upload on miss (no-op without a FrameSourcePort): before packing, so slots exist.
 		this.lastUploads = this.residency.prepare?.(records) ?? 0;
-		const isSprite = run => records[run.start].kind === 'sprite';
-		this.lastRuns = splitRuns(records).filter(isSprite);
-		this.lastBatches = splitBatches(records, { mixTextureClasses: this.mixTextureClasses }).filter(isSprite);
+		const ours = run => isSpriteProgram(records[run.start]);
+		this.lastRuns = splitRuns(records).filter(ours);
+		this.lastBatches = splitBatches(records, { mixTextureClasses: this.mixTextureClasses }).filter(ours);
 		const runs = this.lastRuns.length;
 		if (!runs) {
 			return { drawCalls: 0, runs: 0, batches: 0, fallbacks: 0 };
 		}
-
-		// Pack all sprite instances of the frame, in batch order, then one queue write.
-		const total = this.lastBatches.reduce((n, batch) => n + batch.count, 0);
-		if (this._instances.length < total * SPRITE_INSTANCE_FLOATS) {
-			this._instances = new Float32Array(total * SPRITE_INSTANCE_FLOATS * 2);
-		}
-		let offset = 0;
-		for (const batch of this.lastBatches) {
-			for (let i = batch.start; i < batch.start + batch.count; i++) {
-				offset = packSpriteInstance(
-					records[i],
-					this.residency.slotOf(records[i], this._slot),
-					this._instances,
-					offset
-				);
-			}
-		}
-		this.ring.beginFrame();
-		const at = this.ring.write(this._instances.subarray(0, offset));
-		this.device.queue.writeBuffer(this.uniforms, 0, packFrameUniforms(view, this._uniformData));
-
-		pass.setVertexBuffer(0, this.quad);
-		pass.setVertexBuffer(1, at.buffer, at.offset);
-		let first = 0;
-		let current = null;
-		let boundGroup = null;
-		for (const batch of this.lastBatches) {
-			const head = records[batch.start];
-			const group = this._bindGroupFor(head.textureClass);
-			if (group !== boundGroup) {
-				pass.setBindGroup(0, group);
-				boundGroup = group;
-			}
-			const { pipeline, fellBack } = this.pipelines.get(spriteSpec(head));
-			if (pipeline) {
-				if (pipeline !== current) {
-					pass.setPipeline(pipeline);
-					current = pipeline;
-				}
-				pass.draw(4, batch.count, 0, first);
-				this.lastDrawCalls++;
-				if (fellBack) {
-					this.lastFallbacks++;
-				}
-			}
-			first += batch.count;
-		}
+		const firsts = this.stage(records, this.lastBatches, view);
+		const stats = encodeBatches(pass, records, this.lastBatches, { sprite: this }, { sprite: firsts });
+		this.lastDrawCalls = stats.drawCalls;
+		this.lastFallbacks = stats.fallbacks;
 		return {
 			drawCalls: this.lastDrawCalls,
 			runs,
@@ -538,5 +578,6 @@ export class SpriteRunRenderer {
 		this.quad = this.uniforms = this.sampler = null;
 		this._bindGroups.clear();
 		this._bindGroupVersion = -1;
+		this._staged = null;
 	}
 }

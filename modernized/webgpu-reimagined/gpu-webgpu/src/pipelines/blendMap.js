@@ -83,3 +83,52 @@ export function blendConstantFor(blend, constant = /** @type {any} */ (LEGACY_BL
 	}
 	return [...constant];
 }
+
+const NORMAL_PAIR = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+const CONSTANT_COLOR_FACTORS = Object.freeze(['CONSTANT_COLOR', 'ONE_MINUS_CONSTANT_COLOR']);
+const CONSTANT_ALPHA_FACTORS = Object.freeze(['CONSTANT_ALPHA', 'ONE_MINUS_CONSTANT_ALPHA']);
+
+/**
+ * A pair that reads both the constant colour and the constant alpha (e.g. the STR
+ * D3D pair 14/15: CONSTANT_COLOR, ONE_MINUS_CONSTANT_ALPHA). WebGPU has one blend
+ * constant, so it expresses such a pair only for a splat constant (r = g = b = a);
+ * WebGL rejects it outright (INVALID_OPERATION, WebGL 1.0 §6.13), so legacy keeps the
+ * previous draw's blend there, which is not reproducible. Both backends draw it as
+ * normal alpha (gpu-webgl2 `isWebGLInvalidBlend`), so they agree.
+ * @param {{src?: string, dst?: string}|null|undefined} blend
+ */
+export function isMixedConstantBlend(blend) {
+	const factors = [blend?.src, blend?.dst];
+	return (
+		factors.some(f => CONSTANT_COLOR_FACTORS.includes(/** @type {string} */ (f))) &&
+		factors.some(f => CONSTANT_ALPHA_FACTORS.includes(/** @type {string} */ (f)))
+	);
+}
+
+/**
+ * The blend pair a record is drawn with. Unknown factors and a missing state (legacy
+ * invalid codes, #41/#49, decided: normal alpha) and pairs WebGPU cannot express
+ * faithfully (`isMixedConstantBlend`) fall back to the R-CTX-002 normal pair, as
+ * gpu-webgl2 `toGlBlend` does. Every other pair of the unified enum is valid WebGPU
+ * (all 13×13 factor pairs pass pipeline validation in Dawn), so it is kept verbatim.
+ * @param {{src?: string, dst?: string}|null|undefined} blend
+ * @returns {{src: string, dst: string}}
+ */
+export function resolveBlend(blend) {
+	if (!FACTORS[/** @type {string} */ (blend?.src)] || !FACTORS[/** @type {string} */ (blend?.dst)]) {
+		return NORMAL_PAIR;
+	}
+	if (isMixedConstantBlend(blend)) {
+		return NORMAL_PAIR;
+	}
+	return /** @type {{src: string, dst: string}} */ (blend);
+}
+
+/**
+ * Whether a (resolved) pair reads the blend constant, which is then set as run state
+ * (`setBlendConstant(blendConstantFor(pair))`; legacy's is the GL default 0, 0, 0, 0).
+ * @param {{src: string, dst: string}} blend
+ */
+export function usesBlendConstant(blend) {
+	return [blend.src, blend.dst].some(f => typeof f === 'string' && f.includes('CONSTANT'));
+}

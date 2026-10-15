@@ -55,28 +55,33 @@ export async function createWebGpuSide({ width, height, antialias, clearColor, l
 	 * Encode one frame (`encodeScene(pass)` inside the target's render pass), blit it to
 	 * the canvas and read the canvas back.
 	 * @param {(pass: GPURenderPassEncoder) => T} encodeScene
+	 * @param {{clearColor?: number[], rowsTopDown?: boolean}} [options]  Clear colour of this frame (default: the
+	 *   page's); `rowsTopDown`: return the canvas rows unflipped (for a frame drawn with a y-flipped
+	 *   projection, i.e. upside down, as ANGLE draws into a WebGL default framebuffer)
 	 * @returns {Promise<{pixels: Uint8Array, result: T}>}
 	 * @template T
 	 */
-	function render(encodeScene) {
+	function render(encodeScene, options = {}) {
 		return present(
 			encoder => {
-				const pass = encoder.beginRenderPass(target.passDescriptor(clearColor));
+				const pass = encoder.beginRenderPass(target.passDescriptor(options.clearColor ?? clearColor));
 				const result = encodeScene(pass);
 				pass.end();
 				return result;
 			},
-			(encoder, swapView) => blit.encode(encoder, target.resolve, swapView)
+			(encoder, swapView) => blit.encode(encoder, target.resolve, swapView),
+			options
 		);
 	}
 
 	/**
 	 * Encode `encode(encoder, swapView)` (whatever writes the canvas, e.g. a post chain), then read the
 	 * canvas back. `encodeFirst(encoder)` runs before the canvas texture is acquired.
+	 * @param {{rowsTopDown?: boolean}} [options]  see `render`
 	 * @returns {Promise<{pixels: Uint8Array, result: T}>}
 	 * @template T
 	 */
-	async function present(encodeFirst, encode) {
+	async function present(encodeFirst, encode, { rowsTopDown = false } = {}) {
 		const encoder = device.createCommandEncoder();
 		const result = encodeFirst ? encodeFirst(encoder) : undefined;
 		const swap = context.getCurrentTexture();
@@ -96,7 +101,8 @@ export async function createWebGpuSide({ width, height, antialias, clearColor, l
 		const out = new Uint8Array(width * height * 4);
 		for (let y = 0; y < height; y++) {
 			const s = y * bytesPerRow;
-			const d = (height - 1 - y) * width * 4; // WebGPU row 0 is the top; GL's is the bottom
+			// WebGPU row 0 is the top; GL's is the bottom (unless the frame was drawn upside down).
+			const d = (rowsTopDown ? y : height - 1 - y) * width * 4;
 			for (let x = 0; x < width * 4; x += 4) {
 				out[d + x] = src[s + x + (bgra ? 2 : 0)];
 				out[d + x + 1] = src[s + x + 1];

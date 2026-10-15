@@ -3,6 +3,16 @@ import { toGpuBlend } from './blendMap.js';
 import { NORMAL, pipelineSpecKey } from './pipelineKey.js';
 
 /**
+ * GPUColorWrite RED | GREEN | BLUE. Legacy draws into buffers without an alpha
+ * channel (R-CTX-001 context `alpha: false`; the PostProcess FBO is `gl.RGB`), so a
+ * blend factor reading the destination alpha sees 1: DST_ALPHA = 1,
+ * ONE_MINUS_DST_ALPHA = 0, SRC_ALPHA_SATURATE = min(As, 1 − 1) = 0 (STR D3D 7/8/11).
+ * The rgba8unorm scene target reproduces that by never writing alpha: it keeps the
+ * clear alpha (1, opaque clear colours) under every blend.
+ */
+export const SCENE_WRITE_MASK = 0x7;
+
+/**
  * Build the GPURenderPipelineDescriptor for a spec. Depth test off is expressed
  * as depthCompare 'always' (pipelines always carry the single depth attachment);
  * like GL, a disabled depth test also writes no depth.
@@ -18,7 +28,7 @@ export function describePipeline(spec, shader, { sampleCount = MSAA_SAMPLES } = 
 		fragment: {
 			module: shader.module,
 			entryPoint: shader.fragmentEntry ?? 'fs_main',
-			targets: [{ format: RENDER_FORMAT, blend: toGpuBlend(spec.blend) }]
+			targets: [{ format: RENDER_FORMAT, blend: toGpuBlend(spec.blend), writeMask: SCENE_WRITE_MASK }]
 		},
 		primitive: { topology: spec.topology ?? 'triangle-list', cullMode: 'none' },
 		depthStencil: {

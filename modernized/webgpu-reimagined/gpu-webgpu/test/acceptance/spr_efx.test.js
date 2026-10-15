@@ -195,7 +195,8 @@ describe('EFX: GPU side', () => {
 		const f = strFogUniforms(sceneFog);
 		expect(f).toEqual({ use: true, near: 240, far: 480, color: [0.5, 0.5, 0.5] });
 		expect(SHADERS.str).toContain('fn apply_fog');
-		expect(SHADERS.str).toContain('apply_fog(t * str_u.color');
+		// Per record (render-records strLayerDrawFields: fog = scene fog use), scene fog uniforms of the pass.
+		expect(SHADERS.str).toContain('if (i.fog > 0.5) {\n    return apply_fog(color, i.pos, frame.fog);');
 	});
 
 	it('R-EFX-013: overlay disables depth test and correction; non-overlay tests depth; 2D also writes it', () => {

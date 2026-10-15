@@ -14,9 +14,18 @@
  * flag (`layer.w`, SPRITE_SAMPLING in instanceLayout.js). Every other field
  * (kind, blend pair, depth test, depth write, STR attachment) is kept
  * verbatim, so a batch never spans records whose GPU pipeline differs, and
- * every batch is a union of whole, contiguous render-records runs. Still
- * never regroups or reorders.
+ * every sprite batch is a union of whole, contiguous render-records runs.
+ *
+ * Effect records also carry the WGSL program that draws their family
+ * (`effectProgram`, same rule as gpu-webgl2): recordRunKey has no family, so one
+ * render-records run may hold, say, an STR layer and a 3D effect with the same
+ * blend and depth state, which two different pipelines draw. Such a run is split
+ * at the program change (contiguous sub-runs, order kept). An effect batch is
+ * therefore a contiguous part of one render-records run. Still never regroups or
+ * reorders.
  */
+
+import { SPRITE_EFFECT_FAMILIES } from '../effects/spriteEffect.js';
 
 /**
  * @param {{kind: string, blend: {src: string, dst: string}, depthTest: boolean, depthWrite: boolean, textureClass?: string, strAttachment?: boolean}} record
@@ -34,18 +43,56 @@ export function recordRunKey(record) {
 }
 
 /**
- * Backend-local batching key (a coarsening of recordRunKey). With
- * `mixTextureClasses` false (the device cannot bind both array sets in one
- * fragment stage, see SpriteRunRenderer) it equals recordRunKey.
- * @param {{kind: string, blend: {src: string, dst: string}, depthTest: boolean, depthWrite: boolean, textureClass?: string, strAttachment?: boolean}} record
+ * Backend-local batching key. For sprites a coarsening of recordRunKey (the texture
+ * class dropped; with `mixTextureClasses` false, the device cannot bind both array
+ * sets in one fragment stage, see SpriteRunRenderer, it equals recordRunKey). For
+ * effects recordRunKey plus the drawing program (and, in the split fallback, the
+ * texture class of sprite-program effects). Same keys as gpu-webgl2's batchKey.
+ * @param {{kind: string, family?: string, params?: {palette?: unknown}, blend: {src: string, dst: string}, depthTest: boolean, depthWrite: boolean, textureClass?: string, strAttachment?: boolean}} record
  * @param {{mixTextureClasses?: boolean}} [options]
  * @returns {string}
  */
 export function batchKey(record, { mixTextureClasses = true } = {}) {
+	if (record.kind === 'effect') {
+		const program = effectProgram(record);
+		// Split-class fallback: a sprite-program batch binds one texture class set.
+		const textureClass =
+			program === 'sprite' && !mixTextureClasses
+				? `:${(record.params?.palette ?? null) !== null ? 'indexed' : 'rgba'}`
+				: '';
+		return `${recordRunKey(record)}:${program}${textureClass}`;
+	}
 	if (record.kind !== 'sprite' || !mixTextureClasses) {
 		return recordRunKey(record);
 	}
 	return recordRunKey({ ...record, textureClass: undefined });
+}
+
+/**
+ * The WGSL program family that draws an effect record: 'sprite' for the 2D/3D
+ * families (SpriteRenderer draws in legacy), otherwise the family itself ('str', ...).
+ * @param {{family?: string}} record
+ * @returns {string}
+ */
+export function effectProgram(record) {
+	return SPRITE_EFFECT_FAMILIES.includes(/** @type {string} */ (record.family)) ? 'sprite' : String(record.family);
+}
+
+/**
+ * Program of a batch head: 'sprite' (sprites and 2D/3D effects), 'str', or null
+ * (a family without a renderer here).
+ * @param {{kind: string, family?: string}} record
+ * @returns {'sprite'|'str'|null}
+ */
+export function programOf(record) {
+	if (record.kind === 'sprite') {
+		return 'sprite';
+	}
+	if (record.kind === 'effect') {
+		const program = effectProgram(record);
+		return program === 'sprite' || program === 'str' ? program : null;
+	}
+	return null;
 }
 
 /**
@@ -65,7 +112,7 @@ export function splitRuns(records) {
 }
 
 /**
- * Contiguous draw batches by `batchKey` (what SpriteRunRenderer draws as one call).
+ * Contiguous draw batches by `batchKey` (what RunRenderer / SpriteRunRenderer draw as one call).
  * @param {ReadonlyArray<object>} records
  * @param {{mixTextureClasses?: boolean}} [options]
  * @returns {Run[]}
