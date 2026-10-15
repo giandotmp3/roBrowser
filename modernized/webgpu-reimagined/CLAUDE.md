@@ -138,10 +138,16 @@ These were found at scaffold time and settled before phase 1.
   - The only divergence is the declared flagged fix #13: legacy runs with the animation clock pinned to spawn time and matches fully; unpinned, mismatches are limited to pre-`setAction` weapon frames.
   - Mutation checks fail the diff. The snapshot comes from the live legacy entity (`tests/renderer/support/legacyEntitySnapshot.js`).
   - **Not yet composed:** halo, trails, attachments (R-SPR-024/025/031/032), walking, cart and riding scenes, mobs and NPCs, effects, damage numbers.
-- **Next (phase 2 remainder → phase 3):**
-  1. Widen the record-diff to more scenes: walk, cart, riding, mob death, status tints, attachments.
-  2. Route the legacy effect and damage draws through records.
-  3. Then phase 3: gpu-webgl2 run batching.
+- **Phase 2 widening: done for entities and damage numbers.**
+  - **Entity scenes** (`tests/renderer/RecordDiff.entityScenes.test.js`): walking, cart (front, back, Super Novice), riding, mob death fade, status tints, NPC. All match field by field over non-uniform terrain. This found and fixed a composer bug (INVISIBLE under intravision, spec #24).
+  - **Damage numbers** (`tests/renderer/RecordDiff.damage.test.js`, `render-records/src/damage/DamageComposer.js`): all hit types, skins 0–3, suffixes, DPR 2, damageMotion 0–3, old PACKETVER. Texture identity is compared by glyph/skin key. The only declared divergences are the flagged R-DMG-004 and R-DMG-009 fixes.
+  - **Remaining for phase 2:**
+    - halo and trails (R-SPR-024/025);
+    - attachments (R-SPR-031/032);
+    - lookTo (R-SPR-029);
+    - attack-speed delays, falcon, homunculus/mercenary, baby/warp xSize, external palettes;
+    - effects (STR/2D/3D/cylinder…), which mostly draw outside `SpriteRenderer` and need their own record seam.
+- **Next:** effect record seam + diff, then phase 3 (gpu-webgl2 run batching over the record stream).
 
 ## Still open
 

@@ -22,6 +22,9 @@ describe('C-10 damage numbers', () => {
 	it('R-DMG-001: lifetime 1500 ms (combo 3000), colours, alpha = 1 − elapsed/delay', () => {
 		expect(damageLifetime(T.DAMAGE)).toBe(1500);
 		expect(damageLifetime(T.COMBO)).toBe(3000);
+		// Legacy picks the colour and the combo delay in one chain: a combo on a PC is red, 1500 ms.
+		expect(damageLifetime(T.COMBO | T.ENEMY)).toBe(1500);
+		expect(damageColor(T.COMBO | T.ENEMY)).toEqual([1, 0, 0, 1]);
 		expect(damageColor(T.DAMAGE | T.SP)).toEqual([0.13, 0.19, 0.75, 1]);
 		expect(damageColor(T.HEAL)).toEqual([0, 1, 0, 1]);
 		expect(damageColor(T.DAMAGE | T.ENEMY)).toEqual([1, 0, 0, 1]);
@@ -78,8 +81,26 @@ describe('C-10 damage numbers', () => {
 
 	it('R-DMG-006: critical background', () => {
 		expect(critBackground(T.DAMAGE)).toBeNull();
-		expect(critBackground(T.CRIT)).toEqual({ sprite: 'critbg', scale: 0.6, color: [0.66, 0.66, 0.66, 1], offset: [0, -6], spawnEffectId: 1 });
-		expect(critBackground(T.CRIT | T.COMBO_B).sprite).toBe('bluemsg');
+		expect(critBackground(T.CRIT)).toEqual({
+			sprite: 'critbg',
+			sheet: 'msg',
+			name: 'critbg',
+			type: T.CRIT,
+			scale: 0.6,
+			color: [0.66, 0.66, 0.66, 1],
+			offset: [0, -6],
+			spawnEffectId: 1
+		});
+		// Blue combos (COMBO_B) use bluemsg's critbg, keep the combo type and spawn no effect.
+		expect(critBackground(T.COMBO_B | T.COMBO_FINAL)).toMatchObject({
+			sprite: 'bluemsg',
+			sheet: 'msgBlue',
+			type: T.COMBO_B | T.COMBO_FINAL,
+			spawnEffectId: null
+		});
+		// Legacy precedence: CRIT wins over COMBO_B; a crit on a PC (ENEMY) has no background.
+		expect(critBackground(T.CRIT | T.COMBO_B).sprite).toBe('critbg');
+		expect(critBackground(T.CRIT | T.ENEMY)).toBeNull();
 	});
 
 	it('R-DMG-007: value floored, negatives ignored, K/M suffix', () => {
@@ -95,6 +116,8 @@ describe('C-10 damage numbers', () => {
 		expect(effectiveSkin(2, 20220101)).toEqual({ skin: 0, suppressed: false });
 		expect(effectiveSkin(2, 20220821)).toEqual({ skin: 2, suppressed: false });
 		expect(effectiveSkin(3, 20230101)).toEqual({ skin: 3, suppressed: true });
+		// Legacy tests Invi before forcing skin 0 (Damage.js:271-279).
+		expect(effectiveSkin(3, 20220101)).toEqual({ skin: 3, suppressed: true });
 		expect(shouldDisplayDamage(T.DAMAGE, { skin: 3, packetver: 20230101 })).toBe(false);
 	});
 

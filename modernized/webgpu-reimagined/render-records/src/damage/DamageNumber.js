@@ -24,17 +24,84 @@ export const COMBO_LIFETIME_MS = 3000;
 export const MISS_LIFETIME_MS = 800;
 
 /**
+ * R-DMG-002..005 motion branch, in legacy render precedence (Damage.js:566-650): combo title,
+ * damage/crit, heal, miss, lucky. A type matching none of them (e.g. a bare SP or ENDURE flag,
+ * which no legacy caller sends) has no branch.
+ * @param {number} type
+ * @returns {'combo'|'damage'|'heal'|'miss'|'lucky'|null}
+ */
+export function damageBranch(type) {
+	if (type & (DamageType.COMBO | DamageType.COMBO_B)) {
+		return 'combo';
+	}
+	if (type & (DamageType.DAMAGE | DamageType.CRIT)) {
+		return 'damage';
+	}
+	if (type & DamageType.HEAL) {
+		return 'heal';
+	}
+	if (type & DamageType.MISS) {
+		return 'miss';
+	}
+	if (type & DamageType.LUCKY) {
+		return 'lucky';
+	}
+	return null;
+}
+
+const CRIT_BG_COLOR = Object.freeze([0.66, 0.66, 0.66, 1]);
+
+/**
+ * R-DMG-001 / R-DMG-006 add-time style: one if/else chain in legacy (Damage.js:343-421), so the
+ * precedence SP, heal, enemy (hit on a PC), combo, crit, blue combo also decides the 3000 ms combo
+ * delay and the critical background. A combo or crit on a PC is therefore red, lives 1500 ms and
+ * gets no background.
+ * @param {number} type  ENEMY is set by the caller for hits on a PC
+ * @returns {{color: [number, number, number, number], delay: number,
+ *   background: null|{sheet: 'msg'|'msgBlue', type: number, spawnEffectId: number|null}}}
+ */
+export function damageStyle(type) {
+	if (type & DamageType.SP) {
+		return { color: [0.13, 0.19, 0.75, 1], delay: DAMAGE_LIFETIME_MS, background: null };
+	}
+	if (type & DamageType.HEAL) {
+		return { color: [0, 1, 0, 1], delay: DAMAGE_LIFETIME_MS, background: null };
+	}
+	if (type & DamageType.ENEMY) {
+		return { color: [1, 0, 0, 1], delay: DAMAGE_LIFETIME_MS, background: null };
+	}
+	if (type & DamageType.COMBO) {
+		return { color: [0.9, 0.9, 0.15, 1], delay: COMBO_LIFETIME_MS, background: null };
+	}
+	if (type & DamageType.CRIT) {
+		return {
+			color: [0.9, 0.9, 0.15, 1],
+			delay: DAMAGE_LIFETIME_MS,
+			// The grey background moves as a crit number (type CRIT) and spawns the hit effect.
+			background: { sheet: 'msg', type: DamageType.CRIT, spawnEffectId: 1 }
+		};
+	}
+	if (type & DamageType.COMBO_B) {
+		return {
+			color: [1, 1, 1, 1],
+			delay: DAMAGE_LIFETIME_MS,
+			// The blue background keeps the number's type, so it moves as a combo title.
+			background: { sheet: 'msgBlue', type, spawnEffectId: null }
+		};
+	}
+	return { color: [1, 1, 1, 1], delay: DAMAGE_LIFETIME_MS, background: null };
+}
+
+/**
  * R-DMG-001 lifetime (with the R-DMG-004 fix for Miss / Lucky).
  * @param {number} type
  */
 export function damageLifetime(type) {
-	if (type & (DamageType.MISS | DamageType.LUCKY)) {
+	const branch = damageBranch(type);
+	if (branch === 'miss' || branch === 'lucky') {
 		return MISS_LIFETIME_MS;
 	}
-	if (type & DamageType.COMBO) {
-		return COMBO_LIFETIME_MS;
-	}
-	return DAMAGE_LIFETIME_MS;
+	return damageStyle(type).delay;
 }
 
 /**
@@ -43,19 +110,7 @@ export function damageLifetime(type) {
  * @returns {[number, number, number, number]}
  */
 export function damageColor(type) {
-	if (type & DamageType.SP) {
-		return [0.13, 0.19, 0.75, 1];
-	}
-	if (type & DamageType.HEAL) {
-		return [0, 1, 0, 1];
-	}
-	if (type & DamageType.ENEMY) {
-		return [1, 0, 0, 1];
-	}
-	if (type & (DamageType.COMBO | DamageType.CRIT)) {
-		return [0.9, 0.9, 0.15, 1];
-	}
-	return [1, 1, 1, 1];
+	return damageStyle(type).color;
 }
 
 /**
@@ -65,11 +120,17 @@ export function damageColor(type) {
  * @param {number} s.elapsed
  * @param {[number, number, number]} s.entityPosition
  * @param {number} [s.damageMotion]  GraphicsSettings.damageMotion
+ * @param {number} [s.delay]  the add-time delay (damageStyle), which perc is relative to
  * @returns {{position: [number, number, number], scale: number, alpha: number}}
  */
-export function damageMotion({ type, elapsed, entityPosition, damageMotion: motion = 0 }) {
+export function damageMotion({
+	type,
+	elapsed,
+	entityPosition,
+	damageMotion: motion = 0,
+	delay = damageStyle(type).delay
+}) {
 	const [ex, ey, ez] = entityPosition;
-	const delay = damageLifetime(type);
 	let perc = elapsed / delay;
 	let scale = 1;
 	/** @type {[number, number, number]} */
@@ -119,19 +180,25 @@ export function comboVisible(dmg, perc, newestComboStart) {
 }
 
 /**
- * R-DMG-006 critical background.
+ * R-DMG-006 critical background (legacy Damage.js:369-415): crit numbers get the grey `critbg`
+ * of msg.spr and spawn hit effect 1; blue combos (COMBO_B) get the `critbg` of bluemsg.spr. The
+ * add-time precedence of damageStyle applies (no background on a PC, nor on a combo).
  * @param {number} type
  */
 export function critBackground(type) {
-	if (!(type & DamageType.CRIT)) {
+	const bg = damageStyle(type).background;
+	if (!bg) {
 		return null;
 	}
 	return {
-		sprite: type & DamageType.COMBO_B ? 'bluemsg' : 'critbg',
+		sprite: bg.sheet === 'msgBlue' ? 'bluemsg' : 'critbg',
+		sheet: bg.sheet,
+		name: 'critbg',
+		type: bg.type,
 		scale: 0.6,
-		color: [0.66, 0.66, 0.66, 1],
+		color: [...CRIT_BG_COLOR],
 		offset: [0, -6],
-		spawnEffectId: 1
+		spawnEffectId: bg.spawnEffectId
 	};
 }
 
@@ -159,14 +226,17 @@ export function formatDamage(amount, { enableDmgSuffix = false } = {}) {
 export const DamageSkin = Object.freeze({ DEFAULT: 0, NEW_NUMBER: 1, HAN: 2, INVI: 3 });
 
 /**
- * R-DMG-008 effective skin.
+ * R-DMG-008 effective skin. Legacy tests for Invi before forcing skin 0 on an old PACKETVER
+ * (Damage.js:271-279), so Invi suppresses numbers on every PACKETVER and stays the render skin.
  * @param {number} skin
  * @param {number} packetver
  * @returns {{skin: number, suppressed: boolean}}
  */
 export function effectiveSkin(skin, packetver) {
-	const s = packetver < 20220821 ? DamageSkin.DEFAULT : skin;
-	return { skin: s, suppressed: s === DamageSkin.INVI };
+	if (skin === DamageSkin.INVI) {
+		return { skin, suppressed: true };
+	}
+	return { skin: packetver < 20220821 ? DamageSkin.DEFAULT : skin, suppressed: false };
 }
 
 /**

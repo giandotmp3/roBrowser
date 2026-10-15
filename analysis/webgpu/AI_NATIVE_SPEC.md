@@ -1497,6 +1497,19 @@ Source paths below are relative to `src/`.
 22. **R-SPR-026:** the legacy removal fade is unclamped (`EntityRender.js:1139`). The rebuild clamps it; this is only observable after removal, which `EntityManager.js:428-444` already performs.
 23. **R-SPR-014:** an `spr_type` 1 layer on a sprite without `old_rgba_index` resolves to a NaN index and is silently skipped (`EntityRender.js:1086-1093`). The rebuild keeps this.
 
+**Found by the widened record-diffs** (`RecordDiff.entityScenes.test.js`, `RecordDiff.damage.test.js`, 2026-10-15):
+
+24. **R-SPR-021 (correction):** INVISIBLE is checked *before* intravision (`EntityState.js:432-434`), so intravision does **not** reveal INVISIBLE. "Intravision shows black for all of these" applies only to Hide, Cloak, Chasewalk, Camouflage, Stealth Field and Shadow Form.
+25. **R-SPR-028:** the walk phase is not shared by every part. Parts drawn before the body (a front robe, a front cart) compute their own phase from their own ACT delay; the body and everything after it share the body's phase (`EntityRender.js:998-1009`).
+26. **R-SPR-019:** leaving FREEZE runs `setAction(READYFIGHT)` (`EntityState.js:218`). Stone only toggles `animation.play` (`:227,241`), so a `setAction` while petrified resumes the animation.
+27. **R-SPR-026:** removal uses a strict `<` (`EntityManager.js:428`), so the frame at exactly the delay is still rendered, at alpha 0 (skipped). A mob's DIE is a one-shot that holds its last frame (`Entity.js:466-480`).
+28. **R-DMG-001/005:** colour and the 3000 ms combo lifetime come from one if/else chain (`Damage.js:349-366`). A combo on a PC is red and lives 1500 ms.
+29. **R-DMG-006:** a crit on a PC is red, with no critbg and no hit effect. CRIT wins over COMBO_B. Blue combos (COMBO_B) use bluemsg's critbg, which keeps the combo type and so moves as a combo title. A crit of 0 still adds critbg plus the miss glyph (`Damage.js:369-415`).
+30. **R-DMG-008:** Invi is tested before the PACKETVER force to skin 0, so it suppresses numbers on every PACKETVER (`Damage.js:271-279`). The ACT scale applied at render is that of the most recent add's skin (`:552,652-655`), so a later add can rescale every live number.
+31. **R-DMG-004:** Lucky is never sent by callers (`MapEngine/Entity.js:803` uses attachments instead). A Lucky of 0 draws the "miss" glyph. Legacy keeps drawing Miss records past 800 ms with *negative* alpha (truthy, so not skipped), and they consume list slots and zIndex. The rebuild's 800 ms lifetime removes them.
+32. **R-DMG-002:** endure is added without the ENDURE flag (`MapEngine/Entity.js:722-725`), so ENDURE only selects a sound.
+33. **R-DMG-009:** `SpriteRenderer.depth` is set before the alpha check (`Damage.js:670`), so the carried-over value can be the index of an entry that was never drawn.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|
