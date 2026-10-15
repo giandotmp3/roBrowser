@@ -1486,6 +1486,17 @@ Source paths below are relative to `src/`.
 14. **Clarification for R-SPR-006.** `zIndex++` only separates layers *within one element*. Each element resets zIndex (`EntityRender.js:433-515`), so a front-facing lower headgear and shield both draw at 550. That tie is settled by draw order and the depth function. Draw order also differs from zIndex order: the weapon (500) draws after the lower hat (550). Records must keep both the draw order and the zIndex.
 15. **Clarification for R-SPR-003.** Layer quads are sized from the **power-of-two padded** frame size (`EntityRender.js:1096-1101`); only the picking rectangle (R-PICK-003) uses the original size. For example, an 80×80 frame draws as 64×128 when padded to 64×128.
 
+**Found by the phase 2b record-diff** (`tests/renderer/RecordDiff.entity.test.js`, 2026-10-15). These refine rules; they are not new bugs.
+
+16. **R-SPR-007:** the back-facing cart's shadow draws at bodyZ+500, and the cart then *continues* the zIndex counter (`EntityRender.js:497-502`). The weapon trail likewise continues the weapon's counter (`:508-510`).
+17. **R-SPR-027:** headgears draw as type `'head'` (`EntityRender.js:466,477,483`), so they share the head's 3-group head-direction frame split.
+18. **R-SPR-027:** when a one-shot body animation ends, `setAction(next)` runs inside the body's frame selection (`EntityRender.js:1044-1050`). Elements drawn later in the *same* frame (head, hats, weapon, front shield) already use `next`; the shadow and anything drawn before the body do not.
+19. **R-SPR-009:** robe and body heights are measured during the draw (`EntityRender.js:1112,1116`). The robe correction therefore uses the previous frame's heights, and the default on the first frame.
+20. **R-SPR-011:** the shadow check uses each entity's own action ids (`EntityRender.js:331`; a mob's DIE is 4), not the PC table.
+21. **R-SPR-017:** the ground shadow factor is **not** multiplied into the layer colour. It travels separately as `uShadow` and is applied in the fragment shader (`SpriteRenderer.fs:159`). Records carry `color` and `shadowFactor` as separate fields.
+22. **R-SPR-026:** the legacy removal fade is unclamped (`EntityRender.js:1139`). The rebuild clamps it; this is only observable after removal, which `EntityManager.js:428-444` already performs.
+23. **R-SPR-014:** an `spr_type` 1 layer on a sprite without `old_rgba_index` resolves to a NaN index and is silently skipped (`EntityRender.js:1086-1093`). The rebuild keeps this.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|

@@ -3,9 +3,11 @@ import { Action, NO_SHADOW_JOB, SHADOW_LIFT } from './constants.js';
 /**
  * R-SPR-011 should a shadow be drawn?
  * @param {{action: number, job: number, hideShadow?: boolean}} e
+ * @param {{DIE: number, SIT: number}} [actions] the entity's action ids (EntityRender.js:331 uses
+ *        `this.ACTION`, e.g. a mob dies with action 4); defaults to the player ids
  */
-export function shouldDrawShadow({ action, job, hideShadow = false }) {
-	return !(action === Action.DIE || action === Action.SIT || job === NO_SHADOW_JOB || hideShadow);
+export function shouldDrawShadow({ action, job, hideShadow = false }, actions = Action) {
+	return !(action === actions.DIE || action === actions.SIT || job === NO_SHADOW_JOB || hideShadow);
 }
 
 /**

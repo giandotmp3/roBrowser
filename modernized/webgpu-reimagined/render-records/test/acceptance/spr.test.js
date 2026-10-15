@@ -60,6 +60,16 @@ import {
 	zIndexClipBias
 } from '../../src/index.js';
 
+const bodyLayer = index => ({
+	index,
+	pos: [0, 0],
+	scale: [1, 1],
+	color: [1, 1, 1, 1],
+	angle: 0,
+	is_mirror: 0,
+	spr_type: 0
+});
+
 const close = (actual, expected) => expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 6));
 
 describe('C-08 entity sprites', () => {
@@ -101,7 +111,7 @@ describe('C-08 entity sprites', () => {
 		expect(zIndexClipBias(150, 0, 0.5)).toBeCloseTo(1.5);
 	});
 
-	it.fails('R-SPR-007 [pending]: PC front-facing layer plan by zIndex', () => {
+	it('R-SPR-007: PC front-facing layer plan by zIndex', () => {
 		const plan = planPlayerLayers({
 			type: EntityType.PC,
 			direction: 0,
@@ -127,12 +137,20 @@ describe('C-08 entity sprites', () => {
 		});
 	});
 
-	it.fails('R-SPR-007 [pending]: EntityRender mixin (applied via .call) emits records instead of drawing', () => {
-		const entity = {};
+	it('R-SPR-007: EntityRender mixin (applied via .call) emits records instead of drawing', () => {
+		const texture = { id: 'body#0' };
+		const act = { actions: [{ delay: 100, animations: [{ layers: [bodyLayer(0)], sound: -1, pos: [] }] }] };
+		const entity = {
+			type: EntityType.MOB,
+			position: [1, 2, 3],
+			views: { body: { spr: { frames: [{ width: 32, height: 64, texture }], rgba_index: 0, old_rgba_index: 0 }, act } }
+		};
 		EntityRender.call(entity);
+		expect(Object.getPrototypeOf(entity)).toBe(Object.prototype);
 		const stream = new RecordStream();
 		entity.renderRecords(stream, { tick: 0, camera: { direction: 0 } });
-		expect(stream.records.length).toBeGreaterThan(0);
+		expect(stream.records).toHaveLength(1);
+		expect(stream.records[0]).toMatchObject({ texture, zIndex: 150, depthWrite: false, size: [32, 64] });
 	});
 
 	it('R-SPR-008: duplicate headgears are suppressed', () => {
@@ -211,8 +229,9 @@ describe('C-08 entity sprites', () => {
 		expect([...remapMagentaIndices(new Uint8Array([7, 8, 0]), palette)]).toEqual([0, 8, 0]);
 	});
 
-	it.fails('R-SPR-015 [pending]: external .pal is preferred over the sprite palette', () => {
+	it('R-SPR-015: external .pal is preferred over the sprite palette', () => {
 		expect(selectPalette({ externalPalette: 'body_1.pal', spritePalette: 'own' })).toBe('body_1.pal');
+		expect(selectPalette({ externalPalette: null, spritePalette: 'own' })).toBe('own');
 	});
 
 	it('R-SPR-016: RGBA frames are flipped, ABGR→RGBA, alpha 0 zeroes the pixel', () => {
@@ -316,7 +335,7 @@ describe('C-08 entity sprites', () => {
 		expect(removalAlpha(500, 1000)).toBeCloseTo(0.5);
 	});
 
-	it.fails('R-SPR-027 [pending]: default frame delay is the ACT delay ×25 ms, or 150 ms', () => {
+	it('R-SPR-027: default frame delay is the ACT delay ×25 ms, or 150 ms', () => {
 		const result = selectAnimationFrame({ action: Action.IDLE }, { delay: 0, frames: 4 }, 300);
 		expect(result.frame).toBe(2);
 	});

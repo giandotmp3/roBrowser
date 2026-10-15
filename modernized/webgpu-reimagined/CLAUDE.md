@@ -128,7 +128,20 @@ These were found at scaffold time and settled before phase 1.
 - **Phase 1 (harness determinism + legacy record shim): exit gate met.** `tests/renderer/LegacyRecordReplay.test.js`, in the root suite, drives the real legacy `Entity` → `EntityRender` → `SpriteRenderer` → `EntityManager` path in Node through the harness shim. It uses synthetic SPR/ACT data and a no-op GL. Over 40 frames (idle, attack, back-facing), 10 records per frame replay deep-equal under the same seed and clock. Layer order and zIndex are asserted against legacy. It needs no `src/` changes; the harness patches `Math.random`, `Date.now` and `performance.now` globally.
   - **Pin the clock epoch** (default `FAKE_EPOCH_MS`) in parity runs. Legacy idle frames depend on absolute time after an `objecttype` spawn (spec discrepancy #13).
   - **Not yet covered:** cart, riding, halo, trails, status tints, effects, damage numbers, and shader-side maths (uniforms aren't visible to the shim).
-- **Next: phase 2.** Have the legacy GL path draw from records (`gpu-webgl2`) behind the record shim, with record-diff green on all non-flagged rules and no visual change.
+- **Phase 2a (legacy draws from records): done.**
+  - `src/Renderer/SpriteRenderer.js` snapshots each 3D draw into a SpriteDraw-shaped record (`fillSpriteDrawRecord`) and draws it (`drawSpriteRecord3D`).
+  - A reused scratch record keeps production allocation-free.
+  - `SpriteRenderer.addRecordSink(fn)` gives observers one record per draw.
+  - `tests/renderer/SpriteRenderer.records.test.js` pins the exact GL call sequence (snapshot) across the refactor.
+- **Phase 2b (render-records entity composer + record-diff): exit gate met for the PC scene.**
+  - `EntityRender.renderRecords` (still a mixin) reproduces every legacy native record of the 40-frame PC scene field by field (`tests/renderer/RecordDiff.entity.test.js`, tolerance 1e-5).
+  - The only divergence is the declared flagged fix #13: legacy runs with the animation clock pinned to spawn time and matches fully; unpinned, mismatches are limited to pre-`setAction` weapon frames.
+  - Mutation checks fail the diff. The snapshot comes from the live legacy entity (`tests/renderer/support/legacyEntitySnapshot.js`).
+  - **Not yet composed:** halo, trails, attachments (R-SPR-024/025/031/032), walking, cart and riding scenes, mobs and NPCs, effects, damage numbers.
+- **Next (phase 2 remainder → phase 3):**
+  1. Widen the record-diff to more scenes: walk, cart, riding, mob death, status tints, attachments.
+  2. Route the legacy effect and damage draws through records.
+  3. Then phase 3: gpu-webgl2 run batching.
 
 ## Still open
 

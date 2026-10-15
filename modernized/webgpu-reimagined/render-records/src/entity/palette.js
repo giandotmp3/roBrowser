@@ -1,5 +1,3 @@
-import { notImplemented } from '../util/errors.js';
-
 /**
  * R-SPR-014 texture class and sampler for a sprite frame.
  * @param {{indexed: boolean}} frame
@@ -56,11 +54,14 @@ export function decodeRgbaFrame(abgr, width, height) {
 }
 
 /**
- * R-SPR-015 palette selection (external .pal vs sprite palette; mounts,
- * costumes, body styles, halter-lead mounts). Pending implementation.
- * @param {Object} _slot
- * @returns {string|number|null}
+ * R-SPR-015 palette selection: an external .pal (body / head palette) wins over the sprite's own
+ * palette (EntityRender.js:763). Which .pal belongs to a mounted / costume / body-style sprite, and
+ * the halter-lead fallback, is resolved when the view is built (EntityView.js:613-647), so the
+ * composer receives the already chosen external palette.
+ * @template T
+ * @param {{externalPalette?: T|null, spritePalette: T}} slot
+ * @returns {T}
  */
-export function selectPalette(_slot) {
-	return notImplemented('R-SPR-015', 'palette selection');
+export function selectPalette({ externalPalette = null, spritePalette }) {
+	return externalPalette || spritePalette;
 }
