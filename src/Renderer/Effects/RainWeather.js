@@ -118,6 +118,101 @@ let _instance = null;
 let _mapName = '';
 let _isStopping = false;
 
+/**
+ * Normal alpha blending of the puddle pass (backend-neutral factor names).
+ */
+const PUDDLE_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * Create an empty puddle draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * Puddles draw before the entities with depth test on, depth write off and no depth
+ * correction (runWithDepth(true, false, false)), normal alpha, scene fog.
+ *
+ * params:
+ *  - size: quad side (uSize, both axes)
+ *  - angle: rotation about the vertical axis in radians (uAngle)
+ *  - zIndex: uZIndex (always 1)
+ *  - time: tick * 0.001 (uTime, procedural ripples)
+ *  - vertexCount: 6 (two triangles of the shared XZ quad)
+ *
+ * @returns {object} record
+ */
+function createPuddleDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'rainPuddle',
+		pass: 'before',
+		texture: null,
+		position: [0, 0, 0],
+		color: [1.0, 1.0, 1.0, 0],
+		blend: PUDDLE_BLEND,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			size: 0,
+			angle: 0,
+			zIndex: 1,
+			time: 0,
+			vertexCount: 6
+		}
+	};
+}
+
+/**
+ * Snapshot one puddle draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {object} puddle
+ * @param {number} tick game tick
+ * @param {boolean} fog scene fog on (fog.use && fog.exist)
+ * @returns {object} record
+ */
+function fillPuddleDrawRecord(record, puddle, tick, fog) {
+	record.texture = _puddleFrame.texture;
+	record.position[0] = puddle.x;
+	record.position[1] = puddle.y;
+	record.position[2] = puddle.z + 0.01;
+	record.color[3] = puddle.alpha;
+	record.fog = fog;
+	record.params.size = puddle.size;
+	record.params.angle = puddle.angle;
+	record.params.time = tick * 0.001;
+	return record;
+}
+
+/**
+ * Send one puddle record to the GPU (the pass has bound program, texture and quad).
+ *
+ * @param {object} gl webgl context
+ * @param {object} uniform puddle program uniforms
+ * @param {object} record puddle draw record
+ */
+function drawPuddleRecord(gl, uniform, record) {
+	const params = record.params;
+	gl.uniform3f(uniform.uWorldPosition, record.position[0], record.position[1], record.position[2]);
+	gl.uniform2f(uniform.uSize, params.size, params.size);
+	gl.uniform1f(uniform.uAngle, params.angle);
+	gl.uniform4f(uniform.uColor, record.color[0], record.color[1], record.color[2], record.color[3]);
+	gl.uniform1f(uniform.uZIndex, params.zIndex);
+
+	gl.drawArrays(gl.TRIANGLES, 0, params.vertexCount);
+}
+
+/**
+ * @var {Set<function>} puddle record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused puddle record when nobody observes (no per-draw allocation)
+ */
+const _scratchPuddleRecord = createPuddleDrawRecord();
+
 function ensureDropFrame(gl) {
 	if (_dropFrame && _dropFrame.texture && gl.isTexture(_dropFrame.texture)) {
 		return;
@@ -473,6 +568,19 @@ class RainWeatherEffect {
 		this.afterRender(gl);
 	}
 
+	/**
+	 * Observe every puddle draw as a backend-neutral record. Each observed draw gets a
+	 * fresh record object, so sinks may keep it. Drops, splashes and the grey/flash
+	 * filter draw through SpriteRenderer (see SpriteRenderer.addRecordSink).
+	 *
+	 * @param {function} sink called with each puddle draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
+	}
+
 	static stop(ownerAID, tick) {
 		if (!_instance) {
 			return;
@@ -567,7 +675,7 @@ class RainWeatherEffect {
 				try {
 					osc.disconnect();
 					gain.disconnect();
-				} catch (e) {
+				} catch (_e) {
 					/* Ignore */
 				}
 			},
@@ -1043,6 +1151,7 @@ class RainWeatherEffect {
 
 				// Fog
 				const fog = MapRenderer.fog;
+				const fogUse = !!(fog.use && fog.exist);
 				gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
 				gl.uniform1f(uniform.uFogNear, fog.near);
 				gl.uniform1f(uniform.uFogFar, fog.far);
@@ -1086,14 +1195,15 @@ class RainWeatherEffect {
 						continue;
 					}
 
-					// Uniforms for this puddle
-					gl.uniform3f(uniform.uWorldPosition, puddle.x, puddle.y, puddle.z + 0.01);
-					gl.uniform2f(uniform.uSize, puddle.size, puddle.size);
-					gl.uniform1f(uniform.uAngle, puddle.angle);
-					gl.uniform4f(uniform.uColor, 1.0, 1.0, 1.0, puddle.alpha);
-					gl.uniform1f(uniform.uZIndex, 1);
-
-					gl.drawArrays(gl.TRIANGLES, 0, 6);
+					// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+					const record = fillPuddleDrawRecord(
+						_recordSinks.size ? createPuddleDrawRecord() : _scratchPuddleRecord,
+						puddle,
+						tick,
+						fogUse
+					);
+					_recordSinks.forEach(sink => sink(record));
+					drawPuddleRecord(gl, uniform, record);
 				}
 
 				gl.disableVertexAttribArray(attribute.aPosition);

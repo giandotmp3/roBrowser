@@ -39,7 +39,107 @@ const PARTICLE_CORNERS = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
 let _program;
 let _particleProgram;
 const _textureCache = new Map();
-const _vertices = new Float32Array(20);
+
+/**
+ * Backend-neutral blend states: the curtain uses normal alpha, the spray is additive.
+ */
+const BLEND_NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+const BLEND_ADDITIVE = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE' });
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty waterfall curtain draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records). One per layer segment: 4 layers × 5
+ * segments a frame, drawn with the curtain program (normal alpha, depth test on, depth
+ * write off, scene fog, uOpacity 80/255 as color alpha).
+ *
+ * params:
+ *  - modelMatrix: uModelMat (RSW position, optional quarter turn)
+ *  - vertices: 4 × (x, y, z, u, v) triangle-strip quad
+ *  - layer, segment: indices in the curtain
+ *  - vertexCount: 4
+ *
+ * @returns {object} record
+ */
+function createCurtainRecord() {
+	return {
+		kind: 'effect',
+		family: 'waterfall',
+		pass: 'after',
+		texture: null,
+		position: null,
+		color: [1, 1, 1, OPACITY],
+		blend: BLEND_NORMAL,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			modelMatrix: null,
+			vertices: new Float32Array(20),
+			layer: 0,
+			segment: 0,
+			vertexCount: 4
+		}
+	};
+}
+
+/**
+ * Create an empty spray draw record: one instanced draw of camera-facing puddles
+ * (additive, particle program). color carries uColor (alpha is computed per particle).
+ *
+ * params:
+ *  - modelMatrix: uModelMat
+ *  - time: uTime, elapsed / cycle length
+ *  - size: uSize
+ *  - seeds: per-instance (x offset, z offset, phase, drift angle)
+ *  - instanceCount
+ *  - vertexCount: 4
+ *
+ * @returns {object} record
+ */
+function createSprayRecord() {
+	return {
+		kind: 'effect',
+		family: 'waterfallSpray',
+		pass: 'after',
+		texture: null,
+		position: null,
+		color: [PARTICLE_COLOR[0], PARTICLE_COLOR[1], PARTICLE_COLOR[2], 1],
+		blend: BLEND_ADDITIVE,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			modelMatrix: null,
+			time: 0,
+			size: PARTICLE_SIZE,
+			seeds: null,
+			instanceCount: 0,
+			vertexCount: 4
+		}
+	};
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {Array<object>} reused records when nobody observes (20 curtain + 1 spray)
+ */
+const _scratchRecords = [
+	...Array.from({ length: LAYER_COUNT * SEGMENT_COUNT }, createCurtainRecord),
+	createSprayRecord()
+];
 
 function textureFiles(textureSet) {
 	const files = [];
@@ -116,13 +216,159 @@ function buildParticleSeeds(count, spread) {
 	return seeds;
 }
 
-function setVertex(index, x, y, z, u, v) {
+function setVertex(vertices, index, x, y, z, u, v) {
 	const offset = index * 5;
-	_vertices[offset] = x;
-	_vertices[offset + 1] = y;
-	_vertices[offset + 2] = z;
-	_vertices[offset + 3] = u;
-	_vertices[offset + 4] = v;
+	vertices[offset] = x;
+	vertices[offset + 1] = y;
+	vertices[offset + 2] = z;
+	vertices[offset + 3] = u;
+	vertices[offset + 4] = v;
+}
+
+/**
+ * Snapshot one frame of a waterfall into records: 20 curtain quads (layer by layer,
+ * segment by segment) then the spray.
+ *
+ * @param {WaterfallEffect} effect
+ * @param {number} tick game tick
+ * @param {boolean} keep true when the records outlive the draw (fresh objects, copies)
+ * @returns {Array<object>} records
+ */
+function fillWaterfallRecords(effect, tick, keep) {
+	const records = keep
+		? [...Array.from({ length: LAYER_COUNT * SEGMENT_COUNT }, createCurtainRecord), createSprayRecord()]
+		: _scratchRecords;
+
+	mat4.identity(_matrix);
+	// Map effect positions carry the sprite offsets applied by MapRenderer (-0.5 x/z, +1 altitude);
+	// revert them so the mesh sits exactly on the RSW position like models do.
+	mat4.translate(_matrix, _matrix, [effect.position[0] + 0.5, 1 - effect.position[2], effect.position[1] + 0.5]);
+	if (effect.vertical) {
+		mat4.rotateY(_matrix, _matrix, Math.PI / 2);
+	}
+	const modelMatrix = keep ? mat4.clone(_matrix) : _matrix;
+	const position = keep ? Array.from(effect.position) : effect.position;
+
+	const elapsed = tick - effect.startTick;
+	const process = Math.floor(elapsed / EFFECT_TICK_MS);
+
+	let index = 0;
+	for (let layer = 0; layer < LAYER_COUNT; layer++) {
+		const speed = 80 - layer * 13;
+		const scroll = ((process % speed) * SEGMENT_HEIGHT) / speed;
+		const crop = scroll / SEGMENT_HEIGHT;
+		const phase = Math.floor((process % (TEXTURE_COUNT * speed)) / speed);
+		const halfWidth = (effect.width + layer * UNIT) / 2;
+		const depth = (layer - 1) * UNIT;
+
+		for (let segment = 0; segment < SEGMENT_COUNT; segment++) {
+			const top = scroll - segment * SEGMENT_HEIGHT;
+			const bottom = top - SEGMENT_HEIGHT;
+			let visibleTop = top;
+			let visibleBottom = bottom;
+			let vTop = 0;
+			let vBottom = 1;
+
+			if (segment === 0) {
+				visibleTop = top + (bottom - top) * crop;
+				vTop = crop;
+			} else if (segment === SEGMENT_COUNT - 1) {
+				visibleBottom = top + (bottom - top) * crop;
+				vBottom = crop;
+			}
+
+			const record = records[index++];
+			const vertices = record.params.vertices;
+			setVertex(vertices, 0, -halfWidth, -visibleBottom, depth, 0, vBottom);
+			setVertex(vertices, 1, halfWidth, -visibleBottom, depth, 1, vBottom);
+			setVertex(vertices, 2, -halfWidth, -visibleTop, depth, 0, vTop);
+			setVertex(vertices, 3, halfWidth, -visibleTop, depth, 1, vTop);
+			record.texture = effect.textures[(segment + phase) % TEXTURE_COUNT];
+			record.position = position;
+			record.fog = _fogUse;
+			record.params.modelMatrix = modelMatrix;
+			record.params.layer = layer;
+			record.params.segment = segment;
+		}
+	}
+
+	const spray = records[index];
+	spray.texture = effect.textures[TEXTURE_COUNT];
+	spray.position = position;
+	spray.fog = _fogUse;
+	spray.params.modelMatrix = modelMatrix;
+	spray.params.time = elapsed / PARTICLE_CYCLE_MS;
+	spray.params.seeds = effect.seeds;
+	spray.params.instanceCount = effect.particleCount;
+
+	return records;
+}
+
+/**
+ * Draw one frame of waterfall records (curtain quads then the instanced spray).
+ *
+ * @param {WebGLRenderingContext} gl
+ * @param {Array<object>} records from fillWaterfallRecords
+ * @param {WaterfallEffect} effect owner of the GL buffers
+ */
+function drawWaterfallRecords(gl, records, effect) {
+	const uniform = _program.uniform;
+	const attribute = _program.attribute;
+	const curtainCount = records.length - 1;
+
+	gl.uniformMatrix4fv(uniform.uModelMat, false, records[0].params.modelMatrix);
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, effect.buffer);
+	gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 20, 0);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 20, 12);
+
+	for (let i = 0; i < curtainCount; i++) {
+		const record = records[i];
+		gl.bufferData(gl.ARRAY_BUFFER, record.params.vertices, gl.DYNAMIC_DRAW);
+		gl.bindTexture(gl.TEXTURE_2D, record.texture);
+		gl.drawArrays(gl.TRIANGLE_STRIP, 0, record.params.vertexCount);
+	}
+
+	drawSprayRecord(gl, records[curtainCount], effect);
+}
+
+/**
+ * Additive spray puffs rising from the pool at the base of the fall,
+ * drawn as camera-facing instanced quads.
+ *
+ * @param {WebGLRenderingContext} gl
+ * @param {object} record spray record
+ * @param {WaterfallEffect} effect owner of the GL buffers
+ */
+function drawSprayRecord(gl, record, effect) {
+	const uniform = _particleProgram.uniform;
+	const attribute = _particleProgram.attribute;
+	const params = record.params;
+
+	gl.useProgram(_particleProgram);
+	gl.uniformMatrix4fv(uniform.uModelMat, false, params.modelMatrix);
+	gl.uniform1f(uniform.uTime, params.time);
+	gl.uniform1f(uniform.uSize, params.size);
+	gl.blendFunc(gl[record.blend.src], gl[record.blend.dst]);
+
+	gl.enableVertexAttribArray(attribute.aCorner);
+	gl.enableVertexAttribArray(attribute.aSeed);
+	gl.bindBuffer(gl.ARRAY_BUFFER, effect.cornerBuffer);
+	gl.vertexAttribPointer(attribute.aCorner, 2, gl.FLOAT, false, 0, 0);
+	gl.bindBuffer(gl.ARRAY_BUFFER, effect.seedBuffer);
+	gl.vertexAttribPointer(attribute.aSeed, PARTICLE_FLOATS, gl.FLOAT, false, 0, 0);
+	gl.vertexAttribDivisor(attribute.aSeed, 1);
+
+	gl.bindTexture(gl.TEXTURE_2D, record.texture);
+	gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, params.vertexCount, params.instanceCount);
+
+	gl.vertexAttribDivisor(attribute.aSeed, 0);
+	gl.disableVertexAttribArray(attribute.aCorner);
+	gl.disableVertexAttribArray(attribute.aSeed);
+	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	gl.useProgram(_program);
+	gl.enableVertexAttribArray(_program.attribute.aPosition);
+	gl.enableVertexAttribArray(_program.attribute.aTextureCoord);
 }
 
 /**
@@ -146,6 +392,7 @@ class WaterfallEffect {
 		this.buffer = null;
 		this.cornerBuffer = null;
 		this.seedBuffer = null;
+		this.seeds = null;
 		this.vertical = effect.vertical;
 		this.ready = false;
 		this.needInit = true;
@@ -163,98 +410,31 @@ class WaterfallEffect {
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.cornerBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, PARTICLE_CORNERS, gl.STATIC_DRAW);
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.seedBuffer);
-		gl.bufferData(gl.ARRAY_BUFFER, buildParticleSeeds(this.particleCount, this.particleSpread), gl.STATIC_DRAW);
+		this.seeds = buildParticleSeeds(this.particleCount, this.particleSpread);
+		gl.bufferData(gl.ARRAY_BUFFER, this.seeds, gl.STATIC_DRAW);
 		this.textureCache = loadTextures(gl, this.textureSet, this);
 	}
 
 	render(gl, tick) {
-		const uniform = _program.uniform;
-		const attribute = _program.attribute;
-		mat4.identity(_matrix);
-		// Map effect positions carry the sprite offsets applied by MapRenderer (-0.5 x/z, +1 altitude);
-		// revert them so the mesh sits exactly on the RSW position like models do.
-		mat4.translate(_matrix, _matrix, [this.position[0] + 0.5, 1 - this.position[2], this.position[1] + 0.5]);
-		if (this.vertical) {
-			mat4.rotateY(_matrix, _matrix, Math.PI / 2);
+		// Observed frames get their own records; otherwise reuse a pool (no per-draw allocation).
+		const observed = _recordSinks.size > 0;
+		const records = fillWaterfallRecords(this, tick, observed);
+		if (observed) {
+			records.forEach(record => _recordSinks.forEach(sink => sink(record)));
 		}
-
-		gl.uniformMatrix4fv(uniform.uModelMat, false, _matrix);
-		const elapsed = tick - this.startTick;
-		const process = Math.floor(elapsed / EFFECT_TICK_MS);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-		gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 20, 0);
-		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 20, 12);
-
-		for (let layer = 0; layer < LAYER_COUNT; layer++) {
-			const speed = 80 - layer * 13;
-			const scroll = ((process % speed) * SEGMENT_HEIGHT) / speed;
-			const crop = scroll / SEGMENT_HEIGHT;
-			const phase = Math.floor((process % (TEXTURE_COUNT * speed)) / speed);
-			const halfWidth = (this.width + layer * UNIT) / 2;
-			const depth = (layer - 1) * UNIT;
-
-			for (let segment = 0; segment < SEGMENT_COUNT; segment++) {
-				const top = scroll - segment * SEGMENT_HEIGHT;
-				const bottom = top - SEGMENT_HEIGHT;
-				let visibleTop = top;
-				let visibleBottom = bottom;
-				let vTop = 0;
-				let vBottom = 1;
-
-				if (segment === 0) {
-					visibleTop = top + (bottom - top) * crop;
-					vTop = crop;
-				} else if (segment === SEGMENT_COUNT - 1) {
-					visibleBottom = top + (bottom - top) * crop;
-					vBottom = crop;
-				}
-
-				setVertex(0, -halfWidth, -visibleBottom, depth, 0, vBottom);
-				setVertex(1, halfWidth, -visibleBottom, depth, 1, vBottom);
-				setVertex(2, -halfWidth, -visibleTop, depth, 0, vTop);
-				setVertex(3, halfWidth, -visibleTop, depth, 1, vTop);
-				gl.bufferData(gl.ARRAY_BUFFER, _vertices, gl.DYNAMIC_DRAW);
-				gl.bindTexture(gl.TEXTURE_2D, this.textures[(segment + phase) % TEXTURE_COUNT]);
-				gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-			}
-		}
-
-		this.renderParticles(gl, elapsed);
+		drawWaterfallRecords(gl, records, this);
 	}
 
 	/**
-	 * Additive spray puffs rising from the pool at the base of the fall,
-	 * drawn as camera-facing instanced quads.
+	 * Observe every waterfall draw (curtain quads and the spray) as a backend-neutral
+	 * record. Each observed draw gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
 	 */
-	renderParticles(gl, elapsed) {
-		const uniform = _particleProgram.uniform;
-		const attribute = _particleProgram.attribute;
-
-		gl.useProgram(_particleProgram);
-		gl.uniformMatrix4fv(uniform.uModelMat, false, _matrix);
-		gl.uniform1f(uniform.uTime, elapsed / PARTICLE_CYCLE_MS);
-		gl.uniform1f(uniform.uSize, PARTICLE_SIZE);
-		gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-
-		gl.enableVertexAttribArray(attribute.aCorner);
-		gl.enableVertexAttribArray(attribute.aSeed);
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.cornerBuffer);
-		gl.vertexAttribPointer(attribute.aCorner, 2, gl.FLOAT, false, 0, 0);
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.seedBuffer);
-		gl.vertexAttribPointer(attribute.aSeed, PARTICLE_FLOATS, gl.FLOAT, false, 0, 0);
-		gl.vertexAttribDivisor(attribute.aSeed, 1);
-
-		gl.bindTexture(gl.TEXTURE_2D, this.textures[TEXTURE_COUNT]);
-		gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.particleCount);
-
-		gl.vertexAttribDivisor(attribute.aSeed, 0);
-		gl.disableVertexAttribArray(attribute.aCorner);
-		gl.disableVertexAttribArray(attribute.aSeed);
-		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-		gl.useProgram(_program);
-		gl.enableVertexAttribArray(_program.attribute.aPosition);
-		gl.enableVertexAttribArray(_program.attribute.aTextureCoord);
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -275,6 +455,7 @@ class WaterfallEffect {
 		this.buffer = null;
 		this.cornerBuffer = null;
 		this.seedBuffer = null;
+		this.seeds = null;
 		this.textures = [];
 		this.ready = false;
 	}
@@ -291,6 +472,7 @@ class WaterfallEffect {
 	 */
 	static beforeRender(gl, modelView, projection, fog) {
 		const fogUse = fog.use && fog.exist;
+		_fogUse = !!fogUse;
 
 		gl.useProgram(_particleProgram);
 		gl.uniformMatrix4fv(_particleProgram.uniform.uModelViewMat, false, modelView);
