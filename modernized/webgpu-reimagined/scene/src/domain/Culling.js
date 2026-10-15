@@ -15,7 +15,7 @@ export const computeVisibleSet = (entities, player, settings) => {
 	const visible = new Set();
 	const all = [...entities];
 	if (!settings.performanceMode || !player) {
-		all.forEach((e) => visible.add(e));
+		all.forEach(e => visible.add(e));
 		return visible;
 	}
 	const r2 = settings.viewArea * settings.viewArea;

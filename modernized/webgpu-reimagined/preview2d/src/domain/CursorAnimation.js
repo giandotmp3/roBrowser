@@ -19,7 +19,16 @@ import { ENTITY_TYPE, cursorInfo } from './CursorTypes.js';
  * @param {number} [p.pausedFrame]   legacy `_animation`
  * @returns {number}
  */
-export function selectCursorFrame({ type, actDelay, frameCount, tick, startTick, oneShot = false, playing = true, pausedFrame = 0 }) {
+export function selectCursorFrame({
+	type,
+	actDelay,
+	frameCount,
+	tick,
+	startTick,
+	oneShot = false,
+	playing = true,
+	pausedFrame = 0
+}) {
 	if (!playing) {
 		return pausedFrame;
 	}
@@ -49,7 +58,14 @@ export function selectCursorFrame({ type, actDelay, frameCount, tick, startTick,
  * @param {{snap?: boolean, itemsnap?: boolean}} [p.prefs]
  * @returns {{x: number, y: number}}
  */
-export function cursorHotspot({ type, magnetism = false, blockMagnetism = false, overEntity = null, mouse = { x: 0, y: 0 }, prefs = {} }) {
+export function cursorHotspot({
+	type,
+	magnetism = false,
+	blockMagnetism = false,
+	overEntity = null,
+	mouse = { x: 0, y: 0 },
+	prefs = {}
+}) {
 	const info = cursorInfo(type);
 	let x = info.startX;
 	let y = info.startY;

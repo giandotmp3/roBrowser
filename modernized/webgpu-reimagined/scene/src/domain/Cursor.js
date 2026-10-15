@@ -7,7 +7,7 @@ import { notImplemented } from '../errors.js';
  */
 
 /** @param {string} type */
-export const cursorSpeedMultiplier = (type) => CURSOR_SPEED[type] ?? CURSOR_SPEED.OTHER;
+export const cursorSpeedMultiplier = type => CURSOR_SPEED[type] ?? CURSOR_SPEED.OTHER;
 
 /**
  * @param {object} p
@@ -36,7 +36,7 @@ export const applyMagnetism = (mouse, hovered, prefs) => {
 };
 
 /** Per-type hotspot table. */
-export const cursorHotspot = (_type) => notImplemented('cursorHotspot table', 'R-UI-005');
+export const cursorHotspot = _type => notImplemented('cursorHotspot table', 'R-UI-005');
 
 /** Animate the cursor on its own rAF while the scene loop is stopped. */
 export class StandaloneCursorLoop {

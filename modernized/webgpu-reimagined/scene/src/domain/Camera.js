@@ -158,7 +158,13 @@ export class Camera {
 	 * @param {number} [_latitude]
 	 * @param {number} [_zoom]
 	 */
-	setQuake(_start, _duration = CAMERA.QUAKE_DURATION_MS, _side = CAMERA.QUAKE_SIDE, _latitude = CAMERA.QUAKE_LATITUDE, _zoom = CAMERA.QUAKE_ZOOM) {
+	setQuake(
+		_start,
+		_duration = CAMERA.QUAKE_DURATION_MS,
+		_side = CAMERA.QUAKE_SIDE,
+		_latitude = CAMERA.QUAKE_LATITUDE,
+		_zoom = CAMERA.QUAKE_ZOOM
+	) {
 		notImplemented('Camera.setQuake', 'R-CAM-010');
 	}
 
@@ -210,7 +216,7 @@ export class Camera {
 		rotateY(m, m, toRad(this.angle[1]));
 		const t = [this.position[0] - 0.5, this.position[2] + this.zOffset, this.position[1] - 0.5];
 		translate(m, m, t);
-		this.focus = t.map((v) => -v);
+		this.focus = t.map(v => -v);
 
 		// normal matrix = inverse-transpose of MV (upper 3x3 meaningful)
 		const inv = invert(create(), m) ?? create();

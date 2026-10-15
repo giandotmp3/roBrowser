@@ -12,7 +12,13 @@
 
 /** @param {PipelineSpec} s */
 export function pipelineSpecKey(s) {
-	return [s.family, `${s.blend.src}|${s.blend.dst}`, s.depthTest ? 'T' : 't', s.depthWrite ? 'W' : 'w', s.topology ?? 'triangle-list'].join(':');
+	return [
+		s.family,
+		`${s.blend.src}|${s.blend.dst}`,
+		s.depthTest ? 'T' : 't',
+		s.depthWrite ? 'W' : 'w',
+		s.topology ?? 'triangle-list'
+	].join(':');
 }
 
 export const NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });

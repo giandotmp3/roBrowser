@@ -28,7 +28,7 @@ export const projectToScreen = (viewProjection, p, viewport, { flipped = false }
 };
 
 /** World (x, y, z) -> scene origin (x+0.5, -z, y+0.5) (spec §5 shared conventions). */
-export const sceneOrigin = (position) => [position[0] + 0.5, -position[2], position[1] + 0.5];
+export const sceneOrigin = position => [position[0] + 0.5, -position[2], position[1] + 0.5];
 
 /**
  * Billboard-space anchor for an overlay kind (R-UI-001). The offset is applied in the
@@ -49,7 +49,7 @@ export const overlayAnchor = (kind, position) => {
  * Full overlay placement including projection and mirroring (R-UI-001 + R-PP-011 fix).
  * @param {object} _args
  */
-export const placeOverlay = (_args) => notImplemented('placeOverlay (projected DOM placement)', 'R-UI-001', 'R-PP-011');
+export const placeOverlay = _args => notImplemented('placeOverlay (projected DOM placement)', 'R-UI-001', 'R-PP-011');
 
 /**
  * R-PP-011 fix applied to a pick rect: mirror Y across the viewport.

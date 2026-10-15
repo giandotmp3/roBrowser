@@ -3,7 +3,15 @@ import { ADDITIVE } from '../pipelines/pipelineKey.js';
 import { D3D_TO_GPU } from '../pipelines/blendMap.js';
 
 /** R-EFX-014: effect families always drawn with SRC_ALPHA, ONE. */
-export const ADDITIVE_FAMILIES = Object.freeze(['GroundAura', 'SwirlingAura', 'Level99Bubble', 'SpiritSphere', 'WarlockSphere', 'PokJukWeatherEffect', 'WaterfallEffect']);
+export const ADDITIVE_FAMILIES = Object.freeze([
+	'GroundAura',
+	'SwirlingAura',
+	'Level99Bubble',
+	'SpiritSphere',
+	'WarlockSphere',
+	'PokJukWeatherEffect',
+	'WaterfallEffect'
+]);
 
 /** @returns {{src: string, dst: string}|null} forced blend for a family, or null */
 export function familyBlend(family) {
@@ -19,7 +27,10 @@ export function strPipelineSpec(srcCode, dstCode) {
 	const dst = D3D_TO_GPU[dstCode];
 	return {
 		family: 'str',
-		gpuBlend: src && dst ? { srcFactor: src, dstFactor: dst } : { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
+		gpuBlend:
+			src && dst
+				? { srcFactor: src, dstFactor: dst }
+				: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
 		depthTest: true,
 		depthWrite: false
 	};

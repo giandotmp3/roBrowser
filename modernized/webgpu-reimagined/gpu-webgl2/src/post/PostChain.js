@@ -59,7 +59,14 @@ export function sceneTarget({ width, height, anyActive, performanceMode }) {
  */
 export function bloomParams({ intensity, performanceMode, rendererString }) {
 	const disabled = /SwiftShader/i.test(rendererString) && /Intel/i.test(rendererString);
-	return { enabled: !disabled, intensity, threshold: BLOOM.threshold, knee: BLOOM.knee, downsample: performanceMode ? BLOOM.downsamplePerf : BLOOM.downsample, tapTexels: BLOOM.tapTexels };
+	return {
+		enabled: !disabled,
+		intensity,
+		threshold: BLOOM.threshold,
+		knee: BLOOM.knee,
+		downsample: performanceMode ? BLOOM.downsamplePerf : BLOOM.downsample,
+		tapTexels: BLOOM.tapTexels
+	};
 }
 
 /** CPU reference of bloom prefilter soft knee on BT.709 luma. */
@@ -75,7 +82,15 @@ export function blurMask(distFromCentre, intensity) {
 
 /** R-PP-006 [FLAG → fixed]: `fxaaSubpix` is now consumed by the shader. */
 export function fxaaUniforms(settings) {
-	return { edgeThreshold: settings.fxaaEdgeThreshold, edgeThresholdMin: 0, span: FXAA.span, reduceMul: FXAA.reduceMul, reduceMin: FXAA.reduceMin, subpix: settings.fxaaSubpix, subpixUsed: true };
+	return {
+		edgeThreshold: settings.fxaaEdgeThreshold,
+		edgeThresholdMin: 0,
+		span: FXAA.span,
+		reduceMul: FXAA.reduceMul,
+		reduceMin: FXAA.reduceMin,
+		subpix: settings.fxaaSubpix,
+		subpixUsed: true
+	};
 }
 
 /** R-PP-007 [FLAG → fixed]: peak = 8 − 3·contrast; sharpening 0 is honoured (no `|| 1.0`). */

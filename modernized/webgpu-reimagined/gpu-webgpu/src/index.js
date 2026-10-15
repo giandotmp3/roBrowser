@@ -24,8 +24,24 @@ export { Residency, ArrayPool, PaletteTable } from './residency/Residency.js';
 export { globalLight, skyForMap } from './world/lighting.js';
 export { fogUniforms, applyFog } from './world/fog.js';
 export { shadeGround, lightmapRgb, groundAtlasLayout, lightmapAtlasLayout, tileColorsToRgba } from './world/ground.js';
-export { waterParams, waveOffset, waveY, waterFrameIndex, waterOpacity, shadeWater, WATER_DEPTH } from './world/water.js';
-export { modelAlpha, shadeModel, MODEL_DEPTH, rsmInstanceMatrix, computeNormals, SHADE, batchStaticModels } from './world/models.js';
+export {
+	waterParams,
+	waveOffset,
+	waveY,
+	waterFrameIndex,
+	waterOpacity,
+	shadeWater,
+	WATER_DEPTH
+} from './world/water.js';
+export {
+	modelAlpha,
+	shadeModel,
+	MODEL_DEPTH,
+	rsmInstanceMatrix,
+	computeNormals,
+	SHADE,
+	batchStaticModels
+} from './world/models.js';
 export * from './world/occluderFade.js';
 export { gridSelectorCells, gridSelectorQuad } from './world/gridSelector.js';
 export { CLOUD_DEPTH, spawnCloud, createCloudField, cloudAlpha } from './world/sky.js';
@@ -33,7 +49,13 @@ export { MapGpuScene } from './world/MapGpuScene.js';
 
 export { MAP_FRAME_STEPS, runMapFrame } from './frame/mapFrame.js';
 
-export { SpriteRunRenderer, zIndexBias, depthCorrectedClipZ, samplePaletteBilinear, SPRITE_INSTANCE_FLOATS } from './sprites/SpriteRunRenderer.js';
+export {
+	SpriteRunRenderer,
+	zIndexBias,
+	depthCorrectedClipZ,
+	samplePaletteBilinear,
+	SPRITE_INSTANCE_FLOATS
+} from './sprites/SpriteRunRenderer.js';
 export * from './effects/effectState.js';
 export { EffectRenderers } from './effects/EffectRenderers.js';
 export * from './gr2/gr2.js';

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { GLDevice } from '../../src/device/GLDevice.js';
-import { ContextLossController } from '../../src/device/ContextLossController.js';
 import { onRenderError } from '../../src/device/frameErrorPolicy.js';
 import { GLStateCache } from '../../src/pipeline/GLStateCache.js';
 import { GL } from '../../src/pipeline/glEnums.js';

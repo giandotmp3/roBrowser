@@ -115,7 +115,7 @@ export class Altitude {
 		const len = Math.hypot(...d) || 1;
 		return this.rayMarch(
 			from,
-			d.map((v) => v / len)
+			d.map(v => v / len)
 		);
 	}
 }

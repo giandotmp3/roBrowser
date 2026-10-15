@@ -9,7 +9,14 @@ const frameAt = tick => (tick * 60) / 1000;
 
 /** R-MAP-008: wave and level are RSW values /5. */
 export function waterParams(rsw) {
-	return { level: rsw.level / 5, waveHeight: rsw.waveHeight / 5, waveSpeed: rsw.waveSpeed, wavePitch: rsw.wavePitch, animSpeed: rsw.animSpeed, type: rsw.type };
+	return {
+		level: rsw.level / 5,
+		waveHeight: rsw.waveHeight / 5,
+		waveSpeed: rsw.waveSpeed,
+		wavePitch: rsw.wavePitch,
+		animSpeed: rsw.animSpeed,
+		type: rsw.type
+	};
 }
 
 /** R-MAP-008: offset = (frame·speed mod 360) − 180, frame = tick / (1000/60). */

@@ -1,4 +1,10 @@
-import { GROUND_ALPHA_CUTOFF, GROUND_ATLAS_CELL, LIGHTMAP_BLOCK, POSTERIZE_STEP, SMOOTHLIGHT_POW } from '../constants.js';
+import {
+	GROUND_ALPHA_CUTOFF,
+	GROUND_ATLAS_CELL,
+	LIGHTMAP_BLOCK,
+	POSTERIZE_STEP,
+	SMOOTHLIGHT_POW
+} from '../constants.js';
 import { clamp01 } from '../math.js';
 import { nextPot } from '../residency/imageKey.js';
 import { NotImplementedError } from '../errors.js';

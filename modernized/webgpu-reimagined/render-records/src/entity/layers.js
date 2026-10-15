@@ -52,7 +52,13 @@ export function robeZCorrection({ lookingFront, sitting, riding, robeHeight = 0,
 	return lookingFront ? 1 : 400;
 }
 
-const DEPTH_WRITING_TYPES = new Set([EntityType.PC, EntityType.MERC, EntityType.HOM, EntityType.FALCON, EntityType.NPC]);
+const DEPTH_WRITING_TYPES = new Set([
+	EntityType.PC,
+	EntityType.MERC,
+	EntityType.HOM,
+	EntityType.FALCON,
+	EntityType.NPC
+]);
 
 /**
  * R-SPR-013 body depth write / zIndex by entity type.

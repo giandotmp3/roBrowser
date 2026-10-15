@@ -13,10 +13,17 @@ import { EntityKind } from './EntityTypes.js';
  * @param {boolean} [p.hasAp]
  * @param {boolean} [p.isFourthClass]
  */
-export const lifeBarLayout = ({ kind, hpRatio, hasSp = false, hasHunger = false, hasAp = false, isFourthClass = false }) => {
+export const lifeBarLayout = ({
+	kind,
+	hpRatio,
+	hasSp = false,
+	hasHunger = false,
+	hasAp = false,
+	isFourthClass = false
+}) => {
 	const rows = [{ bar: 'hp', y: 0, height: LIFE_BAR.HP_HEIGHT }];
 	let y = LIFE_BAR.HP_HEIGHT;
-	const push = (bar) => {
+	const push = bar => {
 		rows.push({ bar, y, height: LIFE_BAR.EXTRA_BAR_HEIGHT });
 		y += LIFE_BAR.EXTRA_BAR_HEIGHT;
 	};
@@ -31,7 +38,8 @@ export const lifeBarLayout = ({ kind, hpRatio, hasSp = false, hasHunger = false,
 	}
 
 	const mobOrPet = kind === EntityKind.MOB || kind === EntityKind.PET;
-	let hpColor = kind === EntityKind.MOB ? LIFE_BAR.HP_MOB : kind === EntityKind.PET ? LIFE_BAR.HP_PET : LIFE_BAR.HP_OTHER;
+	let hpColor =
+		kind === EntityKind.MOB ? LIFE_BAR.HP_MOB : kind === EntityKind.PET ? LIFE_BAR.HP_PET : LIFE_BAR.HP_OTHER;
 	if (hpRatio < LIFE_BAR.LOW_THRESHOLD) {
 		hpColor = mobOrPet ? LIFE_BAR.HP_LOW_MOB_PET : LIFE_BAR.HP_LOW_OTHER;
 	}

@@ -117,5 +117,20 @@ export default [
     rules: sharedRules
   },
 
+  {
+    // Reimagined modules (modernized/): same rules; browser + node globals for tests and tooling
+    files: ['modernized/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.es2025
+      }
+    },
+    rules: sharedRules
+  },
+
   eslintConfigPrettier  
 ];

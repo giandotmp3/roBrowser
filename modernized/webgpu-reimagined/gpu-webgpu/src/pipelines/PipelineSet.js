@@ -72,11 +72,13 @@ export class PipelineSet {
 		if (this._ready.has(key) || this._pending.has(key)) {
 			return this._pending.get(key) ?? Promise.resolve(this._ready.get(key));
 		}
-		const p = this._device.createRenderPipelineAsync(describePipeline(spec, this._shaderFor(spec.family))).then(pipeline => {
-			this._ready.set(key, pipeline);
-			this._pending.delete(key);
-			return pipeline;
-		});
+		const p = this._device
+			.createRenderPipelineAsync(describePipeline(spec, this._shaderFor(spec.family)))
+			.then(pipeline => {
+				this._ready.set(key, pipeline);
+				this._pending.delete(key);
+				return pipeline;
+			});
 		this._pending.set(key, p);
 		return p;
 	}

@@ -74,7 +74,9 @@ export function toGpuBlend(blend) {
  * @param {[number, number, number, number]} [constant]
  */
 export function blendConstantFor(blend, constant = /** @type {any} */ (LEGACY_BLEND_CONSTANT)) {
-	const usesAlphaConstant = [blend.src, blend.dst].some(f => f === 'CONSTANT_ALPHA' || f === 'ONE_MINUS_CONSTANT_ALPHA');
+	const usesAlphaConstant = [blend.src, blend.dst].some(
+		f => f === 'CONSTANT_ALPHA' || f === 'ONE_MINUS_CONSTANT_ALPHA'
+	);
 	if (usesAlphaConstant) {
 		const a = constant[3];
 		return [a, a, a, a];

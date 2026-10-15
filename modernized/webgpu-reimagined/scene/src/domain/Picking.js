@@ -57,8 +57,8 @@ export const isPickable = (e, { culled = () => false } = {}) => {
  */
 export const pickEntity = (entities, mouse, { supportMode = false, culled } = {}) => {
 	const candidates = [...entities]
-		.filter((e) => isPickable(e, { culled }) && e.pickRect)
-		.map((e) => ({ e, key: (e.depth ?? 0) - pickPriority(e.kind, supportMode) * 100 }))
+		.filter(e => isPickable(e, { culled }) && e.pickRect)
+		.map(e => ({ e, key: (e.depth ?? 0) - pickPriority(e.kind, supportMode) * 100 }))
 		.sort((a, b) => a.key - b.key);
 	for (const { e } of candidates) {
 		const r = e.pickRect;
@@ -73,10 +73,10 @@ export const pickEntity = (entities, mouse, { supportMode = false, culled } = {}
  * R-PICK-003: entity screen hit rectangle from body-layer extents.
  * @param {object} _args
  */
-export const computePickRect = (_args) => notImplemented('computePickRect', 'R-PICK-003');
+export const computePickRect = _args => notImplemented('computePickRect', 'R-PICK-003');
 
 /** R-PICK-007: GR2 base-sphere square pick area. */
-export const computeGr2PickRect = (_args) => notImplemented('computeGr2PickRect', 'R-PICK-007');
+export const computeGr2PickRect = _args => notImplemented('computeGr2PickRect', 'R-PICK-007');
 
 /**
  * R-PICK-002: per-frame mouse world state + walk cursor.

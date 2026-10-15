@@ -12,7 +12,7 @@
  */
 
 /** @param {Function|string|null|undefined} ctorOrName */
-export const effectClassName = (ctorOrName) => {
+export const effectClassName = ctorOrName => {
 	if (ctorOrName == null) {
 		return null;
 	}

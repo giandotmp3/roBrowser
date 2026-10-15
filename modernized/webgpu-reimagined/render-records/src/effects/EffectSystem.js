@@ -70,7 +70,11 @@ export class EffectSystem {
 			}
 			const count = normalizeDuplicate(spec.duplicate);
 			duplicateOffsets(count, spec.timeBetweenDupli).forEach((offset, duplicateID) => {
-				const { startTick, endTick } = effectTiming({ spawnTick: params.startTick + offset, spec, duplicateID });
+				const { startTick, endTick } = effectTiming({
+					spawnTick: params.startTick + offset,
+					spec,
+					duplicateID
+				});
 				created.push({
 					effectId: params.effectId,
 					family: FAMILY_BY_TYPE[spec.type] ?? spec.type,

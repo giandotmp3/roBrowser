@@ -15,7 +15,9 @@ export function shadeModel(f) {
 		return null;
 	}
 	const nl = f.lightmapPref ? Math.max(dot(f.normal, f.light.dir), 0) : 1;
-	const rgb = f.tex.slice(0, 3).map((c, i) => c * clamp01(nl * f.light.diffuse[i] + f.light.ambient[i]) * clamp01(f.light.env[i]));
+	const rgb = f.tex
+		.slice(0, 3)
+		.map((c, i) => c * clamp01(nl * f.light.diffuse[i] + f.light.ambient[i]) * clamp01(f.light.env[i]));
 	return [...rgb, f.tex[3] * f.modelAlpha];
 }
 
@@ -25,7 +27,11 @@ export function rsmAlpha(raw, version) {
 }
 
 /** R-MAP-012: depth test + write on, global alpha blend on, no translucent sorting. */
-export const MODEL_PASS_STATE = Object.freeze({ depthTest: true, depthWrite: true, blend: Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' }) });
+export const MODEL_PASS_STATE = Object.freeze({
+	depthTest: true,
+	depthWrite: true,
+	blend: Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' })
+});
 
 /**
  * R-MAP-014: T(pos + mapOffset)·RotZ·RotX·RotY·Scale; RSM ≥ 2.2 appends
@@ -45,7 +51,12 @@ export function rsmInstanceMatrix(m) {
 		const f = m.flip ?? [1, 1, 1];
 		const o = m.offset ?? [0, 0, 0];
 		const bo = m.boxOffset ?? [0, 0, 0];
-		base.push(scaling(f[0], f[1], f[2]), translation(o[0], o[1], o[2]), translation(0, m.boxRangeY ?? 0, 0), translation(bo[0], bo[1], bo[2]));
+		base.push(
+			scaling(f[0], f[1], f[2]),
+			translation(o[0], o[1], o[2]),
+			translation(0, m.boxRangeY ?? 0, 0),
+			translation(bo[0], bo[1], bo[2])
+		);
 	}
 	return chain(...base);
 }

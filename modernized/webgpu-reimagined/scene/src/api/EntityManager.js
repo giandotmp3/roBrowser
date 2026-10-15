@@ -86,7 +86,7 @@ export const createEntityManagerFacade = ({ session, settings }) => {
 		pick(mouse, { shift = false, supportMode = false, onOut = () => {}, onOver = () => {} } = {}) {
 			const target = pickEntity(byGid.values(), mouse, {
 				supportMode,
-				culled: (e) => settings.performanceMode && !visible.has(e)
+				culled: e => settings.performanceMode && !visible.has(e)
 			});
 			hover.update(target, shift, { onOut, onOver });
 			return target;

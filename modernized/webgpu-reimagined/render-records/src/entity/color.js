@@ -10,9 +10,7 @@ const WHITE = /** @type {Rgba} */ ([1, 1, 1, 1]);
  * @returns {Rgba}
  */
 export function multiplyColors(...colors) {
-	return /** @type {Rgba} */ (
-		colors.reduce((acc, c) => acc.map((v, i) => v * (c[i] ?? 1)), [...WHITE])
-	);
+	return /** @type {Rgba} */ (colors.reduce((acc, c) => acc.map((v, i) => v * (c[i] ?? 1)), [...WHITE]));
 }
 
 /**
@@ -50,11 +48,26 @@ export function finalLayerColor(layerColorBytes, effectColor, shadowFactor) {
 export function bodyStateTint(state) {
 	switch (state) {
 		case 'STONE':
-			return { color: /** @type {Rgba} */ ([0.1, 0.1, 0.1, 1]), pauseAnimation: true, attachments: [], pose: null };
+			return {
+				color: /** @type {Rgba} */ ([0.1, 0.1, 0.1, 1]),
+				pauseAnimation: true,
+				attachments: [],
+				pose: null
+			};
 		case 'STONE_WAIT':
-			return { color: /** @type {Rgba} */ ([0.3, 0.3, 0.3, 1]), pauseAnimation: false, attachments: [], pose: null };
+			return {
+				color: /** @type {Rgba} */ ([0.3, 0.3, 0.3, 1]),
+				pauseAnimation: false,
+				attachments: [],
+				pose: null
+			};
 		case 'FREEZE':
-			return { color: /** @type {Rgba} */ ([0, 0.4, 0.8, 1]), pauseAnimation: false, attachments: ['ice'], pose: 'FREEZE2' };
+			return {
+				color: /** @type {Rgba} */ ([0, 0.4, 0.8, 1]),
+				pauseAnimation: false,
+				attachments: ['ice'],
+				pose: 'FREEZE2'
+			};
 		case 'SLEEP':
 			return { color: WHITE, pauseAnimation: false, attachments: ['head:sleep'], pose: null };
 		case 'STUN':

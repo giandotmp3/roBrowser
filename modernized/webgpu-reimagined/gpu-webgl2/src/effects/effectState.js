@@ -13,11 +13,21 @@ export function effectDepthState(e) {
 }
 
 /** R-EFX-014: families drawn with SRC_ALPHA, ONE. */
-export const ADDITIVE_FAMILIES = Object.freeze(['groundAura', 'swirlingAura', 'level99Bubble', 'spiritSphere', 'warlockSphere', 'pokjuk', 'waterfall']);
+export const ADDITIVE_FAMILIES = Object.freeze([
+	'groundAura',
+	'swirlingAura',
+	'level99Bubble',
+	'spiritSphere',
+	'warlockSphere',
+	'pokjuk',
+	'waterfall'
+]);
 
 /** @param {string} family */
 export function familyBlend(family) {
-	return ADDITIVE_FAMILIES.includes(family) ? { src: 'SRC_ALPHA', dst: 'ONE' } : { src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' };
+	return ADDITIVE_FAMILIES.includes(family)
+		? { src: 'SRC_ALPHA', dst: 'ONE' }
+		: { src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' };
 }
 
 /**
@@ -25,5 +35,11 @@ export function familyBlend(family) {
  * @param {number[]} playerPos
  */
 export function poisonTintQuad(playerPos) {
-	return { position: [...playerPos], size: [POISON_TINT.size, POISON_TINT.size], color: [...POISON_TINT.color], depthTest: false, depthWrite: false };
+	return {
+		position: [...playerPos],
+		size: [POISON_TINT.size, POISON_TINT.size],
+		color: [...POISON_TINT.color],
+		depthTest: false,
+		depthWrite: false
+	};
 }

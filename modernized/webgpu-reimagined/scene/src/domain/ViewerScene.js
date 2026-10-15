@@ -26,7 +26,7 @@ export class ViewerScene {
 	}
 
 	remove(item) {
-		this.items = this.items.filter((i) => i !== item);
+		this.items = this.items.filter(i => i !== item);
 	}
 
 	setClearColor(rgba) {

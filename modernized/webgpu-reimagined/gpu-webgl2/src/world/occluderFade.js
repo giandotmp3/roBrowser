@@ -59,7 +59,13 @@ export function queryKeepsFragment(distToAxis, distBeforeFocus) {
 /**
  * R-MAP-020 shape: fade = radial · along · strength; visibility = 1 − fade·(1 − opacity).
  */
-export function occluderVisibility({ distToAxis, signedPastFocus, strength, radius = OCCLUDER_DEFAULTS.radius, opacity = OCCLUDER_DEFAULTS.opacity }) {
+export function occluderVisibility({
+	distToAxis,
+	signedPastFocus,
+	strength,
+	radius = OCCLUDER_DEFAULTS.radius,
+	opacity = OCCLUDER_DEFAULTS.opacity
+}) {
 	const radial = 1 - smoothstep(radius / 2, radius, distToAxis);
 	const along = 1 - smoothstep(-0.5, 0, signedPastFocus);
 	const fade = radial * along * strength;
@@ -78,4 +84,8 @@ export function ditherDiscard(visibility, px, py) {
 export function alphaModeOpaqueDiscard(fade) {
 	return fade >= 0.01;
 }
-export const FADED_PASS_STATE = Object.freeze({ depthTest: true, depthWrite: false, blend: Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' }) });
+export const FADED_PASS_STATE = Object.freeze({
+	depthTest: true,
+	depthWrite: false,
+	blend: Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' })
+});

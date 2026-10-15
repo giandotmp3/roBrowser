@@ -221,7 +221,11 @@ export function alphaEnvelope({ elapsed, duration, alphaMax, fadeIn, fadeOut, sp
 	return Math.min(1, Math.max(0, alpha));
 }
 
-export const LEVEL99_EFFECTS = Object.freeze({ LEVEL99: 'EF_LEVEL99', LEVEL99_2: 'EF_LEVEL99_2', LEVEL99_3: 'EF_LEVEL99_3' });
+export const LEVEL99_EFFECTS = Object.freeze({
+	LEVEL99: 'EF_LEVEL99',
+	LEVEL99_2: 'EF_LEVEL99_2',
+	LEVEL99_3: 'EF_LEVEL99_3'
+});
 
 /**
  * R-EFX-015 level-99 aura effects to show.

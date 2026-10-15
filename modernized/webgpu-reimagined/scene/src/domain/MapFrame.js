@@ -17,4 +17,4 @@ export const SCENE_FRAME_STEPS = Object.freeze([
 /**
  * @param {object} _ctx
  */
-export const runSceneFrame = (_ctx) => notImplemented('runSceneFrame (map sounds + eviction tick wiring)', 'C-01');
+export const runSceneFrame = _ctx => notImplemented('runSceneFrame (map sounds + eviction tick wiring)', 'C-01');

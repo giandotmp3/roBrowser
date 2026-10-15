@@ -6,7 +6,9 @@ import { GR2_ALPHA_REF, GR2_EMBLEM, GR2_FALLBACK_SPRITE, GR2_LIGHT, GR2_ROSTER }
  * @param {boolean} loaded
  */
 export function gr2Route(model, loaded = true) {
-	return GR2_ROSTER.includes(model) && loaded ? { mode: 'gr2', model } : { mode: 'sprite', sprite: GR2_FALLBACK_SPRITE };
+	return GR2_ROSTER.includes(model) && loaded
+		? { mode: 'gr2', model }
+		: { mode: 'sprite', sprite: GR2_FALLBACK_SPRITE };
 }
 
 /**
@@ -34,7 +36,14 @@ export function gr2AlphaTest(alpha) {
 
 /** R-GR2-002: depth test + write + correction-disable all on; blend only while fading. */
 export function gr2PassState(fading) {
-	return { depthTest: true, depthWrite: true, disableDepthCorrection: true, blend: fading, lightmapPref: false, occluderFade: false };
+	return {
+		depthTest: true,
+		depthWrite: true,
+		disableDepthCorrection: true,
+		blend: fading,
+		lightmapPref: false,
+		occluderFade: false
+	};
 }
 
 /**

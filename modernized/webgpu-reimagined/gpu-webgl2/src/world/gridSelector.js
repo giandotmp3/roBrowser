@@ -27,4 +27,9 @@ export function selectorQuads(hit, altitude, captcha = null) {
 }
 
 /** R-MAP-021: grid.tga at alpha 0.6 tinted rgb(50,240,160) via source-atop (done once at upload). */
-export const GRID_MATERIAL = Object.freeze({ texture: GRID_SELECTOR.texture, alpha: GRID_SELECTOR.alpha, tint: GRID_SELECTOR.tint, composite: 'source-atop' });
+export const GRID_MATERIAL = Object.freeze({
+	texture: GRID_SELECTOR.texture,
+	alpha: GRID_SELECTOR.alpha,
+	tint: GRID_SELECTOR.tint,
+	composite: 'source-atop'
+});

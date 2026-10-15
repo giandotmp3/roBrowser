@@ -1,9 +1,22 @@
 import { deg2rad } from '../math.js';
-import { WATER_FRAMES, WATER_OPACITY_DEFAULT, WATER_OPAQUE_TYPES, WATER_RSW_SCALE, WATER_UV_REPEAT_TILES } from '../constants.js';
+import {
+	WATER_FRAMES,
+	WATER_OPACITY_DEFAULT,
+	WATER_OPAQUE_TYPES,
+	WATER_RSW_SCALE,
+	WATER_UV_REPEAT_TILES
+} from '../constants.js';
 
 /** R-MAP-008: RSW wave height and water level are /5. */
 export function waterParamsFromRsw({ level, waveHeight, waveSpeed, wavePitch, animSpeed, type }) {
-	return { level: level / WATER_RSW_SCALE, waveHeight: waveHeight / WATER_RSW_SCALE, waveSpeed, wavePitch, animSpeed, type };
+	return {
+		level: level / WATER_RSW_SCALE,
+		waveHeight: waveHeight / WATER_RSW_SCALE,
+		waveSpeed,
+		wavePitch,
+		animSpeed,
+		type
+	};
 }
 
 /**
@@ -59,8 +72,15 @@ export function hasWaterQuad(cornerHeights, waterLevel) {
 
 /** R-MAP-011: UVs repeat every 5 ground tiles. */
 export function waterUV(tileX, tileY) {
-	return [(tileX % WATER_UV_REPEAT_TILES) / WATER_UV_REPEAT_TILES, (tileY % WATER_UV_REPEAT_TILES) / WATER_UV_REPEAT_TILES];
+	return [
+		(tileX % WATER_UV_REPEAT_TILES) / WATER_UV_REPEAT_TILES,
+		(tileY % WATER_UV_REPEAT_TILES) / WATER_UV_REPEAT_TILES
+	];
 }
 
 /** R-MAP-011: water draws after opaque entities, depth test on, write off. */
-export const WATER_PASS_STATE = Object.freeze({ depthTest: true, depthWrite: false, blend: Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' }) });
+export const WATER_PASS_STATE = Object.freeze({
+	depthTest: true,
+	depthWrite: false,
+	blend: Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' })
+});

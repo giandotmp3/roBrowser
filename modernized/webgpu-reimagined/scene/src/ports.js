@@ -59,12 +59,12 @@ export const createSystemClock = () => ({
 
 /** @returns {FrameRequester} */
 export const createRafRequester = () => ({
-	request: (cb) => globalThis.requestAnimationFrame(cb),
-	cancel: (id) => globalThis.cancelAnimationFrame(id)
+	request: cb => globalThis.requestAnimationFrame(cb),
+	cancel: id => globalThis.cancelAnimationFrame(id)
 });
 
 /** @returns {TimerPort} */
 export const createSystemTimers = () => ({
 	setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
-	clearTimeout: (h) => globalThis.clearTimeout(h)
+	clearTimeout: h => globalThis.clearTimeout(h)
 });

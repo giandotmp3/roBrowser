@@ -54,7 +54,7 @@ export * from './ports.js';
  * @param {object} [deps.cameraPrefs]
  * @param {object} [deps.cameraConfig]
  */
-export const createScene = (deps) => {
+export const createScene = deps => {
 	const scheduler = new Scheduler({
 		clock: deps.clock,
 		session: deps.session,

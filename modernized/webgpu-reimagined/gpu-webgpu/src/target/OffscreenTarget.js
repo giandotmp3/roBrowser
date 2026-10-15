@@ -35,7 +35,12 @@ export class OffscreenTarget {
 		return {
 			msaa: { size, format: RENDER_FORMAT, sampleCount: MSAA_SAMPLES, usage: RENDER_ATTACHMENT },
 			depth: { size, format: DEPTH_FORMAT, sampleCount: MSAA_SAMPLES, usage: RENDER_ATTACHMENT },
-			resolve: { size, format: RENDER_FORMAT, sampleCount: 1, usage: RENDER_ATTACHMENT | TEXTURE_BINDING | COPY_SRC }
+			resolve: {
+				size,
+				format: RENDER_FORMAT,
+				sampleCount: 1,
+				usage: RENDER_ATTACHMENT | TEXTURE_BINDING | COPY_SRC
+			}
 		};
 	}
 
@@ -68,7 +73,12 @@ export class OffscreenTarget {
 					storeOp: 'discard'
 				}
 			],
-			depthStencilAttachment: { view: this.depth.createView(), depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+			depthStencilAttachment: {
+				view: this.depth.createView(),
+				depthClearValue: 1.0,
+				depthLoadOp: 'clear',
+				depthStoreOp: 'discard'
+			},
 			...(occlusionQuerySet ? { occlusionQuerySet } : {})
 		};
 	}

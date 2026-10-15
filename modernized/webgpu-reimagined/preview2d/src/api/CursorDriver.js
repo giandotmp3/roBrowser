@@ -27,7 +27,14 @@ export class CursorDriver {
 	 * @param {() => object|null} [deps.overEntity]        hovered entity
 	 * @param {() => {x: number, y: number}} [deps.mouse]  Mouse.screen
 	 */
-	constructor({ scheduler, clock, graphics, controls = () => ({}), overEntity = () => null, mouse = () => ({ x: 0, y: 0 }) } = {}) {
+	constructor({
+		scheduler,
+		clock,
+		graphics,
+		controls = () => ({}),
+		overEntity = () => null,
+		mouse = () => ({ x: 0, y: 0 })
+	} = {}) {
 		if (!scheduler || !clock || !graphics) {
 			throw new Preview2DError('scheduler, clock and graphics ports are required');
 		}

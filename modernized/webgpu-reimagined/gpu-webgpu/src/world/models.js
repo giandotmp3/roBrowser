@@ -24,7 +24,9 @@ export function shadeModel({ tex, alpha, normal, light, lightmapPref }) {
 		return null;
 	}
 	const nl = lightmapPref ? Math.max(dot(normal, light.direction), 0) : 1;
-	const rgb = tex.slice(0, 3).map((c, i) => c * clamp(nl * light.diffuse[i] + light.ambient[i]) * clamp(light.env[i]));
+	const rgb = tex
+		.slice(0, 3)
+		.map((c, i) => c * clamp(nl * light.diffuse[i] + light.ambient[i]) * clamp(light.env[i]));
 	return [...rgb, tex[3] * alpha];
 }
 
@@ -35,7 +37,17 @@ export const MODEL_DEPTH = Object.freeze({ depthTest: true, depthWrite: true });
  * R-MAP-014: T(pos + mapOffset)·RotZ·RotX·RotY·Scale; for RSM >= 2.2
  * additionally ·Scale(flip)·T(offset)·T(0, box.range.y, 0)·T(box.offset).
  */
-export function rsmInstanceMatrix({ position, mapOffset = [0, 0, 0], rotation, scale, version, flip = [1, 1, 1], offset = [0, 0, 0], boxRangeY = 0, boxOffset = [0, 0, 0] }) {
+export function rsmInstanceMatrix({
+	position,
+	mapOffset = [0, 0, 0],
+	rotation,
+	scale,
+	version,
+	flip = [1, 1, 1],
+	offset = [0, 0, 0],
+	boxRangeY = 0,
+	boxOffset = [0, 0, 0]
+}) {
 	const parts = [
 		translation(position[0] + mapOffset[0], position[1] + mapOffset[1], position[2] + mapOffset[2]),
 		rotationZ(rotation[2]),
@@ -61,9 +73,15 @@ export const SHADE = Object.freeze({ NONE: 0, FLAT: 1, SMOOTH: 2 });
  */
 export function computeNormals(shadeType, faces) {
 	if (shadeType !== SHADE.FLAT && shadeType !== SHADE.SMOOTH) {
-		return faces.map(() => [[-1, -1, -1], [-1, -1, -1], [-1, -1, -1]]);
+		return faces.map(() => [
+			[-1, -1, -1],
+			[-1, -1, -1],
+			[-1, -1, -1]
+		]);
 	}
-	const faceN = faces.map(f => normalize(cross(sub(f.vertices[1], f.vertices[0]), sub(f.vertices[2], f.vertices[0]))));
+	const faceN = faces.map(f =>
+		normalize(cross(sub(f.vertices[1], f.vertices[0]), sub(f.vertices[2], f.vertices[0])))
+	);
 	if (shadeType === SHADE.FLAT) {
 		return faceN.map(n => [n, n, n]);
 	}
@@ -72,7 +90,10 @@ export function computeNormals(shadeType, faces) {
 		f.vertexIds.forEach(v => {
 			const key = `${f.smoothGroup}:${v}`;
 			const cur = acc.get(key) ?? [0, 0, 0];
-			acc.set(key, cur.map((c, k) => c + faceN[i][k]));
+			acc.set(
+				key,
+				cur.map((c, k) => c + faceN[i][k])
+			);
 		});
 	});
 	return faces.map(f => f.vertexIds.map(v => normalize(acc.get(`${f.smoothGroup}:${v}`))));

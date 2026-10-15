@@ -9,7 +9,11 @@ export const CLOUD_DEPTH = Object.freeze({ depthTest: true, depthWrite: false, d
  */
 export function spawnCloud(rng, player) {
 	return {
-		position: [player[0] + (rng() * 2 - 1) * CLOUDS.spawnRadius, player[1] + (rng() * 2 - 1) * CLOUDS.spawnRadius, CLOUDS.z],
+		position: [
+			player[0] + (rng() * 2 - 1) * CLOUDS.spawnRadius,
+			player[1] + (rng() * 2 - 1) * CLOUDS.spawnRadius,
+			CLOUDS.z
+		],
 		texture: CLOUDS.textures[Math.floor(rng() * CLOUDS.textures.length)],
 		size: CLOUDS.size,
 		age: 0

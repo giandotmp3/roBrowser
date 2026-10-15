@@ -41,7 +41,13 @@ export const WATER_OPAQUE_TYPES = Object.freeze([4, 6]);
 /** R-MAP-018 */
 export const OCCLUDER_DEFAULTS = Object.freeze({ mode: 'off', opacity: 0.25, radius: 5.0 });
 /** R-MAP-019 */
-export const OCCLUDER_QUERY = Object.freeze({ axisRadius: 0.7, beforeFocus: 0.5, fadeInMs: 150, fadeOutMs: 300, dtCapMs: 100 });
+export const OCCLUDER_QUERY = Object.freeze({
+	axisRadius: 0.7,
+	beforeFocus: 0.5,
+	fadeInMs: 150,
+	fadeOutMs: 300,
+	dtCapMs: 100
+});
 
 /** R-MAP-021 */
 export const GRID_SELECTOR = Object.freeze({ texture: 'grid.tga', alpha: 0.6, tint: [50, 240, 160], lift: 0.1 });
@@ -59,7 +65,15 @@ export const CLOUDS = Object.freeze({
 	fadeInMs: 1000,
 	lifeMs: 6000,
 	fadeOutMs: 2000,
-	textures: Object.freeze(['cloud1.tga', 'cloud2.tga', 'cloud3.tga', 'cloud4.tga', 'cloud5.tga', 'cloud6.tga', 'cloud7.tga'])
+	textures: Object.freeze([
+		'cloud1.tga',
+		'cloud2.tga',
+		'cloud3.tga',
+		'cloud4.tga',
+		'cloud5.tga',
+		'cloud6.tga',
+		'cloud7.tga'
+	])
 });
 
 /** R-SPR-006 */
@@ -74,7 +88,13 @@ export const POISON_TINT = Object.freeze({ size: 4000, color: Object.freeze([0.5
 /** R-PP-003 */
 export const PERF_SCENE_SCALE = 0.75;
 /** R-PP-004 */
-export const BLOOM = Object.freeze({ threshold: 0.88, knee: 0.88 * 0.45, downsample: 0.25, downsamplePerf: 0.125, tapTexels: 4 });
+export const BLOOM = Object.freeze({
+	threshold: 0.88,
+	knee: 0.88 * 0.45,
+	downsample: 0.25,
+	downsamplePerf: 0.125,
+	tapTexels: 4
+});
 /** R-PP-005 */
 export const BLUR_MASK = Object.freeze({ inner: 0.14, outer: 0.64 });
 /** R-PP-006 */
@@ -83,7 +103,14 @@ export const FXAA = Object.freeze({ span: 8, reduceMul: 1 / 32, reduceMin: 1 / 1
 export const BLIND = Object.freeze({ radius: 0.2, falloff: 0.5, zoomRef: 63 });
 
 /** R-GR2-001 */
-export const GR2_ROSTER = Object.freeze(['guildflag90_1', 'empelium90_0', 'kguardian', 'aguardian', 'sguardian', 'treasurebox_2']);
+export const GR2_ROSTER = Object.freeze([
+	'guildflag90_1',
+	'empelium90_0',
+	'kguardian',
+	'aguardian',
+	'sguardian',
+	'treasurebox_2'
+]);
 export const GR2_FALLBACK_SPRITE = 'poring';
 /** R-GR2-002 */
 export const GR2_ALPHA_REF = 207 / 255;

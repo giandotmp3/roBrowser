@@ -14,7 +14,12 @@ import { CLEAR_DEPTH, DEFAULT_DEPTH_COMPARE, DEPTH_FORMAT, MSAA_SAMPLES, RENDER_
 export const DEVICE_REQUEST = Object.freeze({
 	adapter: Object.freeze({ powerPreference: 'high-performance' }),
 	canvas: Object.freeze({ alphaMode: 'opaque' }),
-	target: Object.freeze({ format: RENDER_FORMAT, depthFormat: DEPTH_FORMAT, stencil: false, sampleCount: MSAA_SAMPLES })
+	target: Object.freeze({
+		format: RENDER_FORMAT,
+		depthFormat: DEPTH_FORMAT,
+		stencil: false,
+		sampleCount: MSAA_SAMPLES
+	})
 });
 
 /** Default pipeline state every pipeline starts from (R-CTX-002). */

@@ -36,7 +36,11 @@ export function spawnCloud(player, rng) {
 /** R-MAP-022: drift ±0.01 cells per 25 ms horizontally, ±0.001 vertically, Δt capped at 250. */
 export function cloudDrift(dtMs, rng) {
 	const steps = Math.min(dtMs, CLOUDS.dtCapMs) / CLOUDS.driftStepMs;
-	return [(rng() * 2 - 1) * CLOUDS.driftXY * steps, (rng() * 2 - 1) * CLOUDS.driftXY * steps, (rng() * 2 - 1) * CLOUDS.driftZ * steps];
+	return [
+		(rng() * 2 - 1) * CLOUDS.driftXY * steps,
+		(rng() * 2 - 1) * CLOUDS.driftXY * steps,
+		(rng() * 2 - 1) * CLOUDS.driftZ * steps
+	];
 }
 
 /** R-MAP-022: test on, write off, no depth correction. */

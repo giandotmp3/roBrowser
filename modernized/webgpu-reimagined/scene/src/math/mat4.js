@@ -7,7 +7,7 @@
 export const create = () => identity(new Float32Array(16));
 
 /** @param {Float32Array} out */
-export const identity = (out) => {
+export const identity = out => {
 	out.fill(0);
 	out[0] = out[5] = out[10] = out[15] = 1;
 	return out;
@@ -125,4 +125,4 @@ export const transformVec4 = (m, [x, y, z, w]) => [
 	m[3] * x + m[7] * y + m[11] * z + m[15] * w
 ];
 
-export const toRad = (deg) => (deg * Math.PI) / 180;
+export const toRad = deg => (deg * Math.PI) / 180;

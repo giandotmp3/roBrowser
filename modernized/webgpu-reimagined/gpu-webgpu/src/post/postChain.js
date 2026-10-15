@@ -3,7 +3,17 @@ import { mix, smoothstep } from '../math.js';
 import { NotImplementedError } from '../errors.js';
 
 /** R-PP-001 module order. */
-export const POST_ORDER = Object.freeze(['Bloom', 'Blur', 'FXAA', 'CAS', 'Cartoon', 'Vibrance', 'VerticalFlip', 'Blind', 'Upsampling']);
+export const POST_ORDER = Object.freeze([
+	'Bloom',
+	'Blur',
+	'FXAA',
+	'CAS',
+	'Cartoon',
+	'Vibrance',
+	'VerticalFlip',
+	'Blind',
+	'Upsampling'
+]);
 
 /** R-PP-012 defaults (+ the parameter defaults from the visual-constants table). */
 export const POST_DEFAULTS = Object.freeze({
@@ -31,7 +41,10 @@ export const POST_DEFAULTS = Object.freeze({
  * `allowSoftwareAdapter` lets the test-harness produce WebGPU bloom goldens
  * on the pinned SwiftShader adapter (architecture §2.2 test-harness).
  */
-export function bloomSupported({ vendor = '', description = '', userAgent = '' }, { allowSoftwareAdapter = false } = {}) {
+export function bloomSupported(
+	{ vendor = '', description = '', userAgent = '' },
+	{ allowSoftwareAdapter = false } = {}
+) {
 	const isSwiftShader = `${vendor} ${description}`.toLowerCase().includes('swiftshader');
 	const isIntel = vendor.toLowerCase().includes('intel');
 	const isChrome = /chrome|chromium/i.test(userAgent) && !/edg|opr/i.test(userAgent);
@@ -62,11 +75,19 @@ export function planPostChain(settings, state = {}) {
 	const modules = POST_ORDER.filter(m => active[m]);
 	return {
 		modules,
-		passes: modules.map((name, i) => ({ name, output: i === modules.length - 1 ? 'swapchain' : i % 2 === 0 ? 'pingA' : 'pingB' })),
+		passes: modules.map((name, i) => ({
+			name,
+			output: i === modules.length - 1 ? 'swapchain' : i % 2 === 0 ? 'pingA' : 'pingB'
+		})),
 		directBlit: modules.length === 0,
 		sceneScale: s.performanceMode ? 0.75 : 1,
 		intermediateFormat: 'rgba8unorm',
-		sampler: { magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' }
+		sampler: {
+			magFilter: 'linear',
+			minFilter: 'linear',
+			addressModeU: 'clamp-to-edge',
+			addressModeV: 'clamp-to-edge'
+		}
 	};
 }
 
@@ -99,7 +120,14 @@ export function blurMask(uv, settings) {
  */
 export function fxaaUniforms(settings) {
 	const s = { ...POST_DEFAULTS, ...settings };
-	return { edgeThreshold: s.fxaaEdgeThreshold, edgeThresholdMin: 0, span: FXAA.span, reduceMul: FXAA.reduceMul, reduceMin: FXAA.reduceMin, subpix: s.fxaaSubpix };
+	return {
+		edgeThreshold: s.fxaaEdgeThreshold,
+		edgeThresholdMin: 0,
+		span: FXAA.span,
+		reduceMul: FXAA.reduceMul,
+		reduceMin: FXAA.reduceMin,
+		subpix: s.fxaaSubpix
+	};
 }
 
 /**
@@ -117,7 +145,8 @@ export function cartoonUniforms(settings) {
 	return { power: s.cartoonPower || 1.5, edgeSlope: s.cartoonEdgeSlope || 1.5 };
 }
 /** R-PP-008 reference: rgb −= |edge|^slope·power. */
-export const cartoonApply = (rgb, edge, { power, edgeSlope }) => rgb.map(c => c - Math.pow(Math.abs(edge), edgeSlope) * power);
+export const cartoonApply = (rgb, edge, { power, edgeSlope }) =>
+	rgb.map(c => c - Math.pow(Math.abs(edge), edgeSlope) * power);
 
 /** R-PP-009 FIX: vibrance 0 is honoured (legacy `||` fell back to 0.15). */
 export function vibranceUniforms(settings) {
