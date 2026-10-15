@@ -18,6 +18,8 @@
 		"smoke:parity:post": "node smoke/run-parity.mjs --page=post --max-diff-pct=0.05",
 		"smoke:parity:effects": "node smoke/run-parity.mjs --page=effects --max-diff-pct=0.05",
 		"smoke:parity:effects:aa": "node smoke/run-parity.mjs --page=effects --aa --max-diff-pct=0.05",
+		"smoke:parity:effects2": "node smoke/run-parity.mjs --page=effects2 --max-diff-pct=0.05",
+		"smoke:parity:effects2:aa": "node smoke/run-parity.mjs --page=effects2 --aa --max-diff-pct=0.1",
 		"smoke:parity:backend": "node smoke/run-parity.mjs --page=backend --max-diff-pct=0.05"
 	},
 	"engines": {

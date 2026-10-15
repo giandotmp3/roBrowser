@@ -1,9 +1,13 @@
 import { IDLE_EVICT_MS, PALETTE_WIDTH, POT_CLASSES } from '../constants.js';
 import { DeviceLimitError } from '../errors.js';
 import { nextPow2 } from '../math.js';
+import { TEXTURED_MESH_FAMILIES } from '../effects/mesh/meshFamilies.js';
 
-/** Effect families whose textures (and 2D/3D palettes) are resident in the pools (as gpu-webgl2). */
-export const RESIDENT_EFFECT_FAMILIES = Object.freeze(['str', '2d', '3d']);
+/**
+ * Effect families whose textures (and 2D/3D palettes) are resident in the pools (as
+ * gpu-webgl2): STR, 2D/3D and the textured mesh families (MeshEffectPipeline).
+ */
+export const RESIDENT_EFFECT_FAMILIES = Object.freeze(['str', '2d', '3d', ...TEXTURED_MESH_FAMILIES]);
 
 /**
  * @typedef {Object} ResidentImage  One sprite frame, ready for a texture-array layer

@@ -26,6 +26,7 @@
  */
 
 import { SPRITE_EFFECT_FAMILIES } from '../effects/spriteEffect.js';
+import { meshProgramKey } from '../effects/mesh/meshFamilies.js';
 
 /**
  * @param {{kind: string, blend: {src: string, dst: string}, depthTest: boolean, depthWrite: boolean, textureClass?: string, strAttachment?: boolean}} record
@@ -69,20 +70,26 @@ export function batchKey(record, { mixTextureClasses = true } = {}) {
 }
 
 /**
- * The WGSL program family that draws an effect record: 'sprite' for the 2D/3D
- * families (SpriteRenderer draws in legacy), otherwise the family itself ('str', ...).
- * @param {{family?: string}} record
+ * The WGSL program that draws an effect record: 'sprite' for the 2D/3D families
+ * (SpriteRenderer draws in legacy), `mesh:<program>:<wrap>:<mesh>` for the mesh families
+ * (MeshEffectPipeline: the program plus the sampler wrap and static mesh a batch must
+ * share), otherwise the family itself ('str', ...). Same keys as gpu-webgl2.
+ * @param {{family?: string, params?: Record<string, any>}} record
  * @returns {string}
  */
 export function effectProgram(record) {
-	return SPRITE_EFFECT_FAMILIES.includes(/** @type {string} */ (record.family)) ? 'sprite' : String(record.family);
+	if (SPRITE_EFFECT_FAMILIES.includes(/** @type {string} */ (record.family))) {
+		return 'sprite';
+	}
+	return meshProgramKey(record) ?? String(record.family);
 }
 
 /**
- * Program of a batch head: 'sprite' (sprites and 2D/3D effects), 'str', or null
- * (a family without a renderer here).
- * @param {{kind: string, family?: string}} record
- * @returns {'sprite'|'str'|null}
+ * Program of a batch head: 'sprite' (sprites and 2D/3D effects), 'str', 'mesh' (the
+ * mesh effect families: cylinder, quadhorn, RSM, auras, spheres, tiles, rings, target
+ * markers, waterfall, rain puddles), or null (a family without a renderer here).
+ * @param {{kind: string, family?: string, params?: Record<string, any>}} record
+ * @returns {'sprite'|'str'|'mesh'|null}
  */
 export function programOf(record) {
 	if (record.kind === 'sprite') {
@@ -90,6 +97,9 @@ export function programOf(record) {
 	}
 	if (record.kind === 'effect') {
 		const program = effectProgram(record);
+		if (program.startsWith('mesh:')) {
+			return 'mesh';
+		}
 		return program === 'sprite' || program === 'str' ? program : null;
 	}
 	return null;

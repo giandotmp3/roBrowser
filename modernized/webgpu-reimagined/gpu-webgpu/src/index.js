@@ -37,7 +37,12 @@ export {
 } from './residency/spriteFrames.js';
 export { Residency, ArrayPool, PaletteTable } from './residency/Residency.js';
 export { SpriteResidency, RESIDENT_EFFECT_FAMILIES } from './residency/SpriteResidency.js';
-export { decodeImageTexture, unpackViaGl } from './residency/imageTexture.js';
+export {
+	decodeImageTexture,
+	decodeSelfDrawnTexture,
+	decodeTileTexture,
+	unpackViaGl
+} from './residency/imageTexture.js';
 export { TextureArrayPools, padLayer } from './residency/TextureArrayPools.js';
 
 export { globalLight, skyForMap } from './world/lighting.js';
@@ -113,6 +118,25 @@ export {
 } from './effects/strInstance.js';
 export { spriteEffectView, spriteEffectClass, isSpriteEffect, SPRITE_EFFECT_FAMILIES } from './effects/spriteEffect.js';
 export { fromLegacyEffectRecord } from './effects/legacyRecord.js';
+export {
+	MeshEffectPipeline,
+	MESH_FAMILY_PREFIX,
+	MESH_FRAME_BYTES,
+	MESH_WRAPS,
+	meshBindGroupLayoutEntries,
+	meshCensus,
+	meshSpec,
+	packMeshFrame
+} from './effects/mesh/MeshEffectPipeline.js';
+export {
+	MESH_EFFECT_FAMILIES,
+	MESH_EFFECT_PROGRAM,
+	TEXTURED_MESH_FAMILIES,
+	meshKey,
+	meshProgramKey,
+	meshWrap
+} from './effects/mesh/meshFamilies.js';
+export { MESH_PROGRAMS, meshFloats, meshShaderSource, meshVertexBuffers } from './effects/mesh/programs.js';
 export * from './effects/effectState.js';
 export { EffectRenderers } from './effects/EffectRenderers.js';
 export * from './gr2/gr2.js';

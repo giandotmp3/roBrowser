@@ -19,6 +19,8 @@ export const LEGACY_STUBS = Object.freeze([
 	'Core/Client.js',
 	'Renderer/Camera.js',
 	'Renderer/Renderer.js',
+	'Renderer/MapRenderer.js',
+	'Loaders/Model.js',
 	'Renderer/Map/Ground.js',
 	'Renderer/Map/Altitude.js',
 	'Renderer/Map/Water.js',

@@ -24,6 +24,8 @@ npm run smoke:parity:entities:aa # the same with MSAA (gate 0.1 %, see below)
 npm run smoke:parity:post        # legacy PostProcess chain vs gpu-webgpu PostChain, 26 configurations (gate 0.05 %)
 npm run smoke:parity:effects     # real legacy STR / 3D / 2D effect classes (gate 0.05 %)
 npm run smoke:parity:effects:aa  # the same with MSAA (0.05 % in ANGLE's raster orientation; native 0.75 %, see below)
+npm run smoke:parity:effects2    # real legacy mesh effect classes (0.05 % in ANGLE's raster orientation; native 0.075 %)
+npm run smoke:parity:effects2:aa # the same with MSAA (0.1 % in ANGLE's raster orientation; native 2.5 %, see below)
 npm run smoke:parity:backend     # WebGpuBackend end to end (entities + effects + post) and a real device loss (gate 0.05 %; see below)
 ```
 
@@ -31,16 +33,16 @@ You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script
 
 **Options** (`node smoke/run-parity.mjs …`):
 
-| Option             | Meaning                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------ |
-| `--page=P`         | `parity` (default), `entities` (real legacy entity stream), `post`, `effects` or `backend` |
-| `--aa`             | Turn MSAA on                                                                               |
-| `--tol=N`          | Per-channel tolerance (default 2)                                                          |
-| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                         |
-| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)         |
-| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count               |
-| `--only=F`         | `effects` page diagnostics: keep one legacy class, `str`, `3d` or `2d`                     |
-| `--flags="…"`      | Replace the Chromium flags (space-separated)                                               |
+| Option             | Meaning                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------- |
+| `--page=P`         | `parity` (default), `entities`, `post`, `effects`, `effects2` or `backend`              |
+| `--aa`             | Turn MSAA on                                                                            |
+| `--tol=N`          | Per-channel tolerance (default 2)                                                       |
+| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                      |
+| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)      |
+| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count            |
+| `--only=F`         | Diagnostics: `effects` keeps one class (`str`, `3d`, `2d`); `effects2` one mesh program |
+| `--flags="…"`      | Replace the Chromium flags (space-separated)                                            |
 
 **Exit codes:**
 
@@ -83,6 +85,8 @@ The page must be served from `http://127.0.0.1`. WebGPU needs a secure context, 
 | `post.html`, `post.js`            | The post-processing page (below)                                                                                                                                       |
 | `effects.html`, `effects.js`      | The effect page (below); `vite.config.js` serves it the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`), every other importer keeps the stub                         |
 | `effects/`                        | Copies of `gpu-webgl2/smoke/effects/*` (`assets.js`: 26 images, 3 SPRs; `scene.js`: STR, 3D and 2D spawns); keep them identical                                        |
+| `effects2.html`, `effects2.js`    | The mesh effect page (below); port of `gpu-webgl2/smoke/effects2.js`                                                                                                   |
+| `effects2/`                       | `scene.js`: copy of `gpu-webgl2/smoke/effects2/scene.js` (keep identical); `assets.js`: its port (same 29 images, same four decodes)                                   |
 | `backend.html`, `backend.js`      | The backend page (below): `WebGpuBackend` end to end plus a real device loss; `REAL_FOR` serves it the real `StrEffect.js` too                                         |
 | `run-parity.mjs`                  | Starts Vite, launches Chromium, prints the results, writes the PNGs, sets the exit code                                                                                |
 
@@ -337,6 +341,66 @@ diagonal, goes from 34 to 0.86 levels), so the CPU fog check runs in that orient
 WebGPU's native orientation: a y-flipped scene target would have to be flipped back by the blit and the post chain, and
 the difference is a sub-pixel coverage step on antialiased diagonal edges. Raise the native gate only with a new
 analysis.
+
+## Mesh effect page (`--page=effects2`)
+
+The port of `gpu-webgl2/smoke/effects2.js` on the same scene (`effects2/scene.js`, a copy) and images. The **real legacy
+classes**, unmodified (`Cylinder`, `QuadHorn`, `RsmEffect`, `GroundAura`, `SwirlingAura`, `Level99Bubble`,
+`SpiritSphere`, `WarlockSphere`, `Tiles`, `LPEffect`, `SpiderWeb`, `FlatColorTile`, `PropertyGround`, `MagicRing`,
+`LockOnTarget`, `MagicTarget`, `RainWeather` puddles, `WaterfallEffect`), play the scripted scene into the WebGL2 canvas;
+each class's `addRecordSink` captures the five frames; `fromLegacyEffectRecord` adds the magic-target ground plane and
+the puddles' camera position (what the native records lack, as in gpu-webgl2); `RunRenderer` draws them in one render
+pass, stream order. Seams as gpu-webgl2: `vite.config.js` also stubs `Renderer/MapRenderer.js` and `Loaders/Model.js`.
+
+- **Programs** (`src/effects/mesh/`): gpu-webgl2's table, 20 record families → 15 programs (`meshFamilies.js`), the
+  same per-record packing (`programs.js`, byte-identical floats, copied) and the legacy shader pairs operation for
+  operation in WGSL (`src/shaders/effects/*.wgsl` + `common.wgsl`: pass block, sampler, the five rgba8 pools,
+  `effect_texture`, the legacy effect fog `mix(c, vec4(fogColor, c.a), f)` keyed on each record's flag). Every program
+  stays in GL clip space through the legacy clip-z biases and remaps once, `z' = (z + w)/2`, as `sprite.wgsl`.
+- **Draws** (`MeshEffectPipeline`): instanced programs set the cached static mesh (one GPU buffer per mesh key) on slot 0
+  and the batch's records on slot 1 (waterfall: records on slot 0, `vertex_index` corners) and draw `(meshCount,
+records)`; stream programs (RSM, swirling band, bubble quads, magic-target planes) draw the batch's vertices. All
+  batches of a frame are one ring write; `encodeBatches` calls the program's `drawBatch` with its staged descriptor.
+- **Wrap**: the batch key holds program, wrap and static mesh (`effectProgram`, same keys as gpu-webgl2); the bind
+  group of a batch carries its sampler (clamp, repeat, or repeat-u for `repeatTextureX` cylinders), same pools.
+- **Pipelines**: one family per program (`mesh-<id>`), topology per program, record blend/depth, RGB-only writes;
+  census = normal alpha × depth write on/off per program; `RunRenderer.warm` compiles the rest (53 in this scene).
+- **Textures**: `decodeTileTexture` / `decodeSelfDrawnTexture` copied into `src/residency/imageTexture.js`; the texel
+  check reads back every legacy texture the records use: 81 textures, 337 408 texels, 0 differ.
+
+### Results (SwiftShader, 640×480, tolerance 2)
+
+| Frame         | Records | Over tol, native | ANGLE orientation |   MSAA native | MSAA, ANGLE orientation | Legacy / gpu-webgpu draws |
+| ------------- | ------: | ---------------: | ----------------: | ------------: | ----------------------: | ------------------------: |
+| t = 480 ms    |     221 |     77 (0.025 %) |       4 (0.001 %) | 4062 (1.32 %) |            10 (0.003 %) |           221 / 41 (5.4×) |
+| t = 1200 ms   |     226 |    122 (0.040 %) |      54 (0.018 %) | 5496 (1.79 %) |           131 (0.043 %) |           226 / 41 (5.5×) |
+| t = 2000, fog |     224 |    165 (0.054 %) |     114 (0.037 %) | 4907 (1.60 %) |           224 (0.073 %) |           224 / 38 (5.9×) |
+| t = 2800 ms   |     221 |     94 (0.031 %) |      24 (0.008 %) | 5500 (1.79 %) |            34 (0.011 %) |           221 / 37 (6.0×) |
+| t = 4400 ms   |     209 |     43 (0.014 %) |      17 (0.006 %) | 5020 (1.63 %) |            29 (0.009 %) |           209 / 25 (8.4×) |
+
+- Same draw counts as gpu-webgl2 (equal batch boundaries); 0 fallbacks, 0 skipped batches, no WebGPU or GL error,
+  every program drawn. Fog control: 132 records fogged, ≈167k px differ with fog off. Sensitivity controls (0.01
+  units): cylinder ≈3.3k px, RSM ≈2.5k px, LP tile ≈1.9k px.
+
+### Gates for effects2
+
+Every frame is drawn twice: in WebGPU's native orientation (production) and in ANGLE's raster orientation (y-flipped
+projection, rows read top-down, `-angle-orientation`, the script's `--max-diff-pct`).
+
+- **ANGLE orientation: 0.05 % without MSAA (≤ 0.037 %), 0.1 % with MSAA (≤ 0.073 %).** What is left is z-fighting the
+  scene has in legacy too: overlapping ground tiles lie in one plane and write depth, so `less-equal` picks the
+  winner per pixel on sub-ulp depth differences (row-alternating stripes on both sides, different stripes).
+  `--only=tile` gives 0 / 49 / 110 / 15 / 10 px in both orientations. Changing the remap (`z·½ + w·½`,
+  `(z/w·½ + ½)·w`), the product order (`P·(MV·p)`) or the depth format (`depth32float` = `depth24plus` here) does not
+  remove it; under MSAA it is evaluated per sample, hence the 0.1 % gate (precedent: `entities:aa`).
+- **Native without MSAA: declared 0.075 %** (`NATIVE_GATE_PCT`, ≤ 0.054 %). ANGLE draws a WebGL default framebuffer
+  upside down, which turns the top-left fill rule into a bottom-left one: edges through pixel centres (the waterfall
+  curtains' shared horizontal edges, the magic-target plane cells) go to the other row. Flipping removes it
+  (165 → 114 px on the fog frame).
+- **Native with MSAA: declared 2.5 %** (`NATIVE_AA_GATE_PCT`, ≤ 1.79 %): the mirrored 4× sample pattern of the
+  effects page (`effects:aa`), on every non-axis-aligned edge, and here nearly every edge is one.
+
+Raise a gate only with a new analysis.
 
 ## Backend page (`--page=backend`)
 

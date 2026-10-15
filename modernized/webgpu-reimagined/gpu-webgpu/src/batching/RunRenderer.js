@@ -1,5 +1,6 @@
 import { SpriteRunRenderer, spriteSpec } from '../sprites/SpriteRunRenderer.js';
 import { StrPipeline, strSpec } from '../effects/StrPipeline.js';
+import { MeshEffectPipeline, meshSpec } from '../effects/mesh/MeshEffectPipeline.js';
 import { programOf, splitBatches, splitRuns } from '../sprites/runs.js';
 import { encodeBatches } from './encodeBatches.js';
 
@@ -10,8 +11,11 @@ import { encodeBatches } from './encodeBatches.js';
  * program changes; never regrouped or reordered). Sprites and the 2D/3D effects
  * (SpriteRenderer draws in legacy) are instanced quads of the sprite pipeline
  * (sprite.wgsl); STR layers are instanced quads of the STR pipeline (str.wgsl);
- * both sample the same texture-array pools of one SpriteResidency. Batches of other
- * families have no renderer here yet and are skipped (`lastSkipped`).
+ * the mesh effect families (cylinder, quadhorn, RSM, auras, spheres, tiles, rings,
+ * target markers, waterfall, rain puddles) are one draw per batch of MeshEffectPipeline
+ * (15 WGSL programs, cached meshes or streamed vertices); all sample the same
+ * texture-array pools of one SpriteResidency. Batches of other families (weather,
+ * world) have no renderer here yet and are skipped (`lastSkipped`).
  *
  * Same structure as gpu-webgl2's RunRenderer. Holds no rendering rules: every value
  * comes from the records.
@@ -25,15 +29,17 @@ export class RunRenderer {
 	 *   depthFormat?: GPUTextureFormat,
 	 *   sprites?: SpriteRunRenderer,
 	 *   str?: StrPipeline,
+	 *   meshes?: MeshEffectPipeline,
 	 *   mixTextureClasses?: boolean
 	 * }} deps
 	 */
-	constructor({ device, residency, sampleCount, depthFormat, sprites, str, mixTextureClasses }) {
+	constructor({ device, residency, sampleCount, depthFormat, sprites, str, meshes, mixTextureClasses }) {
 		this.device = device;
 		this.residency = residency;
 		this.sprites =
 			sprites ?? new SpriteRunRenderer({ device, residency, sampleCount, depthFormat, mixTextureClasses });
 		this.str = str ?? new StrPipeline({ device, residency, sampleCount, depthFormat });
+		this.meshes = meshes ?? new MeshEffectPipeline({ device, residency, sampleCount, depthFormat });
 		/** Draw calls issued by the last `encode()`. */
 		this.lastDrawCalls = 0;
 		/** render-records runs of the last `encode()` (pipeline-state boundaries), for diagnostics. */
@@ -48,9 +54,9 @@ export class RunRenderer {
 		this.lastUploads = 0;
 	}
 
-	/** Create both programs' GPU objects and precompile their default census. */
+	/** Create every program's GPU objects and precompile their default census. */
 	async init() {
-		await Promise.all([this.sprites.init(), this.str.init()]);
+		await Promise.all([this.sprites.init(), this.str.init(), this.meshes.init()]);
 		return this;
 	}
 
@@ -66,9 +72,15 @@ export class RunRenderer {
 				this.sprites.pipelines.compile(spriteSpec(record));
 			} else if (program === 'str') {
 				this.str.pipelines.compile(strSpec(record));
+			} else if (program === 'mesh') {
+				this.meshes.pipelines.compile(meshSpec(record));
 			}
 		}
-		await Promise.all([this.sprites.pipelines.settled(), this.str.pipelines.settled()]);
+		await Promise.all([
+			this.sprites.pipelines.settled(),
+			this.str.pipelines.settled(),
+			this.meshes.pipelines.settled()
+		]);
 	}
 
 	/**
@@ -87,19 +99,29 @@ export class RunRenderer {
 		this.lastBatches = splitBatches(records, { mixTextureClasses: this.sprites.mixTextureClasses });
 		const spriteBatches = [];
 		const strBatches = [];
+		const meshBatches = [];
 		for (const batch of this.lastBatches) {
 			const program = programOf(records[batch.start]);
 			if (program === 'sprite') {
 				spriteBatches.push(batch);
 			} else if (program === 'str') {
 				strBatches.push(batch);
+			} else if (program === 'mesh') {
+				meshBatches.push(batch);
 			}
 		}
 		const firsts = {
 			sprite: this.sprites.stage(records, spriteBatches, view),
-			str: this.str.stage(records, strBatches, view)
+			str: this.str.stage(records, strBatches, view),
+			mesh: this.meshes.stage(records, meshBatches, view)
 		};
-		const stats = encodeBatches(pass, records, this.lastBatches, { sprite: this.sprites, str: this.str }, firsts);
+		const stats = encodeBatches(
+			pass,
+			records,
+			this.lastBatches,
+			{ sprite: this.sprites, str: this.str, mesh: this.meshes },
+			firsts
+		);
 		this.lastDrawCalls = stats.drawCalls;
 		this.lastFallbacks = stats.fallbacks;
 		this.lastSkipped = stats.skipped;
@@ -112,10 +134,11 @@ export class RunRenderer {
 		};
 	}
 
-	/** Device loss: every GPU object of both programs died; `init()` again on the new device. */
+	/** Device loss: every GPU object of every program died; `init()` again on the new device. */
 	reset(device = this.device) {
 		this.device = device;
 		this.sprites.reset(device);
 		this.str.reset(device);
+		this.meshes.reset(device);
 	}
 }

@@ -105,11 +105,26 @@ export const db = inert({
 	getAttackSlice: () => null
 });
 
+/**
+ * Loaders/Model.js stand-in (the RSM parser, outside the renderer): `new Model(buffer)`
+ * returns `modelLoader.create(buffer)`, which the effects2 page installs (synthetic
+ * models, as the root suite's FakeModel).
+ */
+export const modelLoader = { create: null };
+function ModelStub(buffer) {
+	return modelLoader.create(buffer);
+}
+
+/** Renderer/MapRenderer.js stand-in: the map name and scene fog RainWeather reads. */
+export const mapRenderer = { currentMap: '', fog: { use: false, exist: false, near: 0, far: 1, color: [0, 0, 0] } };
+
 /** Every LEGACY_STUBS module (vite.config.js) → its default export. */
 export const stubs = {
 	'Core/Client.js': client,
 	'Renderer/Camera.js': Camera,
 	'Renderer/Renderer.js': renderer,
+	'Renderer/MapRenderer.js': mapRenderer,
+	'Loaders/Model.js': ModelStub,
 	'Renderer/Map/Ground.js': { getShadowFactor: (x, y) => terrain.shadowFactor(x, y) },
 	'Renderer/Map/Altitude.js': inert({
 		TYPE: { NONE: 0, WALKABLE: 1, WATER: 2, SNIPABLE: 4 },

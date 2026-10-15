@@ -267,7 +267,7 @@ describe('RunRenderer: sprite and STR batches in one pass, stream order', () => 
 			strLayer(),
 			strLayer({ blend: constantPair }),
 			spriteFx('2d', {}, { palette: 'pal' }),
-			{ ...strLayer(), family: 'cylinder' },
+			{ ...strLayer(), family: 'snow' },
 			strLayer()
 		];
 		await runs.warm(records);
@@ -282,7 +282,7 @@ describe('RunRenderer: sprite and STR batches in one pass, stream order', () => 
 			[4, 2, 0, 0], // str, str (STR program, instances 0–1)
 			[4, 1, 0, 2], // str, constant pair
 			[4, 1, 0, 2], // 2d (sprite program, instance 2)
-			[4, 1, 0, 3] // str (the cylinder before it has no renderer here)
+			[4, 1, 0, 3] // str (the snow record before it has no renderer here)
 		]);
 		// Program switches rebind vertex buffers: sprite (2 slots), str (1), sprite (2), str (1).
 		expect(calls.filter(c => c[0] === 'setVertexBuffer').map(c => c[1])).toEqual([0, 1, 0, 0, 1, 0]);

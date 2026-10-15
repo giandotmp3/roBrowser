@@ -111,7 +111,7 @@ describe('WebGpuBackend: one frame in R-CTX-010 order', () => {
 				ground: [{ kind: 'world', part: 'water' }],
 				gr2Models: [{ kind: 'gr2' }],
 				entitiesNonEffect: [sprite(), sprite({ zIndex: 1 })],
-				effectsAfterEntities: [strLayer(), { ...strLayer(), family: 'cylinder' }, strLayer()]
+				effectsAfterEntities: [strLayer(), { ...strLayer(), family: 'snow' }, strLayer()]
 			},
 			{ sky: { clearColor: [0.4, 0.6, 0.8, 1] }, view: { zoom: 30 } }
 		);
@@ -119,7 +119,7 @@ describe('WebGpuBackend: one frame in R-CTX-010 order', () => {
 			drawn: true,
 			records: 4,
 			unsupportedRecords: 3,
-			unsupportedByFamily: { 'world:water': 1, gr2: 1, 'effect:cylinder': 1 },
+			unsupportedByFamily: { 'world:water': 1, gr2: 1, 'effect:snow': 1 },
 			drawCalls: 2,
 			post: 'blit',
 			postPasses: 0,
@@ -136,7 +136,7 @@ describe('WebGpuBackend: one frame in R-CTX-010 order', () => {
 		expect(scenePass.depthStencilAttachment.depthClearValue).toBe(1);
 		expect(blitPass.label).toBe('blit');
 		expect(fake.calls.filter(c => c[0] === 'queue.submit')).toHaveLength(1);
-		// The sprite batch, the STR batch (the cylinder left out between them draws nothing, so the two
+		// The sprite batch, the STR batch (the snow record left out between them draws nothing, so the two
 		// STR layers stay contiguous and in order), then the blit triangle.
 		expect(draws(fake).map(c => c[1].slice(0, 2))).toEqual([[4, 2], [4, 2], [3]]);
 	});

@@ -104,8 +104,9 @@ const unsupportedKey = record => {
  *
  * One frame (R-CTX-010) is one command encoder: the scene pass (clear colour from the
  * frame / sky, R-CTX-009; every scene-step record in legacy order through RunRenderer:
- * sprites, 2D/3D and STR effects; families without a renderer yet, world and GR2 among
- * them, are counted in `unsupportedRecords` and left out), then the post chain when any
+ * sprites, 2D/3D, STR and the mesh effect families; families without a renderer yet,
+ * world, GR2 and the SpriteRenderer-drawn weather among them, are counted in
+ * `unsupportedRecords` and left out), then the post chain when any
  * module is active, else the blit, then the C-20 capture copy, one submit. Non-GPU steps
  * run in order through ScenePort.runStep. Owns no rendering rules: every value comes from
  * the records, the settings and the frame.
