@@ -149,12 +149,17 @@ These were found at scaffold time and settled before phase 1.
   - Each legacy file draws from EffectDraw records, with `addRecordSink`. GL snapshots taken on the unmodified files still match.
   - render-records `effects/SpriteBillboardEffect.js` (3D/2D players), `CylinderEffect.js` and `QuadHornEffect.js` reproduce legacy records. No divergences are declared.
   - R-SPR-032 now points at `StrPlayer`.
+- **All remaining effect families:**
+  - **Seam + diff:** RsmEffect, GroundAura, SwirlingAura, Level99Bubble, SpiritSphere, WarlockSphere, Tiles, LPEffect, SpiderWeb, FlatColorTile, PropertyGround, MagicRing, LockOnTarget, MagicTarget, RainWeather (puddles), WaterfallEffect. Each draws from EffectDraw records and has a GL snapshot proven on the original file.
+  - **Diff only:** Snow, Sakura, PokJuk, CloudWeather and Sky draw through SpriteRenderer, so they are diffed from its record sink.
+  - render-records counterparts live in `effects/*`. No divergences are declared. MagnumBreak and GroundEffect are dead code and were skipped.
+- **Phase 2 status:** every legacy sprite and effect draw path now emits backend-neutral records, and render-records reproduces them.
 - **Remaining for phase 2:**
-  - The smaller effect families each need a record seam plus a diff: RSM effects, ground auras and swirling auras, spheres (spirit/warlock), Level99Bubble, ground tiles (Tiles/LP/SpiderWeb/FlatColorTile/PropertyGround/MagicRing), LockOn/MagicTarget, weather (snow/rain/sakura/pokjuk/clouds), Waterfall, Sky.
-  - The EffectManager pass (R-EFX-006) and `EffectSystem.emit`.
+  - Wire `EffectSystem` (spawn → pass R-EFX-006 → culling R-EFX-005 → repeat R-EFX-004) to the players.
+  - World records (ground, water, models, GR2) are not seamed: these are static per map, and phase 3 consumes the `MAP_*` payloads directly.
   - Picking-rect widening by halo and trails.
-  - HITL decisions: spec #34 (attachment shadow leak), #47 (3D state leak), #41/#49 (invalid blend codes).
-- **Next:** the remaining effect families (record seam + diff each), then phase 3 (gpu-webgl2 run batching over the record stream).
+- **HITL backlog:** spec #34, #47, #52, #53, #56, #59, #60, #61, #63 (proposed flags) and #41, #49, #54, #57 (SME).
+- **Next:** EffectSystem wiring, then phase 3 (gpu-webgl2 run batching over the record stream).
 
 ## Still open
 

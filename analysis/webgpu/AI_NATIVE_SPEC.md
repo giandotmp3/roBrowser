@@ -1558,6 +1558,48 @@ Source paths below are relative to `src/`.
 49. **[SME] Invalid blend codes** for 2D/3D/cylinder/QuadHorn (in-range non-integers) give an undefined GL factor in legacy, the same class of issue as #41.
 50. **Leaks fixed by construction:** a per-instance texture in TwoD/ThreeD (`ThreeDEffect.js:595,607`; `TwoDEffect.js:441`) and a per-instance buffer in Cylinder (`Cylinder.js:181,199,406`). The rebuild uses residency and a shared mesh cache.
 
+**Found by the RSM/aura, sphere/tile/target and weather/sky/waterfall record-diffs** (2026-10-15). Parity is kept for every item; [PROPOSED FLAG] items await HITL.
+
+51. **R-EFX-014:**
+    - Auras set the additive blend once per family pass in `beforeRender` (GroundAura.js:382, SwirlingAura.js:456, Level99Bubble.js:647) and draw with depth test on, depth write off.
+    - RsmEffect, the tiles, rings and markers set no blend or depth state; they inherit the pass state.
+    - **[PROPOSED FLAG] PokJuk:** fireworks actually draw with *normal* blend, because `SpriteRenderer.render(false)` resets the additive blend set at `PokJukWeatherEffect.js:54` before every particle (`:308`).
+52. **[PROPOSED FLAG] Inherited SpriteRenderer state.** PokJuk sets only position, colour, size and texture (`PokJukWeatherEffect.js:297-309`). Angle, offset, shadow, palette, depth and zIndex leak in from the previous draw. This is the same class as #47.
+53. **R-EFX-015:**
+    - Level99Bubble anchors spawn at y 0–99 and are skipped while y > 0 (`Level99Bubble.js:517`), so the first bubbles can take about 16 s.
+    - **[PROPOSED FLAG]** A start tick of 0 seeds from `Date.now()`, so that bubble never draws (`:269`).
+    - SwirlingAura's sizeType 7 can't be reached from EffectTable.
+54. **[SME] GroundAura** passes degrees to `Math.sin`/`Math.cos` (`GroundAura.js:43-54`). Fixing it changes the look.
+55. **Frame deltas** in the aura families are capped at 250 ms but have no lower bound, so a frame before the start tick runs the simulation backwards (`GroundAura.js:267`, `Level99Bubble.js:463`).
+56. **RsmEffect:**
+    - It never sets `needCleanUp`, so `endTick` is ignored (R-EFX-003).
+    - **[PROPOSED FLAG]** A rebuild that keeps the object count keeps stale textures (`:586`), and failed textures draw with no texture bound (`:575-580`).
+57. **Spheres:**
+    - WarlockSphere ignores its element (`SphereFiles` is unused, `WarlockSphere.js:53,88`) and draws with depth test off, depth write on (`:186`).
+    - **[SME]** The sphere fade-in steps 0.005 per frame, so it depends on frame rate (`SpiritSphere.js:227`).
+58. **Shader-forced alpha:**
+    - LP and SpiderWeb are forced to 0.7 with no fog. PropertyGround is forced to 0.42 and MagicRing to 0.7. FlatColorTile has no fog.
+    - LockOn/MagicTarget with endTick −1 draw one frame.
+    - PropertyGround never sets `needCleanUp`. MagicRing never cleans up when its texture is unloaded.
+59. **[PROPOSED FLAG] EffectManager keys lists by `constructor.name`** (`EffectManager.js:349`). Every FlatColorTile colour class is named `FlatColorTile`, so a second colour spawned while the first is alive never initialises or draws. FlatColorTile also caches by name, and Songs.js reuses `'humming'` (`:175,185`), so ForgetEffects gets Humming's colour.
+60. **[PROPOSED FLAG] R-EFX-016 `effectId`/`effectID` mismatch.**
+    - The map-flag `leaves` setting shows sakura petals (`ScreenEffectManager.js:116` vs `SakuraWeatherEffect.js:124,171`).
+    - EF_CLOUD2 from the EffectTable always gets the EF_CLOUD profile (`CloudWeatherEffect.js:38` vs `EffectManager.js:585`).
+61. **CloudWeather:**
+    - **[PROPOSED FLAG]** The third texture is never picked (`rng·(3−1)|0`, `:156`).
+    - Alpha goes negative after death and is still drawn (`:223`).
+    - `stop()` has no fade.
+62. **R-MAP-022:**
+    - The first cloud batch is backdated 2 s, with deaths 0–8 s out (`Sky.js:113-115`).
+    - Births use `Date.now()` only once (`:138`), so on later maps clouds catch up invisibly.
+    - Sky inherits the blend.
+63. **R-EFX-017:**
+    - Sakura's 0.5 alpha cap applies only during fades, so alpha goes 0.5→1→0.5 (`:368-380`).
+    - **[PROPOSED FLAG]** The rain splash angle is NaN (`RainWeather.js:926`).
+    - Thunder runs on `Date.now` (`:787`).
+    - Audio plinks consume `Math.random` (`:546`), so the visual random sequence depends on audio availability.
+    - Puddles still draw on the map-change frame.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|
