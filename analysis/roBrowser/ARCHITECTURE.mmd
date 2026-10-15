@@ -1,0 +1,63 @@
+%% roBrowser — domain-level dependency graph (edge labels = static import counts, summed per domain)
+%% Source: /modernize-assess structural map, 2026-10-15
+graph TD
+  subgraph Delivery
+    BOOT[1 Bootstrap & Apps<br/>src/main.js, src/App, applications/]
+    WSP[wsproxy.js]
+  end
+  subgraph Gameplay
+    ENG[4 Session Engine + Plugins<br/>src/Engine, src/Plugins]
+    UI[7 UI<br/>src/UI]
+    INP[8 Input / Prefs / AI<br/>src/Controls, src/Preferences, Core/Mobile, Core/AIDriver]
+  end
+  subgraph Presentation
+    REN[6 Renderer<br/>src/Renderer]
+    AUD[9 Audio<br/>src/Audio]
+  end
+  subgraph Foundation
+    DB[5 Game Data<br/>src/DB]
+    NET[3 Network<br/>src/Network]
+    PLAT[2 Core / Loaders / Utils]
+  end
+  VEN[(Vendors - frozen)]
+
+  BOOT -->|15| PLAT
+  BOOT -->|6| UI
+  BOOT -->|5| REN
+  BOOT -->|2| ENG
+  BOOT -->|2| INP
+  ENG -->|1 back-edge| BOOT
+  ENG -->|207| UI
+  ENG -->|79| NET
+  ENG -->|53| DB
+  ENG -->|52| REN
+  ENG -->|30| PLAT
+  ENG -->|11| AUD
+  ENG -->|5| INP
+  UI -->|199| PLAT
+  UI -->|165| REN
+  UI -->|142| DB
+  UI -->|108| INP
+  UI -->|76| NET
+  UI -->|43 cycle| ENG
+  UI -->|4| AUD
+  REN -->|144| PLAT
+  REN -->|35| INP
+  REN -->|31| DB
+  REN -->|19 cycle| ENG
+  REN -->|8| UI
+  REN -->|8| AUD
+  INP -->|31+| UI
+  INP -->|16+| REN
+  INP -->|9+| NET
+  INP -->|9+| ENG
+  INP -->|7| DB
+  DB -->|25 cycle| REN
+  DB -->|4| PLAT
+  DB -->|3| NET
+  NET -->|7| PLAT
+  AUD -->|3| PLAT
+  AUD -->|1| ENG
+  PLAT -.->|4 Core-to-Network| NET
+  PLAT -.-> VEN
+  NET -.->|TCP via WS| WSP
