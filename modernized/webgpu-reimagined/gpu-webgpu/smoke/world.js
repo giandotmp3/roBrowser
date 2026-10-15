@@ -18,6 +18,15 @@
  *   applies N·L to animated models. The lightmap-off frame runs legacy with light.opacity 0
  *   (the animated weighting becomes 1.0, the fix's full diffuse); a check shows the
  *   uncompensated difference is confined to animated-model pixels.
+ * - #69 animated RSM before a node's first key: legacy interpolates with t = −∞ (NaN
+ *   matrices: the node and its descendants draw nothing until the key, every loop); the
+ *   rebuild holds the first key. On ticks whose keyframe position is inside such a window
+ *   (the 'spin' root's first position key), legacy runs with a copy of that first key at
+ *   frame 0, which makes it hold the key (lerp a + t·0 = a; outside the window the bracket
+ *   and every value are unchanged). A check at a pre-key tick renders legacy as is and
+ *   asserts it equals gpu-webgpu with exactly those nodes' matrices NaN, while the
+ *   compensated legacy equals gpu-webgpu (both within the page gate, depth ties aside) and
+ *   the held nodes do draw.
  *
  * Occlusion queries (R-MAP-019): legacy polls its GL query on the next frame (results become
  * available on a later task); the page waits for gpu-webgpu's query read-back
@@ -227,9 +236,12 @@ async function run() {
 	Altitude.init(assets.altitude);
 	GridSelector.init(lgl);
 	Models.init(lgl, assets.models);
-	for (const model of assets.animated) {
-		AnimatedModels.add(lgl, structuredClone(model));
+	// Legacy keeps the payloads' key arrays by reference (#69 compensation edits them).
+	const legacyAnimated = assets.animated.map(model => structuredClone(model));
+	for (const model of legacyAnimated) {
+		AnimatedModels.add(lgl, model);
 	}
+	const preKeyLists = preKeyListsOf(legacyAnimated);
 
 	// --- gpu-webgpu: two backends, each fed the same payloads: the production one, and one drawn
 	// in ANGLE's raster orientation (y-flipped projection, rows read top-down; see
@@ -353,18 +365,22 @@ async function run() {
 	 * One gpu-webgpu frame through drawFrame, read back with capture() (bottom-up rows).
 	 * `water`: a world/water record's fields (alpha, textureIndex), or null for the fixed default;
 	 * `target`: `angle` draws in ANGLE's raster orientation (y-flipped projection: the frame lands
-	 * upside down, its top-down rows are legacy's bottom-up ones).
+	 * upside down, its top-down rows are legacy's bottom-up ones); `animated`: `animatedModel`
+	 * records (their matrices replace the models').
 	 */
 	const renderModern = async (
 		f,
 		view,
-		{ water = { alpha: LEGACY_WATER_ALPHA }, light: lightOverride, target = backend } = {}
+		{ water = { alpha: LEGACY_WATER_ALPHA }, light: lightOverride, target = backend, animated = null } = {}
 	) => {
 		const flipY = target === angle;
 		const fog = { use: f.fog, near: FOG.near, far: FOG.far, color: FOG.color };
 		const stream = water
 			? { water: [{ kind: 'world', part: 'water', depthTest: true, depthWrite: false, ...water }] }
 			: {};
+		if (animated) {
+			stream.animatedModels = animated;
+		}
 		const projection = flipY
 			? Float32Array.from(view.projection, (v, i) => (i % 4 === 1 ? -v : v))
 			: view.projection;
@@ -411,6 +427,7 @@ async function run() {
 			cells: gridCells(phase.grid ?? GRID)
 		};
 		const view = viewOf(phase.occluder ? OCCLUDER_CAMERA : CAMERA);
+		f.preKey = holdFirstKeys(preKeyLists, tick, true);
 		legacyDraws.drawArrays = 0;
 		legacyDraws.drawArraysInstanced = 0;
 		renderLegacy(f, view);
@@ -435,7 +452,7 @@ async function run() {
 		const a = kit.readPixels(lgl);
 		frames.push({
 			name: shot.name,
-			detail: `tick ${tick}, fog ${f.fog}, lightmap ${f.lightmap}, smoothlight ${f.smoothlight}, ${f.cells.length} grid cells, occluder ${f.occluder?.mode ?? 'off'} (strength legacy ${OccluderFade.getStrength().toFixed(3)} / gpu-webgpu ${backend.world.occluderStrength.toFixed(3)})${f.legacyLightOpacity === 0 ? ', legacy light.opacity 0 (R-MAP-013 compensated)' : ''}; ${stats.worldDrawCalls} world draws`,
+			detail: `tick ${tick}, fog ${f.fog}, lightmap ${f.lightmap}, smoothlight ${f.smoothlight}, ${f.cells.length} grid cells, occluder ${f.occluder?.mode ?? 'off'} (strength legacy ${OccluderFade.getStrength().toFixed(3)} / gpu-webgpu ${backend.world.occluderStrength.toFixed(3)})${f.legacyLightOpacity === 0 ? ', legacy light.opacity 0 (R-MAP-013 compensated)' : ''}${f.preKey ? `, ${f.preKey} key list(s) before their first key: legacy holds it via a frame-0 copy (#69 compensated)` : ''}; ${stats.worldDrawCalls} world draws`,
 			...kit.compare(a, b),
 			records: 1,
 			worldDrawCalls: stats.worldDrawCalls,
@@ -497,13 +514,14 @@ async function run() {
 	{
 		const f = { ...frameAt(CAPTURES[0]), tick: last + TICK_MS };
 		const view = viewOf(CAMERA);
+		f.preKey = holdFirstKeys(preKeyLists, f.tick, true);
 		legacyDraws.drawArrays = 0;
 		renderLegacy(f, view);
 		const a = kit.readPixels(lgl);
 		const { pixels: b, stats } = await renderModern(f, view);
 		frames.push({
 			name: 'world-after-device-loss',
-			detail: `tick ${f.tick}: after device.destroy() and the rebuild (map re-uploaded from retained payloads); ${stats.worldDrawCalls} world draws`,
+			detail: `tick ${f.tick}: after device.destroy() and the rebuild (map re-uploaded from retained payloads)${f.preKey ? `, ${f.preKey} key list(s) before their first key (#69 compensated)` : ''}; ${stats.worldDrawCalls} world draws`,
 			gatePct: ANTIALIAS ? NATIVE_AA_GATE_PCT : NATIVE_GATE_PCT,
 			...kit.compare(a, b),
 			records: 1,
@@ -525,6 +543,21 @@ async function run() {
 			detail: `${stats.worldDrawCalls} world draws (first frame: ${frames[0]?.worldDrawCalls})`
 		});
 	}
+	checks.push(
+		await checkPreKeyFix(
+			last + TICK_MS,
+			frameAt(CAPTURES[0]),
+			{ renderLegacy, renderAngle, lgl, angle },
+			legacyAnimated,
+			preKeyLists
+		)
+	);
+	const preKeyFrames = frames.filter(fr => fr.detail.includes('#69'));
+	checks.push({
+		name: '#69: every captured pre-key frame is compensated and within its gate',
+		ok: preKeyFrames.length > 0 && preKeyFrames.every(fr => fr.overTolerancePct <= fr.gatePct),
+		detail: preKeyFrames.map(fr => `${fr.name}: ${fr.overTolerance} px over tolerance`).join(', ')
+	});
 
 	checks.push({
 		name: 'world records consumed (no unsupported record)',
@@ -610,6 +643,175 @@ async function loseDevice(backend, portLog) {
 			}
 		],
 		summary: { kind, ports: names }
+	};
+}
+
+/** Legacy AnimatedModels animLen: the payload's, or (when 0) the largest key frame + 1. */
+function legacyAnimLen(data) {
+	if (data.animLen) {
+		return data.animLen;
+	}
+	let max = 0;
+	for (const node of data.nodes) {
+		node.rotKeyframes.forEach(kf => (max = Math.max(max, kf.frame || 0)));
+		node.posKeyframes.forEach(kf => (max = Math.max(max, kf.frame || 0)));
+		node.scaleKeyFrames.forEach(kf => (max = Math.max(max, kf.Frame || 0)));
+	}
+	return max + 1;
+}
+
+/** Legacy AnimatedModels recompute bucket of keyframe position `frame` (performance mode off). */
+const legacyBucket = (data, frame) => Math.floor(frame / (1000 / ((data.frameRatePerSecond || 30) / 1.14)));
+
+const frameOfKey = kf => kf.frame;
+const frameOfScale = kf => (typeof kf.Frame !== 'undefined' ? kf.Frame : kf.frame);
+
+/**
+ * #69: the key lists (two keys or more) whose first key is after frame 0, of the legacy
+ * payloads (after AnimatedModels.add decoded the keys), with a frame-0 copy of that key.
+ */
+function preKeyListsOf(payloads) {
+	const lists = [];
+	payloads.forEach((data, model) => {
+		const animLen = legacyAnimLen(data);
+		data.nodes.forEach((node, index) => {
+			for (const [field, frameOf] of [
+				['rotKeyframes', frameOfKey],
+				['posKeyframes', frameOfKey],
+				['scaleKeyFrames', frameOfScale]
+			]) {
+				const keys = node[field];
+				if (keys.length > 1 && frameOf(keys[0]) > 0) {
+					const [first] = keys;
+					const copy = typeof first.Frame !== 'undefined' ? { ...first, Frame: 0 } : { ...first, frame: 0 };
+					lists.push({ model, node: index, keys, first, copy, frameOf, animLen });
+				}
+			}
+		});
+	});
+	return lists;
+}
+
+/** Whether a list is before its first key at `tick` (keyframe position tick % animLen). */
+const inPreKey = (list, tick) => list.frameOf(list.first) > tick % (list.animLen || 1);
+
+/**
+ * #69 compensation of legacy at `tick`: `on` puts the frame-0 copy in front of every list
+ * in its pre-key window (legacy then holds the first key) and removes it elsewhere; off
+ * removes every copy (legacy as is). Returns the number of lists held.
+ */
+function holdFirstKeys(lists, tick, on) {
+	let held = 0;
+	for (const list of lists) {
+		const want = on && inPreKey(list, tick);
+		const has = list.keys[0] === list.copy;
+		if (want && !has) {
+			list.keys.unshift(list.copy);
+		} else if (!want && has) {
+			list.keys.shift();
+		}
+		held += want ? 1 : 0;
+	}
+	return held;
+}
+
+/** Indices (first channel) of the pixels where `a` and `b` differ over the tolerance. */
+function overTolerance(a, b) {
+	const out = new Set();
+	for (let i = 0; i < a.length; i += 4) {
+		if ([0, 1, 2, 3].some(c => Math.abs(a[i + c] - b[i + c]) > TOLERANCE)) {
+			out.add(i);
+		}
+	}
+	return out;
+}
+
+/**
+ * #69 fix, declared narrowly at a pre-key tick after the parity frames (camera and
+ * settings of the first capture, occluder off), on the ANGLE-orientation backend (the
+ * page gate holds there with and without MSAA):
+ * - legacy compensated (first key held through its frame-0 copy) vs gpu-webgpu: within the
+ *   page gate; the pixels over tolerance are the frame's depth ties (`tiePixels`);
+ * - legacy as is vs gpu-webgpu fed an animatedModel record whose pre-key nodes (own list
+ *   before its first key, or such an ancestor) have NaN matrices, every other matrix being
+ *   gpu-webgpu's own: no pixel over tolerance outside the ties, so legacy draws nothing
+ *   exactly where those nodes are;
+ * - gpu-webgpu draws them: outside the ties, the pixels where its frame differs from the
+ *   NaN one are exactly those where legacy as is differs from it.
+ */
+async function checkPreKeyFix(afterTick, base, { renderLegacy, renderAngle, lgl, angle }, payloads, lists) {
+	const name =
+		'#69 fix: before the first key gpu-webgpu holds it (legacy compensated: within the gate); legacy as is draws nothing exactly there';
+	// a pre-key tick whose recompute bucket differs from the last rendered tick's (every model)
+	const changes = (t0, t1) =>
+		payloads.every(d => {
+			const len = legacyAnimLen(d);
+			return legacyBucket(d, t0 % len) !== legacyBucket(d, t1 % len);
+		});
+	let tick = afterTick + TICK_MS;
+	while (!(lists.some(l => inPreKey(l, tick)) && changes(afterTick, tick))) {
+		tick += TICK_MS;
+		if (tick > afterTick + 100000) {
+			return { name, ok: false, detail: 'no pre-key tick found' };
+		}
+	}
+	let other = tick + TICK_MS;
+	while (!changes(other, tick)) {
+		other += TICK_MS;
+	}
+	const f = { ...base, tick };
+	const view = viewOf(CAMERA);
+	const held = lists.filter(l => inPreKey(l, tick));
+
+	holdFirstKeys(lists, tick, true);
+	renderLegacy(f, view);
+	const compensated = kit.readPixels(lgl);
+	const modern = (await renderAngle(f, view)).pixels;
+
+	// legacy as is: render another bucket first so the matrices are recomputed at `tick`
+	holdFirstKeys(lists, tick, false);
+	renderLegacy({ ...f, tick: other }, view);
+	renderLegacy(f, view);
+	const legacy = kit.readPixels(lgl);
+
+	// gpu-webgpu with the pre-key nodes' matrices NaN (records replace the model's matrices)
+	const records = [];
+	for (const [model, rsm] of angle.world.animated.entries()) {
+		const data = payloads[model];
+		const index = new Map(data.nodes.map((n, i) => [n.name, i]));
+		const own = new Set(held.filter(l => l.model === model).map(l => l.node));
+		const pre = i => {
+			for (let n = i, guard = 0; n !== undefined && guard <= data.nodes.length; guard++) {
+				if (own.has(n)) {
+					return true;
+				}
+				const node = data.nodes[n];
+				n = node.parentname === node.name ? undefined : index.get(node.parentname);
+			}
+			return false;
+		};
+		const matrices = Float32Array.from(rsm.matrices);
+		const count = rsm.instances.length;
+		data.nodes.forEach((_, n) => {
+			if (pre(n)) {
+				matrices.fill(NaN, n * count * 16, (n + 1) * count * 16);
+			}
+		});
+		records.push({ kind: 'world', part: 'animatedModel', matrices, params: { model } });
+	}
+	const nanModern = (await renderAngle(f, view, { animated: records })).pixels;
+
+	const ties = overTolerance(compensated, modern);
+	const outsideTies = set => [...set].filter(i => !ties.has(i));
+	const legacyOff = outsideTies(overTolerance(legacy, nanModern)).length;
+	const drawn = new Set(outsideTies(overTolerance(modern, nanModern)));
+	const asIs = new Set(outsideTies(overTolerance(legacy, modern)));
+	const mismatch = [...drawn].filter(i => !asIs.has(i)).length + [...asIs].filter(i => !drawn.has(i)).length;
+	const tiePct = (100 * ties.size) / (WIDTH * HEIGHT);
+	return {
+		name,
+		ok: held.length > 0 && tiePct <= NATIVE_GATE_PCT && legacyOff === 0 && drawn.size > 0 && mismatch === 0,
+		detail: `tick ${tick}, ANGLE orientation (${held.map(l => `${payloads[l.model].filename.split('\\').pop()} node ${l.node}`).join(', ')} before their first key, descendants following): compensated legacy vs gpu-webgpu ${ties.size} px over tolerance (${tiePct.toFixed(4)} %, depth ties); outside them: legacy as is vs gpu-webgpu with the pre-key nodes NaN ${legacyOff} px; held nodes draw ${drawn.size} px, legacy as is vs gpu-webgpu ${asIs.size} px, ${mismatch} px in only one of the two`
 	};
 }
 

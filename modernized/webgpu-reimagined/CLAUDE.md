@@ -206,12 +206,14 @@ These were found at scaffold time and settled before phase 1.
   - Legacy GR2ModelRenderer and AnimatedModels now have record seams (GL snapshots pinned on the original files). render-records' GR2 composer and computeNodeMatrices match legacy bit for bit; R-GR2-003 and R-MAP-017 are promoted.
   - The tests use synthetic skinned models, because the repo has no real .gr2 assets.
 - **Coverage:** both backends now draw every legacy draw path (sprites, all effects, world, GR2, post), each pixel-checked against legacy.
+- **#69 (animated RSM before its first key): fixed** in render-records, gpu-webgl2 and gpu-webgpu. It is narrowly declared in `RecordDiff.animatedModels` and both world smokes.
+- **Session paused here (2026-10-16).** Phase 5 integration was started and then stopped. Its partial, unverified `src/` work is saved, unapplied, as `analysis/webgpu/wip/phase5-integration-WIP.patch` (see `analysis/webgpu/wip/README.md`).
 - **Next:**
-  - #69 fix (in progress for render-records and gpu-webgl2; then port it to gpu-webgpu).
-  - Phase 5 integration: an opt-in `GraphicsSettings.renderer`, default legacy.
+  - Phase 5 integration: an opt-in `GraphicsSettings.renderer`, default legacy. Resume from the WIP patch or restart.
   - World mipmaps on gpu-webgpu.
   - Clouds (R-MAP-022) pixel check.
   - A test-harness subject adapter, so the 143 rule tests run against render-records.
+  - Phase 5 exit: a smoke set on 3 named GPUs. Phase 6 is legacy removal, per the gates in architecture §5.
 
 ## Still open
 

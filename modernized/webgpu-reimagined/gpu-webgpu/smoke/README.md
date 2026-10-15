@@ -493,6 +493,18 @@ captures plus one frame after a device loss are compared (13 frames, as gpu-webg
   tick, a real `device.destroy()` (overlay, purge, rebuild on a new device with the map re-uploaded from the retained
   payloads, `setMap`), no unsupported record, payload content. The two fix checks leave out the parity frame's
   depth-tie pixels (below; gpu-webgl2's are exact). Sensitivity control: the light direction nudged by 0.01.
+- **Declared divergence #69 (fixed legacy bug), as gpu-webgl2:** before a node's first key, when that key is after
+  frame 0, legacy interpolates with t = −∞ (`src/Renderer/Map/AnimatedModels.js:571-585`, `:596-610`, `:621-640`: the
+  bracket is (first, first), so t = (frame − f0) / 0). The node and its descendants get NaN matrices and draw nothing
+  until the key, every loop. The rebuild (`src/world/animatedRsm.js`, gpu-webgl2's copy) holds the first key, the
+  clamp legacy already applies after the last key and to a single key. The 'spin' root's first position key is at
+  300 ms of its 2400 ms loop, so ticks 2400–2670 (captures t2400, t2490 and the device-loss frame at 2520) are
+  pre-key. On those ticks only, legacy runs with a copy of the first key at frame 0, which makes it hold the key (lerp
+  a + t·0 = a; outside the window the bracket and every value are unchanged), and the frames keep their gates. A
+  check at a later pre-key tick (2640, ANGLE-orientation backend) asserts: compensated legacy vs gpu-webgpu within the
+  page gate (18 px, MSAA 38 px: the depth ties); outside those ties, legacy as is equals gpu-webgpu fed an
+  `animatedModel` record whose pre-key nodes (and their descendants) have NaN matrices (0 px), and the held nodes'
+  pixels (about 5k) are exactly the legacy-as-is vs gpu-webgpu difference.
 
 ### Results (SwiftShader, 640×480, tolerance 2)
 
@@ -500,10 +512,11 @@ captures plus one frame after a device loss are compared (13 frames, as gpu-webg
 | ------------------------------------------------------------ | -----------------: | ----------------: | -------------------: | ----------------------: | ------------------------: |
 | t = 660…1500 (fog, smoothlight 1/2, lightmap off, animation) |  9–11 (≤ 0.0036 %) |              same | 6454–7587 (≤ 2.47 %) |      22–39 (≤ 0.0127 %) |                   15 / 12 |
 | t = 1680, captcha grid (25 cells)                            |      15 (0.0049 %) |              same |        7434 (2.42 %) |           38 (0.0124 %) |                   39 / 12 |
-| t = 2220…2400, occluder dither                               |  5–13 (≤ 0.0042 %) |              same | 6970–6991 (≤ 2.28 %) |      26–39 (≤ 0.0127 %) |                   27 / 21 |
-| t = 2490, occluder alpha, fog                                |      12 (0.0039 %) |              same |        6277 (2.04 %) |           40 (0.0130 %) |                   39 / 30 |
-| after device loss                                            |      13 (0.0042 %) |                 — |        7541 (2.45 %) |                       — |                   15 / 12 |
+| t = 2220…2400, occluder dither                               |  5–13 (≤ 0.0042 %) |              same | 6970–7203 (≤ 2.35 %) |      26–39 (≤ 0.0127 %) |                   27 / 21 |
+| t = 2490, occluder alpha, fog                                |      13 (0.0042 %) |              same |        6341 (2.06 %) |           41 (0.0133 %) |                   39 / 30 |
+| after device loss                                            |      13 (0.0042 %) |                 — |        7761 (2.53 %) |                       — |                   15 / 12 |
 
+- t2400, t2490 and the device-loss frame are #69-compensated (above).
 - No WebGPU or GL error, no WGSL message, 0 unsupported records; occluder strengths 0 → 0.2 → … → 1 on both sides.
   Sensitivity control ≈25k px (MSAA ≈33k).
 
@@ -516,12 +529,12 @@ captures plus one frame after a device loss are compared (13 frames, as gpu-webg
   remap) differs by an ulp, so single pixels swap ground and water. Ground, water and static models alone are 0 px;
   the remaps `z·½ + w·½` and `(z/w·½ + ½)·w` give the same counts (precedent: effects2's tile z-fighting). Drawing in
   ANGLE's orientation changes nothing here. The two fix checks leave these pixels out of their "only here" counts.
-- **Native with MSAA: declared 3 %** (`NATIVE_AA_GATE_PCT`, ≤ 2.47 %). ANGLE draws the WebGL default framebuffer upside
+- **Native with MSAA: declared 3 %** (`NATIVE_AA_GATE_PCT`, ≤ 2.53 %). ANGLE draws the WebGL default framebuffer upside
   down, which mirrors the 4× sample pattern: every edge that is neither horizontal nor vertical resolves different
   coverage, and the world covers the whole frame with such edges (ground tiles with texture and lightmap seams, water,
   models); the effects pages' precedent (`effects2:aa` native 2.5 %). The same frames on a second backend in ANGLE's
   raster orientation (y-flipped projection, rows read top-down, the Bayer cell flipped with it, `-angle-orientation`)
-  keep the page gate: ≤ 0.013 %.
+  keep the page gate: ≤ 0.0133 %.
 
 Raise a gate only with a new analysis.
 

@@ -496,6 +496,36 @@ describe('R-MAP-016/017 animated RSM matrices (copy of gpu-webgl2 animatedRsm.js
 		expect(model.update(1250)).toBe(false);
 	});
 
+	it('#69 FIX: before a first key after frame 0 the first key is held (legacy: NaN), the child follows', () => {
+		const data = structuredClone(ANIMATED);
+		data.nodes[0].posKeyframes = [
+			{ frame: 200, px: 2, py: 0, pz: 0 },
+			{ frame: 600, px: 4, py: 0, pz: 0 }
+		];
+		data.nodes[0].rotKeyframes = [
+			{ frame: 100, q: [0, 0, 0, 1] },
+			{ frame: 300, q: [0, 0, 1, 0] }
+		];
+		data.nodes[0].scaleKeyFrames = [
+			{ Frame: 100, Scale: [1, 1, 1] },
+			{ Frame: 300, Scale: [2, 2, 2] }
+		];
+		const model = new AnimatedRsm(data);
+		model.update(0, false, true);
+		expect(model.matrices.every(Number.isFinite)).toBe(true);
+		expect(Array.from(model.matrices.slice(12, 15))).toEqual([12, 0, 20]);
+		expect(Array.from(model.matrices.slice(28, 31))).toEqual([12, 1, 20]);
+		const before = Array.from(model.matrices);
+		// at the first keys themselves (rotation / scale at 100, position at 200) nothing moves
+		model.update(100, false, true);
+		expect(Array.from(model.matrices)).toEqual(before);
+		model.update(200, false, true);
+		expect(model.matrices[12]).toBe(12);
+		// interpolation after the first key is unchanged
+		model.update(400, false, true);
+		expect(model.matrices[12]).toBe(13);
+	});
+
 	it('geometry is grouped by texture id, then node, then instance (legacy layout)', () => {
 		const model = new AnimatedRsm(structuredClone(ANIMATED));
 		expect(model.meshes).toEqual([

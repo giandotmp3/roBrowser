@@ -380,7 +380,14 @@ function resolveAnimLen(animLen, nodes) {
 	return max + 1;
 }
 
-/** Bracketing keyframes of `frame` (legacy linear scan); `frameOf` reads a keyframe's frame. */
+/**
+ * Bracketing keyframes of `frame` (legacy linear scan); `frameOf` reads a keyframe's frame.
+ *
+ * Callers hold the first key before it (discrepancy #69 FIX, declared divergence): legacy
+ * brackets (first, first) there and interpolates with t = (frame − f0) / 0 = −∞, giving NaN
+ * matrices for the node and its descendants. Holding the first key is the clamp legacy
+ * already applies after the last key and to a single key.
+ */
 function bracket(keyframes, frame, frameOf) {
 	let prev = keyframes[0];
 	for (const kf of keyframes) {
@@ -396,7 +403,7 @@ function positionAt(keyframes, frame, out) {
 	if (!keyframes.length) {
 		return null;
 	}
-	if (keyframes.length === 1) {
+	if (keyframes.length === 1 || keyframes[0].frame > frame) {
 		return keyframes[0].vec;
 	}
 	const { prev, next } = bracket(keyframes, frame, kf => kf.frame);
@@ -410,7 +417,7 @@ function rotationAt(keyframes, frame, out) {
 	if (!keyframes.length) {
 		return null;
 	}
-	if (keyframes.length === 1) {
+	if (keyframes.length === 1 || keyframes[0].frame > frame) {
 		return keyframes[0].quat;
 	}
 	const { prev, next } = bracket(keyframes, frame, kf => kf.frame);
@@ -424,10 +431,10 @@ function scaleAt(keyframes, frame, out) {
 	if (!keyframes.length) {
 		return null;
 	}
-	if (keyframes.length === 1) {
+	const frameOf = kf => (typeof kf.Frame !== 'undefined' ? kf.Frame : kf.frame);
+	if (keyframes.length === 1 || frameOf(keyframes[0]) > frame) {
 		return keyframes[0].vec;
 	}
-	const frameOf = kf => (typeof kf.Frame !== 'undefined' ? kf.Frame : kf.frame);
 	const { prev, next } = bracket(keyframes, frame, frameOf);
 	if (!next) {
 		return prev.vec;
