@@ -76,6 +76,131 @@ function generatePropertyGround() {
 }
 
 /**
+ * Normal alpha blending: the effect sets no blend function and draws with the pass default.
+ */
+const GROUND_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty PropertyGround draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * The effect sets no blend function (normal alpha) and no depth state (the
+ * after-entities pass state: depth test and write on). Its shader forces alpha 0.42.
+ *
+ * params:
+ *  - sizeMult: max(0.5, sin(tick / 360π + sizeRandomize))
+ *  - topSize, bottomSize: uTopSize / uBottomSize (already multiplied by sizeMult), height: uHeight
+ *  - slot: rotation slot (spawn number % 16), rotation: its uRotationMat
+ *  - vertexCount
+ *
+ * @returns {object} record
+ */
+function createPropertyGroundDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'property-ground',
+		pass: 'after',
+		texture: null,
+		position: null,
+		color: [1, 1, 1, 0.42],
+		blend: GROUND_BLEND,
+		depthTest: true,
+		depthWrite: true,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			sizeMult: 1,
+			topSize: 0,
+			bottomSize: 0,
+			height: 0,
+			slot: 0,
+			rotation: null,
+			vertexCount: 0
+		}
+	};
+}
+
+/**
+ * Snapshot one PropertyGround draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {PropertyGround} effect
+ * @param {number} tick game tick
+ * @param {boolean} keep true when the record outlives the draw (position and matrix copied)
+ * @returns {object} record
+ */
+function fillPropertyGroundDrawRecord(record, effect, tick, keep) {
+	const params = record.params;
+	let sizeMult = Math.sin(tick / (360 * Math.PI) + effect.sizeRandomize);
+	if (sizeMult < 0.5) {
+		sizeMult = 0.5;
+	}
+
+	record.pass = (effect.renderBeforeEntities ?? PropertyGround.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = effect.texture;
+	record.position = keep ? Array.from(effect.position) : effect.position;
+	record.fog = _fogUse;
+
+	params.sizeMult = sizeMult;
+	params.topSize = effect.topSize * sizeMult;
+	params.bottomSize = effect.bottomSize * sizeMult;
+	params.height = effect.height;
+	params.slot = effect.ix;
+	params.rotation = keep ? mat4.clone(_rotationMatrices[effect.ix]) : _rotationMatrices[effect.ix];
+	params.vertexCount = _verticeCount;
+
+	return record;
+}
+
+/**
+ * Send one PropertyGround record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record PropertyGround draw record
+ */
+function drawPropertyGroundRecord(gl, record) {
+	const uniform = _program.uniform;
+	const attribute = _program.attribute;
+	const params = record.params;
+
+	gl.uniformMatrix4fv(uniform.uRotationMat, false, params.rotation);
+
+	gl.bindTexture(gl.TEXTURE_2D, record.texture);
+
+	// Enable all attributes
+	gl.enableVertexAttribArray(attribute.aPosition);
+	gl.enableVertexAttribArray(attribute.aTextureCoord);
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, _buffer);
+
+	gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 4 * 5, 0);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 5, 3 * 4);
+
+	gl.uniform3fv(uniform.uPosition, record.position);
+	gl.uniform1f(uniform.uBottomSize, params.bottomSize);
+	gl.uniform1f(uniform.uTopSize, params.topSize);
+	gl.uniform1f(uniform.uHeight, params.height);
+
+	gl.drawArrays(gl.TRIANGLES, 0, params.vertexCount);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createPropertyGroundDrawRecord();
+
+/**
  * PropertyGround constructor
  *
  * @param {Array} position
@@ -127,32 +252,28 @@ class PropertyGround {
 	 * @param {object} wegl context
 	 */
 	render(gl, tick) {
-		const uniform = _program.uniform;
-		const attribute = _program.attribute;
-		let sizeMult = Math.sin(tick / (360 * Math.PI) + this.sizeRandomize);
-		if (sizeMult < 0.5) {
-			sizeMult = 0.5;
-		}
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const observed = _recordSinks.size > 0;
+		const record = fillPropertyGroundDrawRecord(
+			observed ? createPropertyGroundDrawRecord() : _scratchRecord,
+			this,
+			tick,
+			observed
+		);
+		_recordSinks.forEach(sink => sink(record));
+		drawPropertyGroundRecord(gl, record);
+	}
 
-		gl.uniformMatrix4fv(uniform.uRotationMat, false, _rotationMatrices[this.ix]);
-
-		gl.bindTexture(gl.TEXTURE_2D, this.texture);
-
-		// Enable all attributes
-		gl.enableVertexAttribArray(attribute.aPosition);
-		gl.enableVertexAttribArray(attribute.aTextureCoord);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, _buffer);
-
-		gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 4 * 5, 0);
-		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 5, 3 * 4);
-
-		gl.uniform3fv(uniform.uPosition, this.position);
-		gl.uniform1f(uniform.uBottomSize, this.bottomSize * sizeMult);
-		gl.uniform1f(uniform.uTopSize, this.topSize * sizeMult);
-		gl.uniform1f(uniform.uHeight, this.height);
-
-		gl.drawArrays(gl.TRIANGLES, 0, _verticeCount);
+	/**
+	 * Observe every PropertyGround draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -215,6 +336,7 @@ class PropertyGround {
 
 		// Fog settings
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

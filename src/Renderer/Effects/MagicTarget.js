@@ -146,6 +146,114 @@ CastSize[SkillId.AS_VENOMDUST] = [2];
 CastSize[SkillId.KO_HUUMARANKA] = [7];
 
 /**
+ * Normal alpha blending: the marker sets no blend function and draws with the pass default.
+ */
+const MAGIC_TARGET_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty MagicTarget draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * The marker sets no blend function (normal alpha) and no depth state (the
+ * before-entities pass state: depth test and write on). Its mesh is a size × size cell
+ * plane built from the ground heights around (x, y) (Altitude.generatePlane), so the
+ * record position is (x, y, 0) and z is unused.
+ *
+ * params:
+ *  - x, y: cast cell (floored by the plane builder), size: area side in cells
+ *  - cameraLatitude: uCameraLatitude
+ *  - rotation: the frame's uRotationMat (uploaded once per frame by beforeRender)
+ *  - vertexCount: size² · 6
+ *
+ * @returns {object} record
+ */
+function createMagicTargetDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'magic-target',
+		pass: 'before',
+		texture: null,
+		position: [0, 0, 0],
+		color: [1, 1, 1, 1],
+		blend: MAGIC_TARGET_BLEND,
+		depthTest: true,
+		depthWrite: true,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			x: 0,
+			y: 0,
+			size: 1,
+			cameraLatitude: 0,
+			rotation: null,
+			vertexCount: 0
+		}
+	};
+}
+
+/**
+ * Snapshot one MagicTarget draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {MagicTarget} effect
+ * @param {boolean} keep true when the record outlives the draw (matrix copied)
+ * @returns {object} record
+ */
+function fillMagicTargetDrawRecord(record, effect, keep) {
+	const params = record.params;
+
+	record.pass = (effect.renderBeforeEntities ?? MagicTarget.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = _texture;
+	record.position[0] = effect.x;
+	record.position[1] = effect.y;
+	record.fog = _fogUse;
+
+	params.x = effect.x;
+	params.y = effect.y;
+	params.size = effect.size;
+	params.cameraLatitude = Camera.getLatitude();
+	params.rotation = keep ? mat4.clone(_matrix) : _matrix;
+	params.vertexCount = effect.vertCount;
+
+	return record;
+}
+
+/**
+ * Send one MagicTarget record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record MagicTarget draw record
+ * @param {WebGLBuffer} buffer the instance's plane
+ */
+function drawMagicTargetRecord(gl, record, buffer) {
+	const attribute = _program.attribute;
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+	gl.uniform1f(_program.uniform.uCameraLatitude, record.params.cameraLatitude);
+
+	gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 5 * 4, 0);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 5 * 4, 3 * 4);
+	gl.drawArrays(gl.TRIANGLES, 0, record.params.vertexCount);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createMagicTargetDrawRecord();
+
+/**
  * MagicTarget constructor
  *
  * @param {number} position x
@@ -209,17 +317,29 @@ class MagicTarget {
 	 * @param {object} wegl context
 	 */
 	render(gl, tick) {
-		const attribute = _program.attribute;
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-
-		gl.uniform1f(_program.uniform.uCameraLatitude, Camera.getLatitude());
-
-		gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 5 * 4, 0);
-		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 5 * 4, 3 * 4);
-		gl.drawArrays(gl.TRIANGLES, 0, this.vertCount);
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const observed = _recordSinks.size > 0;
+		const record = fillMagicTargetDrawRecord(
+			observed ? createMagicTargetDrawRecord() : _scratchRecord,
+			this,
+			observed
+		);
+		_recordSinks.forEach(sink => sink(record));
+		drawMagicTargetRecord(gl, record, this.buffer);
 
 		this.needCleanUp = this.endTick < tick;
+	}
+
+	/**
+	 * Observe every MagicTarget draw as a backend-neutral record. Each observed draw gets
+	 * a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -278,6 +398,7 @@ class MagicTarget {
 
 		// Fog settings
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

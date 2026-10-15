@@ -43,6 +43,119 @@ const mat4 = glMatrix.mat4;
 const _matrix = mat4.create();
 
 /**
+ * Normal alpha blending: the marker sets no blend function and draws with the pass default.
+ */
+const LOCK_ON_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * Vertex count of the marker quad (2 triangles).
+ */
+const VERTEX_COUNT = 6;
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty LockOnTarget draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * The marker sets no blend function (normal alpha) and no depth state (the
+ * before-entities pass state: depth test and write on). The texture is pre-rotated 45°.
+ *
+ * color: [1, shade, shade, 1] (the shader multiplies green and blue by uColor = shade)
+ *
+ * params:
+ *  - shade: uColor, (20 − floor(elapsed / 20) % 20) / 20 (a red blink every 400 ms)
+ *  - size: uSize, (6 − clamp(elapsed / 50, 1, 5)) · 3 (shrinks from 15 to 3 over 250 ms)
+ *  - rotation: the frame's uRotationMat (uploaded once per frame by beforeRender)
+ *  - vertexCount
+ *
+ * @returns {object} record
+ */
+function createLockOnDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'lock-on',
+		pass: 'before',
+		texture: null,
+		position: null,
+		color: [1, 1, 1, 1],
+		blend: LOCK_ON_BLEND,
+		depthTest: true,
+		depthWrite: true,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			shade: 1,
+			size: 0,
+			rotation: null,
+			vertexCount: VERTEX_COUNT
+		}
+	};
+}
+
+/**
+ * Snapshot one LockOnTarget draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {LockOnTarget} effect
+ * @param {number} tick game tick
+ * @param {boolean} keep true when the record outlives the draw (position and matrix copied)
+ * @returns {object} record
+ */
+function fillLockOnDrawRecord(record, effect, tick, keep) {
+	const params = record.params;
+	let time = tick - effect.startTick;
+	let color = 20 - (Math.floor(time / 20) % 20);
+	color /= 20;
+
+	// Animation
+	time /= 50;
+	time = Math.max(time, 1);
+	time = Math.min(time, 5);
+
+	record.pass = (effect.renderBeforeEntities ?? LockOnTarget.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = _texture;
+	record.position = keep ? Array.from(effect.target.position) : effect.target.position;
+	record.color[1] = color;
+	record.color[2] = color;
+	record.fog = _fogUse;
+
+	params.shade = color;
+	params.size = (6 - time) * 3;
+	params.rotation = keep ? mat4.clone(_matrix) : _matrix;
+
+	return record;
+}
+
+/**
+ * Send one LockOnTarget record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record LockOnTarget draw record
+ */
+function drawLockOnRecord(gl, record) {
+	gl.uniform3fv(_program.uniform.uPosition, record.position);
+	gl.uniform1f(_program.uniform.uSize, record.params.size);
+	gl.uniform1f(_program.uniform.uColor, record.params.shade);
+
+	gl.drawArrays(gl.TRIANGLES, 0, record.params.vertexCount);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createLockOnDrawRecord();
+
+/**
  * LockOnTarget constructor
  *
  * @param {Entity} target entity
@@ -79,22 +192,25 @@ class LockOnTarget {
 	 * @param {object} wegl context
 	 */
 	render(gl, tick) {
-		let time = tick - this.startTick;
-		let color = 20 - (Math.floor(time / 20) % 20);
-		color /= 20;
-
-		// Animation
-		time /= 50;
-		time = Math.max(time, 1);
-		time = Math.min(time, 5);
-
-		gl.uniform3fv(_program.uniform.uPosition, this.target.position);
-		gl.uniform1f(_program.uniform.uSize, (6 - time) * 3);
-		gl.uniform1f(_program.uniform.uColor, color);
-
-		gl.drawArrays(gl.TRIANGLES, 0, 6);
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const observed = _recordSinks.size > 0;
+		const record = fillLockOnDrawRecord(observed ? createLockOnDrawRecord() : _scratchRecord, this, tick, observed);
+		_recordSinks.forEach(sink => sink(record));
+		drawLockOnRecord(gl, record);
 
 		this.needCleanUp = this.endTick < tick;
+	}
+
+	/**
+	 * Observe every LockOnTarget draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -185,6 +301,7 @@ class LockOnTarget {
 
 		// Fog settings
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

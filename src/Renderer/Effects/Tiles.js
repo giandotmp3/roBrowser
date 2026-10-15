@@ -34,10 +34,149 @@ export function loadTexture(gl, texture, cb) {
 	});
 }
 
+/**
+ * Normal alpha blending: tiles set no blend function and draw with the pass default.
+ */
+const TILE_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * Vertex count of one tile quad (2 triangles).
+ */
+const TILE_VERTEX_COUNT = 6;
+
+/**
+ * @var {boolean} scene fog state uploaded by the last tile beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * @var {Set<function>} record observers (FlatTexture and HoveringTexture draws)
+ */
+const _recordSinks = new Set();
+
+/**
+ * Create an empty tile draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * family 'flat-texture' (FlatTexture.render: depth test, write and correction off) or
+ * 'hovering-texture' (sets no depth state: the before-entities pass state, depth test
+ * and write on). Tiles set no blend function (normal alpha).
+ *
+ * params:
+ *  - size: uSize (FlatTexture.render never uploads it: 0 on its program)
+ *  - textureSize: the square canvas the texture is resampled into (rotated 180°)
+ *  - vertexCount
+ *
+ * color: rgb 1, alpha = the `alpha` uniform (never uploaded by FlatTexture.render: 0)
+ *
+ * @param {string} family
+ * @returns {object} record
+ */
+function createTileDrawRecord(family) {
+	const flat = family === 'flat-texture';
+	return {
+		kind: 'effect',
+		family,
+		pass: 'before',
+		texture: null,
+		position: null,
+		color: [1, 1, 1, flat ? 0 : 1],
+		blend: TILE_BLEND,
+		depthTest: !flat,
+		depthWrite: !flat,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			size: 0,
+			textureSize: 64,
+			vertexCount: TILE_VERTEX_COUNT
+		}
+	};
+}
+
+/**
+ * Fill the fields every tile record shares.
+ *
+ * @param {object} record to fill
+ * @param {object} effect tile instance
+ * @param {Array} position drawn position
+ * @param {boolean} keep true when the record outlives the draw (position copied)
+ * @returns {object} record
+ */
+function fillTileDrawRecord(record, effect, position, keep) {
+	const Ctor = effect.constructor;
+	record.pass = (effect.renderBeforeEntities ?? Ctor.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = Ctor._texture;
+	record.position = keep ? Array.from(position) : position;
+	record.fog = _fogUse;
+	record.params.textureSize = Ctor.textureSize;
+	return record;
+}
+
+/**
+ * @var {object} reused records when nobody observes (no per-draw allocation)
+ */
+const _scratchFlatRecord = createTileDrawRecord('flat-texture');
+const _scratchHoverRecord = createTileDrawRecord('hovering-texture');
+
+/**
+ * Send one FlatTexture record to the GPU and draw it (depth state from the record).
+ *
+ * @param {object} gl webgl context
+ * @param {object} record flat-texture draw record
+ * @param {object} program the class program
+ * @param {WebGLBuffer} buffer the class quad
+ */
+function drawFlatTileRecord(gl, record, program, buffer) {
+	gl.uniform3fv(program.uniform.uPosition, record.position);
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+	SpriteRenderer.runWithDepth(record.depthTest, record.depthWrite, record.depthCorrection, function () {
+		gl.drawArrays(gl.TRIANGLES, 0, record.params.vertexCount);
+	});
+}
+
+/**
+ * Send one HoveringTexture record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record hovering-texture draw record
+ * @param {object} program the class program
+ * @param {WebGLBuffer} buffer the class quad
+ */
+function drawHoverTileRecord(gl, record, program, buffer) {
+	gl.uniform3fv(program.uniform.uPosition, record.position);
+	gl.uniform1f(program.uniform.uSize, record.params.size);
+	gl.uniform1f(program.uniform.alpha, record.color[3]);
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+	gl.drawArrays(gl.TRIANGLES, 0, record.params.vertexCount);
+}
+
+/**
+ * Observe every FlatTexture / HoveringTexture draw as a backend-neutral record. Each
+ * observed draw gets a fresh record object, so sinks may keep it.
+ *
+ * @param {function} sink called with each draw record
+ * @returns {function} unsubscribe
+ */
+export function addRecordSink(sink) {
+	_recordSinks.add(sink);
+	return () => _recordSinks.delete(sink);
+}
+
 export const FlatTexture = (textureFilename, size = 64) =>
 	class {
 		static get renderBeforeEntities() {
 			return true;
+		}
+
+		static get textureSize() {
+			return size;
+		}
+
+		static addRecordSink(sink) {
+			return addRecordSink(sink);
 		}
 
 		static createShaderProgram(gl) {
@@ -102,6 +241,7 @@ export const FlatTexture = (textureFilename, size = 64) =>
 			gl.uniform1i(uniform.uDiffuse, 0); // Enable all attributes
 
 			gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+			_fogUse = !!(fog.use && fog.exist);
 			gl.uniform1f(uniform.uFogNear, fog.near);
 			gl.uniform1f(uniform.uFogFar, fog.far);
 			gl.uniform3fv(uniform.uFogColor, fog.color);
@@ -131,12 +271,16 @@ export const FlatTexture = (textureFilename, size = 64) =>
 		}
 
 		render(gl, tick) {
-			gl.uniform3fv(this.constructor._program.uniform.uPosition, this.position);
-			gl.bindBuffer(gl.ARRAY_BUFFER, this.constructor._buffer);
-
-			SpriteRenderer.runWithDepth(false, false, false, function () {
-				gl.drawArrays(gl.TRIANGLES, 0, 6);
-			});
+			// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+			const observed = _recordSinks.size > 0;
+			const record = fillTileDrawRecord(
+				observed ? createTileDrawRecord('flat-texture') : _scratchFlatRecord,
+				this,
+				this.position,
+				observed
+			);
+			_recordSinks.forEach(sink => sink(record));
+			drawFlatTileRecord(gl, record, this.constructor._program, this.constructor._buffer);
 		}
 	};
 
@@ -155,10 +299,16 @@ export const HoveringTexture = (textureFilename, effectSize = 1, alpha = 1) =>
 			const oddEven = this.ix % 2 === 0 ? Math.PI : 0;
 			const heightMult = Math.sin(oddEven + tick / (540 * Math.PI));
 			const position = [this.position[0], this.position[1], this.position[2] + 0.4 - 0.2 * heightMult];
-			gl.uniform3fv(this.constructor._program.uniform.uPosition, position);
-			gl.uniform1f(this.constructor._program.uniform.uSize, this.effectSize);
-			gl.uniform1f(this.constructor._program.uniform.alpha, this.alpha);
-			gl.bindBuffer(gl.ARRAY_BUFFER, this.constructor._buffer);
-			gl.drawArrays(gl.TRIANGLES, 0, 6);
+			const observed = _recordSinks.size > 0;
+			const record = fillTileDrawRecord(
+				observed ? createTileDrawRecord('hovering-texture') : _scratchHoverRecord,
+				this,
+				position,
+				false
+			);
+			record.color[3] = this.alpha;
+			record.params.size = this.effectSize;
+			_recordSinks.forEach(sink => sink(record));
+			drawHoverTileRecord(gl, record, this.constructor._program, this.constructor._buffer);
 		}
 	};

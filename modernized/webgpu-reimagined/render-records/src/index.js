@@ -39,3 +39,7 @@ export * from './effects/StrPlayer.js';
 export * from './effects/CylinderEffect.js';
 export * from './effects/QuadHornEffect.js';
 export * from './effects/SpriteBillboardEffect.js';
+export * from './effects/SphereEffect.js';
+export * from './effects/GroundTileEffect.js';
+export * from './effects/GroundRingEffect.js';
+export * from './effects/TargetMarkerEffect.js';

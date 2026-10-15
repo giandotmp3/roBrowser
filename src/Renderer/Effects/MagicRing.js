@@ -73,6 +73,119 @@ function generateMagicRing() {
 }
 
 /**
+ * Normal alpha blending: the effect sets no blend function and draws with the pass default.
+ */
+const RING_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty MagicRing draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * The ring sets no blend function (normal alpha) and no depth state (the after-entities
+ * pass state: depth test and write on). Its shader forces alpha 0.7.
+ *
+ * params:
+ *  - topSize, bottomSize, height: uTopSize / uBottomSize / uHeight
+ *  - rotation: the frame's uRotationMat (uploaded once per frame by beforeRender)
+ *  - vertexCount
+ *
+ * @returns {object} record
+ */
+function createMagicRingDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'magic-ring',
+		pass: 'after',
+		texture: null,
+		position: null,
+		color: [1, 1, 1, 0.7],
+		blend: RING_BLEND,
+		depthTest: true,
+		depthWrite: true,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			topSize: 0,
+			bottomSize: 0,
+			height: 0,
+			rotation: null,
+			vertexCount: 0
+		}
+	};
+}
+
+/**
+ * Snapshot one MagicRing draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {MagicRing} effect
+ * @param {boolean} keep true when the record outlives the draw (position and matrix copied)
+ * @returns {object} record
+ */
+function fillMagicRingDrawRecord(record, effect, keep) {
+	const params = record.params;
+
+	record.pass = (effect.renderBeforeEntities ?? MagicRing.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = effect.texture;
+	record.position = keep ? Array.from(effect.target.position) : effect.target.position;
+	record.fog = _fogUse;
+
+	params.topSize = effect.topSize;
+	params.bottomSize = effect.bottomSize;
+	params.height = effect.height;
+	params.rotation = keep ? mat4.clone(_matrix) : _matrix;
+	params.vertexCount = _verticeCount;
+
+	return record;
+}
+
+/**
+ * Send one MagicRing record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record MagicRing draw record
+ */
+function drawMagicRingRecord(gl, record) {
+	const uniform = _program.uniform;
+	const attribute = _program.attribute;
+	const params = record.params;
+
+	gl.bindTexture(gl.TEXTURE_2D, record.texture);
+
+	// Enable all attributes
+	gl.enableVertexAttribArray(attribute.aPosition);
+	gl.enableVertexAttribArray(attribute.aTextureCoord);
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, _buffer);
+
+	gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 4 * 5, 0);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 5, 3 * 4);
+
+	gl.uniform3fv(uniform.uPosition, record.position);
+	gl.uniform1f(uniform.uBottomSize, params.bottomSize);
+	gl.uniform1f(uniform.uTopSize, params.topSize);
+	gl.uniform1f(uniform.uHeight, params.height);
+
+	gl.drawArrays(gl.TRIANGLES, 0, params.vertexCount);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createMagicRingDrawRecord();
+
+/**
  * MagicRing constructor
  *
  * @param {Array} position
@@ -121,30 +234,28 @@ class MagicRing {
 	 * @param {object} wegl context
 	 */
 	render(gl, tick) {
-		const uniform = _program.uniform;
-		const attribute = _program.attribute;
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const observed = _recordSinks.size > 0;
+		const record = fillMagicRingDrawRecord(observed ? createMagicRingDrawRecord() : _scratchRecord, this, observed);
+		_recordSinks.forEach(sink => sink(record));
+		drawMagicRingRecord(gl, record);
 
-		gl.bindTexture(gl.TEXTURE_2D, this.texture);
-
-		// Enable all attributes
-		gl.enableVertexAttribArray(attribute.aPosition);
-		gl.enableVertexAttribArray(attribute.aTextureCoord);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, _buffer);
-
-		gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 4 * 5, 0);
-		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 5, 3 * 4);
-
-		gl.uniform3fv(uniform.uPosition, this.target.position);
-		gl.uniform1f(uniform.uBottomSize, this.bottomSize);
-		gl.uniform1f(uniform.uTopSize, this.topSize);
-		gl.uniform1f(uniform.uHeight, this.height);
-
-		gl.drawArrays(gl.TRIANGLES, 0, _verticeCount);
 		this.needCleanUp = this.endTick < tick;
 		if (!this.target.cast.display) {
 			this.needCleanUp = true;
 		}
+	}
+
+	/**
+	 * Observe every MagicRing draw as a backend-neutral record. Each observed draw gets a
+	 * fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -203,6 +314,7 @@ class MagicRing {
 
 		// Fog settings
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);
