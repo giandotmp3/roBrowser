@@ -17,6 +17,8 @@
  * @typedef {Object} AssetCachePort      MemoryManager-equivalent CPU cache
  * @property {(extensions: ReadonlyArray<string>) => void} purge
  *
+ * @typedef {import('./residency/Residency.js').FrameSourcePort} FrameSourcePort  Residency upload-on-miss (C-16)
+ *
  * @typedef {Object} SettingsPort        GraphicsSettings / MapPreferences / Configs reads
  * @property {(key: string) => any} get
  * @property {(key: string, value: any) => void} set

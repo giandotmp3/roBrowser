@@ -28,6 +28,7 @@ export class WebGL2Backend {
 	 *   scene: import('./ports.js').ScenePort & {rebuildMap(): void},
 	 *   now: () => number,
 	 *   uploader?: ConstructorParameters<typeof Residency>[0]['uploader'],
+	 *   frames?: import('./residency/Residency.js').FrameSourcePort,
 	 *   postTargets?: ConstructorParameters<typeof PostChain>[0]['targets']
 	 * }} ports
 	 */
@@ -50,7 +51,8 @@ export class WebGL2Backend {
 		this.state = new GLStateCache(gl);
 		this.residency = new Residency({
 			uploader: this._ports.uploader ?? new TextureArrayPools({ gl }),
-			now: this._ports.now
+			now: this._ports.now,
+			source: this._ports.frames ?? null
 		});
 		this.runs = new RunRenderer({ gl, state: this.state, residency: this.residency });
 		this.loss = new ContextLossController({
@@ -95,11 +97,21 @@ export class WebGL2Backend {
 		if (!this.running) {
 			return [];
 		}
+		this.residency.beginFrame();
 		const gpuPasses = {};
 		for (const [name, records] of Object.entries(frame.passes ?? {})) {
 			gpuPasses[name] = () => this.runs.draw(records, frame.view);
 		}
 		return runMapFrame(gpuPasses, this._ports.scene);
+	}
+
+	/**
+	 * NFR-05 idle eviction hook: scene calls it from its asset-eviction tick (R-CTX-010
+	 * step 24), between frames.
+	 * @param {number} [maxAgeMs]
+	 */
+	evictIdle(maxAgeMs) {
+		return this.residency ? this.residency.evictIdle(maxAgeMs) : { frames: 0, palettes: 0 };
 	}
 
 	/** R-CTX-005 */

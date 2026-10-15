@@ -12,7 +12,9 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"smoke:parity": "node smoke/run-parity.mjs",
-		"smoke:parity:aa": "node smoke/run-parity.mjs --aa"
+		"smoke:parity:aa": "node smoke/run-parity.mjs --aa",
+		"smoke:parity:entities": "node smoke/run-parity.mjs --page=entities",
+		"smoke:parity:entities:aa": "node smoke/run-parity.mjs --page=entities --aa"
 	},
 	"engines": {
 		"node": ">=22"

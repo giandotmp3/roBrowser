@@ -4,6 +4,8 @@
  * in the render-records shape (sizes and offsets in sprite pixels).
  */
 
+import { cameraMatrices } from './common.js';
+
 const NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
 const ADDITIVE = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE' });
 
@@ -113,60 +115,8 @@ export const CAMERA = Object.freeze({ target: [10, 10], distance: 30, pitch: 50,
 
 export const FOG = Object.freeze({ use: true, exist: true, near: 22, far: 40, color: [0.55, 0.6, 0.75] });
 
-const mul = (a, b) => {
-	const out = new Float32Array(16);
-	for (let c = 0; c < 4; c++) {
-		for (let r = 0; r < 4; r++) {
-			let s = 0;
-			for (let k = 0; k < 4; k++) {
-				s += a[k * 4 + r] * b[c * 4 + k];
-			}
-			out[c * 4 + r] = s;
-		}
-	}
-	return out;
-};
-const ident = () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-const translate = (x, y, z) => Object.assign(ident(), { 12: x, 13: y, 14: z });
-const rotX = deg => {
-	const r = (deg * Math.PI) / 180;
-	return Object.assign(ident(), { 5: Math.cos(r), 6: Math.sin(r), 9: -Math.sin(r), 10: Math.cos(r) });
-};
-const rotY = deg => {
-	const r = (deg * Math.PI) / 180;
-	return Object.assign(ident(), { 0: Math.cos(r), 2: -Math.sin(r), 8: Math.sin(r), 10: Math.cos(r) });
-};
-
 export function viewMatrices(width, height) {
-	const { target, distance, pitch, yaw, fovy } = CAMERA;
-	const modelView = [
-		translate(0, -1, -distance),
-		rotX(pitch),
-		rotY(yaw),
-		translate(-target[0] - 0.5, 0, -target[1] - 0.5)
-	].reduce(mul);
-	const f = 1 / Math.tan(((fovy / 2) * Math.PI) / 180);
-	const near = 1;
-	const far = 1000;
-	const projection = new Float32Array([
-		f / (width / height),
-		0,
-		0,
-		0,
-		0,
-		f,
-		0,
-		0,
-		0,
-		0,
-		(far + near) / (near - far),
-		-1,
-		0,
-		0,
-		(2 * far * near) / (near - far),
-		0
-	]);
-	return { modelView, projection };
+	return cameraMatrices(CAMERA, width, height);
 }
 
 function sprite(fields) {

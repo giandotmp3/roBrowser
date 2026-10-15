@@ -167,10 +167,11 @@ These were found at scaffold time and settled before phase 1.
   - World records (ground, water, models, GR2) are not seamed: these are static per map, and phase 3 consumes the `MAP_*` payloads directly.
   - Picking-rect widening by halo and trails.
 - **HITL round 2 (decided, implemented):** the proposed flags #34, #47, #51, #52, #53, #55, #56, #59, #60, #61 and #63 are fixed in render-records. Each is a narrowly scoped, named divergence in its record-diff; #61 is exact only up to the first respawn, because the fix changes how the RNG is consumed. On the SME items: #41/#49 invalid blend codes fall back to normal alpha, #57 the sphere fade is time-based, #54 is kept, FXAA uses the 3.11 subpixel term (subpix 0 = legacy), and the cursor table and water corners follow legacy. See the spec's final section.
-- **Next: phase 3b (gpu-webgl2).**
-  - Upload-on-miss and eviction in residency.
-  - Pixel parity plus draw counts on a real ~200-entity legacy record stream.
-  - Then the effect, world, GR2 and post-processing families on WebGL2.
+- **Phase 3b (gpu-webgl2 residency + real-stream parity): done.**
+  - Residency uploads on miss through a `FrameSourcePort` (C-16 `decodeSprFrame`). Layers are recycled through per-pool free lists, with LRU reclaim of layers the current frame does not draw. Palette rows are refcounted by their owners. `evictIdle` is the scene step-24 hook. `purgeAll` handles context loss and keeps owner counts. The contract is in `src/residency/Residency.js`; the unit tests are in `test/unit/residency.test.js`.
+  - `npm run smoke:parity:entities` runs the real legacy entity path (EntityManager → Entity → SpriteRenderer, unmodified, seams stubbed) on 200 entities. It captures the native record stream and replays it through gpu-webgl2. The result is 0 px diff on 3 frames (including fog, after full eviction, and after a context purge), with and without MSAA.
+  - Realistic batching is about 1.7×: 1052 → 648, 1043 → 594 and 954 → 537 draws. Runs mostly break on indexed ↔ RGBA and on depth-write changes; see `gpu-webgl2/smoke/README.md`.
+- **Next:** a mixed-class sprite run (a per-instance class flag) to remove the texture-class breaks; then the effect, world, GR2 and post-processing families on WebGL2.
 
 ## Still open
 

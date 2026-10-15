@@ -31,6 +31,8 @@ export class RunRenderer {
 		this.lastDrawCalls = 0;
 		/** Runs of the last `draw()`, for diagnostics. */
 		this.lastRuns = [];
+		/** Frames and palettes uploaded on miss by the last `draw()`. */
+		this.lastUploads = 0;
 	}
 
 	/**
@@ -39,6 +41,9 @@ export class RunRenderer {
 	 */
 	draw(records, view) {
 		this.lastDrawCalls = 0;
+		// Upload-on-miss before anything is bound: a first upload may create a pool
+		// texture, and creating or filling one rebinds texture units.
+		this.lastUploads = this.residency.prepare?.(records) ?? 0;
 		this.lastRuns = splitRuns(records);
 		let spritesBound = false;
 		for (const run of this.lastRuns) {

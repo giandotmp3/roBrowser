@@ -12,6 +12,7 @@ import { Residency } from '../src/residency/Residency.js';
 import { TextureArrayPools } from '../src/residency/TextureArrayPools.js';
 import { RunRenderer } from '../src/batching/RunRenderer.js';
 import { CAMERA, FOG, FRAMES, PALETTES, buildRecords, viewMatrices } from './scene.js';
+import { createPageKit } from './common.js';
 
 const params = new URLSearchParams(location.search);
 const WIDTH = Number(params.get('w') ?? 320);
@@ -20,52 +21,13 @@ const ANTIALIAS = params.get('aa') === '1';
 const TOLERANCE = Number(params.get('tol') ?? 2);
 const CLEAR = [0.12, 0.14, 0.12, 1];
 
-function makeCanvas(label) {
-	const canvas = document.createElement('canvas');
-	canvas.width = WIDTH;
-	canvas.height = HEIGHT;
-	canvas.title = label;
-	document.getElementById('canvases').append(canvas);
-	const gl = canvas.getContext('webgl2', {
-		alpha: false,
-		depth: true,
-		stencil: false,
-		antialias: ANTIALIAS,
-		premultipliedAlpha: false,
-		preserveDrawingBuffer: true
-	});
-	if (!gl) {
-		throw new Error('WebGL2 unavailable');
-	}
-	return { canvas, gl };
-}
-
-/** Count draw calls on one context without touching the renderers. */
-function countDraws(gl) {
-	const counts = { drawArrays: 0, drawArraysInstanced: 0 };
-	for (const name of Object.keys(counts)) {
-		const original = gl[name].bind(gl);
-		gl[name] = (...args) => {
-			counts[name]++;
-			return original(...args);
-		};
-	}
-	return counts;
-}
-
-function clear(gl) {
-	gl.viewport(0, 0, WIDTH, HEIGHT);
-	gl.clearColor(...CLEAR);
-	gl.clearDepth(1);
-	gl.depthMask(true);
-	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-}
-
-function readPixels(gl) {
-	const out = new Uint8Array(WIDTH * HEIGHT * 4);
-	gl.readPixels(0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, out);
-	return out;
-}
+const { makeCanvas, countDraws, clear, readPixels, compare, diffImage } = createPageKit({
+	width: WIDTH,
+	height: HEIGHT,
+	antialias: ANTIALIAS,
+	tolerance: TOLERANCE,
+	clearColor: CLEAR
+});
 
 /* ------------------------------------------------------------------ legacy */
 
@@ -185,72 +147,6 @@ function drawModern(gl, residency, records, view, fog) {
 	});
 	gl.finish();
 	return runs;
-}
-
-/* ----------------------------------------------------------------- compare */
-
-function compare(a, b) {
-	let maxDiff = 0;
-	let differing = 0;
-	let overTolerance = 0;
-	let covered = 0;
-	const histogram = new Array(9).fill(0); // max channel diff buckets: 0,1,2,3,4-7,8-15,16-63,64-127,128+
-	const bg = CLEAR.map(v => Math.round(v * 255));
-	for (let i = 0; i < a.length; i += 4) {
-		let d = 0;
-		for (let c = 0; c < 4; c++) {
-			d = Math.max(d, Math.abs(a[i + c] - b[i + c]));
-		}
-		if (a[i] !== bg[0] || a[i + 1] !== bg[1] || a[i + 2] !== bg[2]) {
-			covered++;
-		}
-		maxDiff = Math.max(maxDiff, d);
-		if (d > 0) {
-			differing++;
-		}
-		if (d > TOLERANCE) {
-			overTolerance++;
-		}
-		const bucket = d < 4 ? d : d < 8 ? 4 : d < 16 ? 5 : d < 64 ? 6 : d < 128 ? 7 : 8;
-		histogram[bucket]++;
-	}
-	const pixels = a.length / 4;
-	return {
-		pixels,
-		coveredPct: (100 * covered) / pixels,
-		maxDiff,
-		differing,
-		differingPct: (100 * differing) / pixels,
-		overTolerance,
-		overTolerancePct: (100 * overTolerance) / pixels,
-		histogram
-	};
-}
-
-/** Diff image (amplified ×16, red) as a data URL, flipped to screen orientation. */
-function diffImage(a, b) {
-	const canvas = document.createElement('canvas');
-	canvas.width = WIDTH;
-	canvas.height = HEIGHT;
-	const ctx = canvas.getContext('2d');
-	const img = ctx.createImageData(WIDTH, HEIGHT);
-	for (let y = 0; y < HEIGHT; y++) {
-		for (let x = 0; x < WIDTH; x++) {
-			const s = ((HEIGHT - 1 - y) * WIDTH + x) * 4;
-			const d = (y * WIDTH + x) * 4;
-			let m = 0;
-			for (let c = 0; c < 3; c++) {
-				m = Math.max(m, Math.abs(a[s + c] - b[s + c]));
-			}
-			img.data[d] = Math.min(255, m * 16);
-			img.data[d + 1] = a[s + 1] >> 2;
-			img.data[d + 2] = a[s + 2] >> 2;
-			img.data[d + 3] = 255;
-		}
-	}
-	ctx.putImageData(img, 0, 0);
-	document.getElementById('canvases').append(canvas);
-	return canvas.toDataURL('image/png');
 }
 
 /* -------------------------------------------------------------------- main */

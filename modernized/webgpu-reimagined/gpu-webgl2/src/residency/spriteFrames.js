@@ -52,6 +52,47 @@ export function convertRgbaFrame(frame) {
 }
 
 /**
+ * Centre a tightly packed RGBA image in a power-of-two canvas (legacy Sprite.compile
+ * padding: start = floor((pot − size) / 2), the rest transparent black).
+ * @param {Uint8Array} rgba  width×height×4, top-down
+ * @param {number} width
+ * @param {number} height
+ */
+export function centerRgbaPot(rgba, width, height) {
+	const potW = nextPot(width);
+	const potH = nextPot(height);
+	if (potW === width && potH === height) {
+		return { width, height, data: rgba };
+	}
+	const out = new Uint8Array(potW * potH * 4);
+	const ox = Math.floor((potW - width) / 2);
+	const oy = Math.floor((potH - height) / 2);
+	for (let y = 0; y < height; y++) {
+		out.set(rgba.subarray(y * width * 4, (y + 1) * width * 4), ((y + oy) * potW + ox) * 4);
+	}
+	return { width: potW, height: potH, data: out };
+}
+
+/**
+ * C-16 decode for the residency upload-on-miss source: one raw SPR frame (as the
+ * legacy loader reads it, before `Sprite.compile`) to the texels legacy
+ * `Core/Client.js` uploads: indexed → R8 indices, POT-centred, magenta → 0
+ * (R-SPR-014); RGBA (bottom-up ABGR) → top-down RGBA, POT-centred (R-SPR-016).
+ * @param {{type: number, width: number, height: number, data: Uint8Array}} frame  type 0 indexed, 1 RGBA
+ * @param {Uint8Array} palette  256×4 RGBA (the sprite's own palette: the magenta key uses it)
+ * @returns {import('./Residency.js').ResidentImage}
+ */
+export function decodeSprFrame(frame, palette) {
+	if (frame.type === 0) {
+		const { width, height, data } = padIndexedFrame({ ...frame, indices: frame.data }, palette);
+		return { format: 'r8', width, height, data };
+	}
+	const rgba = convertRgbaFrame({ width: frame.width, height: frame.height, abgr: frame.data });
+	const { width, height, data } = centerRgbaPot(rgba, frame.width, frame.height);
+	return { format: 'rgba8', width, height, data };
+}
+
+/**
  * R-SPR-014 filtering: indexed → NEAREST (the shader does manual palette
  * bilinear); RGBA → LINEAR unless pixelPerfectSprites forces NEAREST.
  * @param {'indexed'|'rgba'} textureClass
