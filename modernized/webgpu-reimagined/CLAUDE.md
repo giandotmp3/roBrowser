@@ -182,10 +182,22 @@ These were found at scaffold time and settled before phase 1.
 - **gpu-webgl2 STR/3D/2D effects: done.**
   - 0 px vs the real legacy effect classes on five frames, with and without MSAA (`npm run smoke:parity:effects`).
   - STR fog (the R-EFX-010 fix) is checked against a CPU fog mix and confined to the STR footprint.
+- **gpu-webgpu post chain: done.**
+  - All ten passes run as WGSL mirrors of the legacy GLSL, across 26 configurations (`npm run smoke:parity:post`).
+  - Gates: the 9-pass "all on" config is 0.058 %, gated at 0.1 % (FXAA branch flips); FXAA at the default subpix setting is checked against the CPU reference.
+- **gpu-webgpu STR/3D/2D effects: done.** ≤0.014 % without MSAA. The native-orientation MSAA gate is 0.75 %, because ANGLE's flipped default framebuffer mirrors the sample pattern; flipped, it is ≤0.023 %.
+- **gpu-webgpu backend frame loop, capture and device loss: done.**
+  - `npm run smoke:parity:backend` covers end-to-end legacy entities, effects and PostProcess.
+  - A real `device.destroy()` mid-run recovers, and the first frame on the new device equals the pre-loss frame.
+  - Post frames are gated at 1 % (depth24 vs legacy's depth16 FBO); a depth16 rerun is ≤0.05 %.
+  - R-CTX-007, C-19 and C-20 are promoted.
+- **gpu-webgl2 remaining effect families: done.**
+  - 15 GL programs, 0 px vs the real legacy classes on five frames (`npm run smoke:parity:effects2`), with 5–8× fewer draws.
+  - The FXAA threshold fallback is aligned across backends.
 - **Next:**
-  - The remaining effect families on WebGL2: cylinder, quadhorn, rsm, auras, spheres, tiles, rings, targets, rain puddles, waterfall.
-  - The WebGPU post chain (in progress).
-  - Then effects on WebGPU, and world/GR2 on both backends.
+  - The remaining effect families on WebGPU.
+  - World rendering (ground, water, models, occluder fade) on gpu-webgl2 (in progress), then on WebGPU.
+  - GR2 on both backends.
 
 ## Still open
 
