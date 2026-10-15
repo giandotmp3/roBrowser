@@ -27,9 +27,358 @@ const blendMode = {};
 const mat4 = glMatrix.mat4;
 
 /**
- * @var {mat4} rotation matrix
+ * Backend-neutral factor names of the GL-order blendMode table (same order as blendMode).
  */
-const _matrix = mat4.create();
+const BLEND_FACTOR = Object.freeze({
+	1: 'ZERO',
+	2: 'ONE',
+	3: 'SRC_COLOR',
+	4: 'ONE_MINUS_SRC_COLOR',
+	5: 'DST_COLOR',
+	6: 'ONE_MINUS_DST_COLOR',
+	7: 'SRC_ALPHA',
+	8: 'ONE_MINUS_SRC_ALPHA',
+	9: 'DST_ALPHA',
+	10: 'ONE_MINUS_DST_ALPHA',
+	11: 'CONSTANT_COLOR',
+	12: 'ONE_MINUS_CONSTANT_COLOR',
+	13: 'CONSTANT_ALPHA',
+	14: 'ONE_MINUS_CONSTANT_ALPHA',
+	15: 'SRC_ALPHA_SATURATE'
+});
+
+/**
+ * Normal alpha blending (blendMode 0, unset or out of range).
+ */
+const BLEND_NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * @var {object} cached blend states by blendMode (allocation-free per draw)
+ */
+const _blendStates = {};
+
+/**
+ * Unified blend state of a blendMode (source is always SRC_ALPHA), or null for an
+ * in-range code missing from the table (the GL call then receives undefined).
+ *
+ * @param {number} mode effect blendMode
+ * @returns {object|null} { src, dst } factor names
+ */
+function cylinderBlendState(mode) {
+	if (!(mode > 0 && mode < 16)) {
+		return BLEND_NORMAL;
+	}
+	if (!(mode in _blendStates)) {
+		_blendStates[mode] = mode in BLEND_FACTOR ? Object.freeze({ src: 'SRC_ALPHA', dst: BLEND_FACTOR[mode] }) : null;
+	}
+	return _blendStates[mode];
+}
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Animation mode of an effect (legacy loose comparison: '1' == 1), 0 when none.
+ *
+ * @param {*} animation effect animation
+ * @returns {number} 0..5
+ */
+function animationMode(animation) {
+	for (let mode = 1; mode <= 5; mode++) {
+		if (animation == mode) {
+			return mode;
+		}
+	}
+	return 0;
+}
+
+/**
+ * Create an empty cylinder draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * params:
+ *  - topSize, bottomSize, height: animated shape (uTopSize, uBottomSize, uHeight)
+ *  - baseTopSize, baseBottomSize, baseHeight: EffectTable shape before animation
+ *  - animation (0..5), elapsed (tick - startTick), duration (endTick - startTick)
+ *  - zIndex: clip-space z bias
+ *  - rotate, rotation: whether the rotation matrix applies, and the matrix
+ *  - totalCircleSides, circleSides, repeatTextureX: mesh key; vertexCount
+ *  - textureRepeat: texture wrap S set to REPEAT (repeatTextureX > 1)
+ *  - blendMode: raw GL-order code
+ *
+ * @returns {object} record
+ */
+function createCylinderDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'cylinder',
+		pass: 'after',
+		texture: null,
+		position: [0, 0, 0],
+		color: new Float32Array(4),
+		blend: BLEND_NORMAL,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			topSize: 0,
+			bottomSize: 0,
+			height: 0,
+			baseTopSize: 0,
+			baseBottomSize: 0,
+			baseHeight: 0,
+			animation: 0,
+			elapsed: 0,
+			duration: 0,
+			zIndex: 0,
+			rotate: false,
+			rotation: mat4.create(),
+			totalCircleSides: 0,
+			circleSides: 0,
+			repeatTextureX: 1,
+			vertexCount: 0,
+			textureRepeat: false,
+			blendMode: 0
+		}
+	};
+}
+
+/**
+ * Snapshot one cylinder draw into a record. Updates the effect's alpha like the
+ * legacy render did.
+ *
+ * @param {object} record to fill
+ * @param {Cylinder} effect
+ * @param {number} tick game tick
+ * @returns {object} record
+ */
+function fillCylinderDrawRecord(record, effect, tick) {
+	const params = record.params;
+	const renderCount = tick - effect.startTick;
+	const duration = effect.endTick - effect.startTick;
+	const animation = animationMode(effect.animation);
+	let height = effect.height;
+	let topSize = effect.topSize;
+	let bottomSize = effect.bottomSize;
+
+	if (animation === 1) {
+		if (duration > 1000) {
+			if (renderCount <= 1000) {
+				height = (renderCount / 1000) * effect.height;
+			}
+		} else {
+			height = (renderCount / duration) * effect.height;
+		}
+	} else if (animation === 2) {
+		if (duration > 1000) {
+			if (renderCount <= 1000) {
+				topSize = (renderCount / 1000) * effect.topSize;
+			}
+		} else {
+			topSize = (renderCount / duration) * effect.topSize;
+		}
+	} else if (animation === 3) {
+		bottomSize = (1 - renderCount / duration) * effect.bottomSize;
+		topSize = (1 - renderCount / duration) * effect.topSize;
+		if (renderCount < duration / 2) {
+			height = (renderCount * effect.height) / (duration / 2);
+		} else if (renderCount > duration / 2) {
+			height = ((duration - renderCount) * effect.height) / (duration / 2);
+		}
+	} else if (animation === 4) {
+		bottomSize = (renderCount / duration) * effect.bottomSize;
+		if (bottomSize < 0) {
+			bottomSize = 0;
+		}
+		topSize = (renderCount / duration) * effect.topSize;
+		if (topSize < 0) {
+			topSize = 0;
+		}
+	} else if (animation === 5) {
+		if (renderCount < duration / 2) {
+			height = ((renderCount * 2) / duration) * effect.height;
+		} else {
+			height = ((duration - renderCount) * effect.height) / (duration / 2);
+		}
+	}
+
+	effect.color[3] = effect.alphaMax;
+
+	if (effect.fade) {
+		if (renderCount < duration / 4) {
+			effect.color[3] = (renderCount * effect.alphaMax) / (duration / 4);
+		} else if (renderCount > duration / 2 + duration / 4) {
+			effect.color[3] = ((duration - renderCount) * effect.alphaMax) / (duration / 4);
+		}
+	}
+
+	const position = record.position;
+	position[0] = effect.position[0];
+	position[1] = effect.position[1];
+	position[2] = effect.position[2];
+
+	const matrix = params.rotation;
+	params.rotate = !!(
+		effect.rotate ||
+		effect.angleX ||
+		effect.angleY ||
+		effect.angleZ ||
+		effect.rotateWithCamera ||
+		effect.fixedPerspective
+	);
+	mat4.identity(matrix);
+
+	if (params.rotate) {
+		if (effect.rotate) {
+			mat4.rotateY(matrix, matrix, (tick / 4 / 180) * Math.PI);
+		}
+
+		if (effect.angleX) {
+			mat4.rotateX(matrix, matrix, (effect.angleX / 180) * Math.PI);
+		}
+		if (effect.angleY) {
+			mat4.rotateY(matrix, matrix, (effect.angleY / 180) * Math.PI);
+		}
+		if (effect.angleZ) {
+			mat4.rotateZ(matrix, matrix, (effect.angleZ / 180) * Math.PI);
+		}
+
+		if (effect.rotateWithCamera || effect.fixedPerspective) {
+			let magic = effect.posY;
+
+			if (effect.fixedPerspective) {
+				const vcRad = ((Camera.angle[0] - 180) * Math.PI) / 180;
+				if (effect.posZ) {
+					position[2] += effect.posZ * Math.cos(vcRad) - effect.posY * Math.sin(vcRad);
+					magic = effect.posY * Math.sin(vcRad) + effect.posZ * Math.sin(vcRad);
+				}
+				mat4.rotateX(matrix, matrix, vcRad);
+			}
+
+			const hcRad = (Camera.angle[1] * Math.PI) / 180;
+			if (effect.posX || effect.posY) {
+				position[0] += effect.posX * Math.cos(hcRad) - magic * Math.sin(hcRad);
+				position[1] += magic * Math.cos(hcRad) + effect.posX * Math.sin(hcRad);
+			}
+			mat4.rotateY(matrix, matrix, hcRad);
+		} else {
+			position[0] += effect.posX;
+			position[1] += effect.posY;
+			position[2] += effect.posZ;
+		}
+	} else {
+		position[0] += effect.posX;
+		position[1] += effect.posY;
+		position[2] += effect.posZ;
+	}
+
+	record.pass = (effect.renderBeforeEntities ?? Cylinder.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = effect.texture;
+	record.color.set(effect.color);
+	record.blend = cylinderBlendState(effect.blendMode);
+	record.fog = _fogUse;
+
+	params.topSize = topSize;
+	params.bottomSize = bottomSize;
+	params.height = height;
+	params.baseTopSize = effect.topSize;
+	params.baseBottomSize = effect.bottomSize;
+	params.baseHeight = effect.height;
+	params.animation = animation;
+	params.elapsed = renderCount;
+	params.duration = duration;
+	params.zIndex = effect.zIndex;
+	params.totalCircleSides = effect.totalCircleSides;
+	params.circleSides = effect.circleSides;
+	params.repeatTextureX = effect.repeatTextureX;
+	params.vertexCount = effect.verticeCount;
+	params.textureRepeat = effect.repeatTextureX > 1;
+	params.blendMode = effect.blendMode;
+
+	return record;
+}
+
+/**
+ * Send one cylinder record to the GPU and draw it. The shape uniforms are uploaded in
+ * the legacy order, including the writes the animation overrides before the draw.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record cylinder draw record
+ * @param {WebGLBuffer} buffer the effect's mesh
+ */
+function drawCylinderRecord(gl, record, buffer) {
+	const uniform = _program.uniform;
+	const attribute = _program.attribute;
+	const params = record.params;
+
+	gl.bindTexture(gl.TEXTURE_2D, record.texture);
+
+	if (params.textureRepeat) {
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+	}
+
+	gl.enableVertexAttribArray(attribute.aPosition);
+	gl.enableVertexAttribArray(attribute.aTextureCoord);
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+	gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 4 * 5, 0);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 5, 3 * 4);
+
+	gl.uniform1f(uniform.uBottomSize, params.baseBottomSize);
+	gl.uniform1f(uniform.uZindex, params.zIndex);
+
+	if (params.animation === 3) {
+		gl.uniform1f(uniform.uHeight, params.baseHeight);
+		gl.uniform1f(uniform.uBottomSize, params.bottomSize);
+		gl.uniform1f(uniform.uTopSize, params.topSize);
+		if (params.elapsed < params.duration / 2 || params.elapsed > params.duration / 2) {
+			gl.uniform1f(uniform.uHeight, params.height);
+		}
+	} else if (params.animation === 4) {
+		gl.uniform1f(uniform.uHeight, params.height);
+		gl.uniform1f(uniform.uBottomSize, params.bottomSize);
+		gl.uniform1f(uniform.uTopSize, params.topSize);
+	} else {
+		gl.uniform1f(uniform.uHeight, params.height);
+		gl.uniform1f(uniform.uTopSize, params.topSize);
+	}
+
+	gl.uniform4fv(uniform.uSpriteRendererColor, record.color);
+
+	if (params.blendMode > 0 && params.blendMode < 16) {
+		gl.blendFunc(gl.SRC_ALPHA, blendMode[params.blendMode]);
+	} else {
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	}
+
+	if (params.rotate) {
+		gl.uniform1i(uniform.uRotate, true);
+		gl.uniformMatrix4fv(uniform.uRotationMat, false, params.rotation);
+	} else {
+		gl.uniform1i(uniform.uRotate, false);
+	}
+
+	gl.uniform3fv(uniform.uPosition, record.position);
+
+	SpriteRenderer.runWithDepth(record.depthTest, record.depthWrite, !record.depthCorrection, () => {
+		gl.drawArrays(gl.TRIANGLES, 0, params.vertexCount);
+	});
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createCylinderDrawRecord();
 
 /*
  * Sets how many sides the base "circle" of the cylinder has.
@@ -197,6 +546,7 @@ class Cylinder {
 	 * @param {object} webgl context
 	 */
 	free(gl) {
+		// Legacy: the per-instance mesh buffer (this.buffer) is not deleted here.
 		this.ready = false;
 	}
 
@@ -206,168 +556,28 @@ class Cylinder {
 	 * @param {object} wegl context
 	 */
 	render(gl, tick) {
-		const renderCount = tick - this.startTick;
-		const duration = this.endTick - this.startTick;
-		const uniform = _program.uniform;
-		const attribute = _program.attribute;
-
-		gl.bindTexture(gl.TEXTURE_2D, this.texture);
-
-		if (this.repeatTextureX > 1) {
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-		}
-
-		gl.enableVertexAttribArray(attribute.aPosition);
-		gl.enableVertexAttribArray(attribute.aTextureCoord);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-
-		gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 4 * 5, 0);
-		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 5, 3 * 4);
-
-		gl.uniform1f(uniform.uBottomSize, this.bottomSize);
-		gl.uniform1f(uniform.uZindex, this.zIndex);
-
-		if (this.animation == 1) {
-			if (duration > 1000) {
-				if (renderCount <= 1000) {
-					gl.uniform1f(uniform.uHeight, (renderCount / 1000) * this.height);
-				} else {
-					gl.uniform1f(uniform.uHeight, this.height);
-				}
-			} else {
-				gl.uniform1f(uniform.uHeight, (renderCount / duration) * this.height);
-			}
-			gl.uniform1f(uniform.uTopSize, this.topSize);
-		} else if (this.animation == 2) {
-			gl.uniform1f(uniform.uHeight, this.height);
-			if (duration > 1000) {
-				if (renderCount <= 1000) {
-					gl.uniform1f(uniform.uTopSize, (renderCount / 1000) * this.topSize);
-				} else {
-					gl.uniform1f(uniform.uTopSize, this.topSize);
-				}
-			} else {
-				gl.uniform1f(uniform.uTopSize, (renderCount / duration) * this.topSize);
-			}
-		} else if (this.animation == 3) {
-			gl.uniform1f(uniform.uHeight, this.height);
-			gl.uniform1f(uniform.uBottomSize, (1 - renderCount / duration) * this.bottomSize);
-			gl.uniform1f(uniform.uTopSize, (1 - renderCount / duration) * this.topSize);
-			if (renderCount < duration / 2) {
-				gl.uniform1f(uniform.uHeight, (renderCount * this.height) / (duration / 2));
-			} else if (renderCount > duration / 2) {
-				gl.uniform1f(uniform.uHeight, ((duration - renderCount) * this.height) / (duration / 2));
-			}
-		} else if (this.animation == 4) {
-			gl.uniform1f(uniform.uHeight, this.height);
-			let bottomSize = (renderCount / duration) * this.bottomSize;
-			if (bottomSize < 0) {
-				bottomSize = 0;
-			}
-			let topSize = (renderCount / duration) * this.topSize;
-			if (topSize < 0) {
-				topSize = 0;
-			}
-			gl.uniform1f(uniform.uBottomSize, bottomSize);
-			gl.uniform1f(uniform.uTopSize, topSize);
-		} else if (this.animation == 5) {
-			if (renderCount < duration / 2) {
-				gl.uniform1f(uniform.uHeight, ((renderCount * 2) / duration) * this.height);
-			} else {
-				gl.uniform1f(uniform.uHeight, ((duration - renderCount) * this.height) / (duration / 2));
-			}
-			gl.uniform1f(uniform.uTopSize, this.topSize);
-		} else {
-			gl.uniform1f(uniform.uHeight, this.height);
-			gl.uniform1f(uniform.uTopSize, this.topSize);
-		}
-
-		this.color[3] = this.alphaMax;
-
-		if (this.fade) {
-			if (renderCount < duration / 4) {
-				this.color[3] = (renderCount * this.alphaMax) / (duration / 4);
-			} else if (renderCount > duration / 2 + duration / 4) {
-				this.color[3] = ((duration - renderCount) * this.alphaMax) / (duration / 4);
-			}
-		}
-
-		gl.uniform4fv(uniform.uSpriteRendererColor, this.color);
-
-		if (this.blendMode > 0 && this.blendMode < 16) {
-			gl.blendFunc(gl.SRC_ALPHA, blendMode[this.blendMode]);
-		} else {
-			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-		}
-
-		const currentPosition = [this.position[0], this.position[1], this.position[2]];
-
-		if (
-			this.rotate ||
-			this.angleX ||
-			this.angleY ||
-			this.angleZ ||
-			this.rotateWithCamera ||
-			this.fixedPerspective
-		) {
-			mat4.identity(_matrix);
-
-			if (this.rotate) {
-				mat4.rotateY(_matrix, _matrix, (tick / 4 / 180) * Math.PI);
-			}
-
-			if (this.angleX) {
-				mat4.rotateX(_matrix, _matrix, (this.angleX / 180) * Math.PI);
-			}
-			if (this.angleY) {
-				mat4.rotateY(_matrix, _matrix, (this.angleY / 180) * Math.PI);
-			}
-			if (this.angleZ) {
-				mat4.rotateZ(_matrix, _matrix, (this.angleZ / 180) * Math.PI);
-			}
-
-			if (this.rotateWithCamera || this.fixedPerspective) {
-				let magic = this.posY;
-
-				if (this.fixedPerspective) {
-					const vcRad = ((Camera.angle[0] - 180) * Math.PI) / 180;
-					if (this.posZ) {
-						currentPosition[2] += this.posZ * Math.cos(vcRad) - this.posY * Math.sin(vcRad);
-						magic = this.posY * Math.sin(vcRad) + this.posZ * Math.sin(vcRad);
-					}
-					mat4.rotateX(_matrix, _matrix, vcRad);
-				}
-
-				const hcRad = (Camera.angle[1] * Math.PI) / 180;
-				if (this.posX || this.posY) {
-					currentPosition[0] += this.posX * Math.cos(hcRad) - magic * Math.sin(hcRad);
-					currentPosition[1] += magic * Math.cos(hcRad) + this.posX * Math.sin(hcRad);
-				}
-				mat4.rotateY(_matrix, _matrix, hcRad);
-			} else {
-				currentPosition[0] += this.posX;
-				currentPosition[1] += this.posY;
-				currentPosition[2] += this.posZ;
-			}
-
-			gl.uniform1i(uniform.uRotate, true);
-			gl.uniformMatrix4fv(uniform.uRotationMat, false, _matrix);
-		} else {
-			currentPosition[0] += this.posX;
-			currentPosition[1] += this.posY;
-			currentPosition[2] += this.posZ;
-			gl.uniform1i(uniform.uRotate, false);
-		}
-
-		gl.uniform3fv(uniform.uPosition, currentPosition);
-
-		const self = this;
-		SpriteRenderer.runWithDepth(true, false, true, () => {
-			gl.drawArrays(gl.TRIANGLES, 0, self.verticeCount);
-		});
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const record = fillCylinderDrawRecord(
+			_recordSinks.size ? createCylinderDrawRecord() : _scratchRecord,
+			this,
+			tick
+		);
+		_recordSinks.forEach(sink => sink(record));
+		drawCylinderRecord(gl, record, this.buffer);
 
 		this.needCleanUp = this.endTick < tick;
+	}
+
+	/**
+	 * Observe every cylinder draw as a backend-neutral record. Each observed draw gets
+	 * a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -432,6 +642,7 @@ class Cylinder {
 
 		// Fog settings
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

@@ -39,12 +39,298 @@ const texCoords = [
 
 const rand = (min, max) => parseFloat(Math.min(min + Math.random() * (max - min), max).toFixed(3));
 
+/**
+ * Backend-neutral factor names of the GL-order blendMode table (same order as blendMode).
+ */
+const BLEND_FACTOR = Object.freeze({
+	1: 'ZERO',
+	2: 'ONE',
+	3: 'SRC_COLOR',
+	4: 'ONE_MINUS_SRC_COLOR',
+	5: 'DST_COLOR',
+	6: 'ONE_MINUS_DST_COLOR',
+	7: 'SRC_ALPHA',
+	8: 'ONE_MINUS_SRC_ALPHA',
+	9: 'DST_ALPHA',
+	10: 'ONE_MINUS_DST_ALPHA',
+	11: 'CONSTANT_COLOR',
+	12: 'ONE_MINUS_CONSTANT_COLOR',
+	13: 'CONSTANT_ALPHA',
+	14: 'ONE_MINUS_CONSTANT_ALPHA',
+	15: 'SRC_ALPHA_SATURATE'
+});
+
+/**
+ * Normal alpha blending (blendMode out of range).
+ */
+const BLEND_NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * @var {object} cached blend states by blendMode (allocation-free per draw)
+ */
+const _blendStates = {};
+
+/**
+ * Unified blend state of a blendMode (source is always SRC_ALPHA), or null for an
+ * in-range code missing from the table (the GL call then receives undefined).
+ *
+ * @param {number} mode effect blendMode
+ * @returns {object|null} { src, dst } factor names
+ */
+function quadHornBlendState(mode) {
+	if (!(mode > 0 && mode < 16)) {
+		return BLEND_NORMAL;
+	}
+	if (!(mode in _blendStates)) {
+		_blendStates[mode] = mode in BLEND_FACTOR ? Object.freeze({ src: 'SRC_ALPHA', dst: BLEND_FACTOR[mode] }) : null;
+	}
+	return _blendStates[mode];
+}
+
+/**
+ * Vertex count of the four-faced horn (4 triangles).
+ */
+const VERTEX_COUNT = 12;
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * @var {mat4} rotation matrices rebuilt per draw from the record angles
+ */
+const _xRotationMatrix = mat4.create();
+const _yRotationMatrix = mat4.create();
+const _zRotationMatrix = mat4.create();
+
+/**
+ * Create an empty QuadHorn draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * QuadHorn sets no depth state: it draws with the state of the pass it runs in
+ * (the before-entities pass: depth test and depth write on).
+ *
+ * params:
+ *  - step: running intro animation ('grow' 1, 'move' 2, 'rise' 3, 'emerge' 4) or null
+ *  - height, offsetZ: animated uHeight / uOffsetZ of the intro step
+ *  - sinkOffsetZ: uOffsetZ of the animationOut sink after endTick (overrides offsetZ), or null
+ *  - offsetX, offsetY, bottomSize
+ *  - rotateX, rotateY, rotateZ: degrees (the Z matrix adds 180)
+ *  - blendMode: GL-order code after `|| 1`
+ *  - vertexCount
+ *
+ * @returns {object} record
+ */
+function createQuadHornDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'quadhorn',
+		pass: 'before',
+		texture: null,
+		position: null,
+		color: null,
+		blend: BLEND_NORMAL,
+		depthTest: true,
+		depthWrite: true,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			step: null,
+			height: 0,
+			offsetZ: 0,
+			sinkOffsetZ: null,
+			offsetX: 0,
+			offsetY: 0,
+			bottomSize: 0,
+			rotateX: 0,
+			rotateY: 0,
+			rotateZ: 0,
+			blendMode: 1,
+			vertexCount: VERTEX_COUNT
+		}
+	};
+}
+
+/**
+ * Snapshot one QuadHorn draw into a record. Advances the effect's animation, fade and
+ * cleanup state like the legacy render did.
+ *
+ * @param {object} record to fill
+ * @param {QuadHorn} effect
+ * @param {number} tick game tick
+ * @param {boolean} keep true when the record outlives the draw (position and color copied)
+ * @returns {object} record
+ */
+function fillQuadHornDrawRecord(record, effect, tick, keep) {
+	const params = record.params;
+	const deltaStart = (tick - effect.startTick) / 1000.0;
+	const deltaEnd = (tick - effect.endTick) / 1000.0;
+	let step = null;
+	let height = effect.height;
+	let offsetZ = effect.offsetZ;
+	let sinkOffsetZ = null;
+
+	if (effect.animation === 1 && !effect._endAnimation) {
+		//Grow up
+		step = 'grow';
+		const lerpHeight = deltaStart / (effect.animationSpeed / 1000);
+		if (lerpHeight > effect.height) {
+			effect._endAnimation = true;
+		} else {
+			height = lerpHeight;
+		}
+	} else if (effect.animation === 2 && !effect._endAnimation) {
+		//Move up
+		step = 'move';
+		const lerpZOffset = deltaStart / (effect.animationSpeed / 1000);
+		if (lerpZOffset > effect.offsetZ) {
+			effect._endAnimation = true;
+		} else {
+			offsetZ = lerpZOffset;
+		}
+	} else if (effect.animation === 4 && !effect._endAnimation) {
+		//Emerge from riseDistance below offsetZ, decelerating to a stop over animationSpeed ms
+		step = 'emerge';
+		const progress = Math.min(deltaStart / (effect.animationSpeed / 1000), 1.0);
+		const eased = 1.0 - (1.0 - progress) * (1.0 - progress);
+		if (progress >= 1.0) {
+			effect._endAnimation = true;
+		}
+		offsetZ = effect.offsetZ - effect.riseDistance * (1.0 - eased);
+	} else if (effect.animation === 3 && !effect._endAnimation) {
+		//Move up and over the ground a bit to make it feel more attack power
+		step = 'rise';
+		const lerpZOffset = deltaStart / (effect.animationSpeed / 1000);
+		if (lerpZOffset > effect.height / 2) {
+			effect._endAnimation = true;
+		} else {
+			offsetZ = lerpZOffset;
+		}
+	}
+
+	if (effect.fadeOut > 0 && effect.endTick > 0) {
+		const remaining = effect.endTick - tick;
+		effect.color[3] = effect.baseAlpha * Math.max(0, Math.min(1, remaining / effect.fadeOut));
+	}
+
+	if (effect.endTick > 0 && effect.endTick < tick) {
+		if (effect.animationOut && effect._endAnimation) {
+			const lerpZOffset = -((deltaEnd / (effect.animationSpeed / 1000)) * effect.height);
+			if (lerpZOffset < -(effect.height + effect.offsetZ)) {
+				effect.needCleanUp = effect.endTick < tick;
+			}
+			sinkOffsetZ = lerpZOffset;
+		} else {
+			effect.needCleanUp = effect.endTick < tick;
+		}
+	}
+
+	record.pass = (effect.renderBeforeEntities ?? QuadHorn.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = effect.texture;
+	record.position = keep ? Array.from(effect.position) : effect.position;
+	record.color = keep ? effect.color.slice() : effect.color;
+	record.blend = quadHornBlendState(effect.blendMode);
+	record.fog = _fogUse;
+
+	params.step = step;
+	params.height = height;
+	params.offsetZ = offsetZ;
+	params.sinkOffsetZ = sinkOffsetZ;
+	params.offsetX = effect.offsetX;
+	params.offsetY = effect.offsetY;
+	params.bottomSize = effect.bottomSize;
+	params.rotateX = effect.rotateX;
+	params.rotateY = effect.rotateY;
+	params.rotateZ = effect.rotateZ;
+	params.blendMode = effect.blendMode;
+
+	return record;
+}
+
+/**
+ * Send one QuadHorn record to the GPU and draw it (legacy upload order: the intro
+ * step decides whether uOffsetZ or uHeight goes first).
+ *
+ * @param {object} gl webgl context
+ * @param {object} record QuadHorn draw record
+ * @param {WebGLBuffer} vertexBuffer the effect's positions
+ * @param {WebGLBuffer} texCoordBuffer the effect's texture coordinates
+ */
+function drawQuadHornRecord(gl, record, vertexBuffer, texCoordBuffer) {
+	const uniform = _program.uniform;
+	const attribute = _program.attribute;
+	const params = record.params;
+
+	gl.bindTexture(gl.TEXTURE_2D, record.texture);
+
+	gl.enableVertexAttribArray(attribute.aPosition);
+	gl.enableVertexAttribArray(attribute.aTextureCoord);
+	gl.enableVertexAttribArray(attribute.aColor);
+
+	if (params.blendMode > 0 && params.blendMode < 16) {
+		gl.blendFunc(gl.SRC_ALPHA, blendMode[params.blendMode]);
+	} else {
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	}
+
+	if (params.step === null || params.step === 'grow') {
+		gl.uniform1f(uniform.uHeight, params.height);
+		gl.uniform1f(uniform.uOffsetZ, params.offsetZ);
+	} else {
+		gl.uniform1f(uniform.uOffsetZ, params.offsetZ);
+		gl.uniform1f(uniform.uHeight, params.height);
+	}
+
+	if (params.sinkOffsetZ !== null) {
+		gl.uniform1f(uniform.uOffsetZ, params.sinkOffsetZ);
+	}
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+	gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 0, 0);
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 0, 0);
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+	gl.uniform3fv(uniform.uPosition, record.position);
+
+	gl.uniform1f(uniform.uBottomSize, params.bottomSize);
+	gl.uniform1f(uniform.uOffsetX, params.offsetX);
+	gl.uniform1f(uniform.uOffsetY, params.offsetY);
+
+	gl.uniform4fv(uniform.uColor, record.color);
+
+	mat4.identity(_xRotationMatrix);
+	mat4.rotate(_xRotationMatrix, _xRotationMatrix, (params.rotateX * Math.PI) / 180, [1, 0, 0]);
+	gl.uniformMatrix4fv(uniform.uXRotationMat, false, _xRotationMatrix);
+
+	mat4.identity(_yRotationMatrix);
+	mat4.rotate(_yRotationMatrix, _yRotationMatrix, (params.rotateY * Math.PI) / 180, [0, 1, 0]);
+	gl.uniformMatrix4fv(uniform.uYRotationMat, false, _yRotationMatrix);
+
+	mat4.identity(_zRotationMatrix);
+	mat4.rotate(_zRotationMatrix, _zRotationMatrix, ((180 + params.rotateZ) * Math.PI) / 180, [0, 0, 1]);
+	gl.uniformMatrix4fv(uniform.uZRotationMat, false, _zRotationMatrix);
+
+	gl.drawArrays(gl.TRIANGLES, 0, params.vertexCount);
+	gl.flush();
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createQuadHornDrawRecord();
+
 class QuadHorn {
 	constructor(effect, EF_Inst_Par, EF_Init_Par) {
-		this._zRotationMatrix = mat4.create();
-		this._yRotationMatrix = mat4.create();
-		this._xRotationMatrix = mat4.create();
-
 		this.position = EF_Inst_Par.position;
 		this.blendMode = effect.blendMode || 1;
 		this.height =
@@ -129,114 +415,28 @@ class QuadHorn {
 	}
 
 	render(gl, tick) {
-		const uniform = _program.uniform;
-		const attribute = _program.attribute;
-		const deltaStart = (tick - this.startTick) / 1000.0;
-		const deltaEnd = (tick - this.endTick) / 1000.0;
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const observed = _recordSinks.size > 0;
+		const record = fillQuadHornDrawRecord(
+			observed ? createQuadHornDrawRecord() : _scratchRecord,
+			this,
+			tick,
+			observed
+		);
+		_recordSinks.forEach(sink => sink(record));
+		drawQuadHornRecord(gl, record, this.buffer, this.texCoordBuffer);
+	}
 
-		gl.bindTexture(gl.TEXTURE_2D, this.texture);
-
-		gl.enableVertexAttribArray(attribute.aPosition);
-		gl.enableVertexAttribArray(attribute.aTextureCoord);
-		gl.enableVertexAttribArray(attribute.aColor);
-
-		if (this.blendMode > 0 && this.blendMode < 16) {
-			gl.blendFunc(gl.SRC_ALPHA, blendMode[this.blendMode]);
-		} else {
-			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-		}
-
-		if (this.animation === 1 && !this._endAnimation) {
-			//Grow up
-			const lerpHeight = deltaStart / (this.animationSpeed / 1000);
-			if (lerpHeight > this.height) {
-				this._endAnimation = true;
-				gl.uniform1f(uniform.uHeight, this.height);
-			} else {
-				gl.uniform1f(uniform.uHeight, lerpHeight);
-			}
-			gl.uniform1f(uniform.uOffsetZ, this.offsetZ);
-		} else if (this.animation === 2 && !this._endAnimation) {
-			//Move up
-			const lerpZOffset = deltaStart / (this.animationSpeed / 1000);
-			if (lerpZOffset > this.offsetZ) {
-				this._endAnimation = true;
-				gl.uniform1f(uniform.uOffsetZ, this.offsetZ);
-			} else {
-				gl.uniform1f(uniform.uOffsetZ, lerpZOffset);
-			}
-			gl.uniform1f(uniform.uHeight, this.height);
-		} else if (this.animation === 4 && !this._endAnimation) {
-			//Emerge from riseDistance below offsetZ, decelerating to a stop over animationSpeed ms
-			const progress = Math.min(deltaStart / (this.animationSpeed / 1000), 1.0);
-			const eased = 1.0 - (1.0 - progress) * (1.0 - progress);
-			if (progress >= 1.0) {
-				this._endAnimation = true;
-			}
-			gl.uniform1f(uniform.uOffsetZ, this.offsetZ - this.riseDistance * (1.0 - eased));
-			gl.uniform1f(uniform.uHeight, this.height);
-		} else if (this.animation === 3 && !this._endAnimation) {
-			//Move up and over the ground a bit to make it feel more attack power
-			const lerpZOffset = deltaStart / (this.animationSpeed / 1000);
-			if (lerpZOffset > this.height / 2) {
-				this._endAnimation = true;
-				gl.uniform1f(uniform.uOffsetZ, this.offsetZ);
-			} else {
-				gl.uniform1f(uniform.uOffsetZ, lerpZOffset);
-			}
-			gl.uniform1f(uniform.uHeight, this.height);
-		} else {
-			gl.uniform1f(uniform.uHeight, this.height);
-			gl.uniform1f(uniform.uOffsetZ, this.offsetZ);
-		}
-
-		if (this.fadeOut > 0 && this.endTick > 0) {
-			const remaining = this.endTick - tick;
-			this.color[3] = this.baseAlpha * Math.max(0, Math.min(1, remaining / this.fadeOut));
-		}
-
-		if (this.endTick > 0 && this.endTick < tick) {
-			if (this.animationOut && this._endAnimation) {
-				const lerpZOffset = -((deltaEnd / (this.animationSpeed / 1000)) * this.height);
-				if (lerpZOffset < -(this.height + this.offsetZ)) {
-					this.needCleanUp = this.endTick < tick;
-				}
-				gl.uniform1f(uniform.uOffsetZ, lerpZOffset);
-			} else {
-				this.needCleanUp = this.endTick < tick;
-			}
-		}
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-		gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 0, 0);
-		gl.bindBuffer(gl.ARRAY_BUFFER, null);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
-		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 0, 0);
-		gl.bindBuffer(gl.ARRAY_BUFFER, null);
-
-		gl.uniform3fv(uniform.uPosition, this.position);
-
-		gl.uniform1f(uniform.uBottomSize, this.bottomSize);
-		gl.uniform1f(uniform.uOffsetX, this.offsetX);
-		gl.uniform1f(uniform.uOffsetY, this.offsetY);
-
-		gl.uniform4fv(uniform.uColor, this.color);
-
-		mat4.identity(this._xRotationMatrix);
-		mat4.rotate(this._xRotationMatrix, this._xRotationMatrix, (this.rotateX * Math.PI) / 180, [1, 0, 0]);
-		gl.uniformMatrix4fv(uniform.uXRotationMat, false, this._xRotationMatrix);
-
-		mat4.identity(this._yRotationMatrix);
-		mat4.rotate(this._yRotationMatrix, this._yRotationMatrix, (this.rotateY * Math.PI) / 180, [0, 1, 0]);
-		gl.uniformMatrix4fv(uniform.uYRotationMat, false, this._yRotationMatrix);
-
-		mat4.identity(this._zRotationMatrix);
-		mat4.rotate(this._zRotationMatrix, this._zRotationMatrix, ((180 + this.rotateZ) * Math.PI) / 180, [0, 0, 1]);
-		gl.uniformMatrix4fv(uniform.uZRotationMat, false, this._zRotationMatrix);
-
-		gl.drawArrays(gl.TRIANGLES, 0, 12);
-		gl.flush();
+	/**
+	 * Observe every QuadHorn draw as a backend-neutral record. Each observed draw gets
+	 * a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	static init(gl) {
@@ -283,6 +483,7 @@ class QuadHorn {
 		gl.uniformMatrix4fv(uniform.uProjectionMat, false, projection);
 
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

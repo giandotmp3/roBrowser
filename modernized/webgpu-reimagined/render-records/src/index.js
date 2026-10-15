@@ -36,3 +36,5 @@ export { NotImplementedError } from './util/errors.js';
 export { defaultClock, defaultRng } from './util/injectables.js';
 export * from './damage/DamageComposer.js';
 export * from './effects/StrPlayer.js';
+export * from './effects/CylinderEffect.js';
+export * from './effects/QuadHornEffect.js';
