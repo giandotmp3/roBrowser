@@ -1600,6 +1600,11 @@ Source paths below are relative to `src/`.
     - Audio plinks consume `Math.random` (`:546`), so the visual random sequence depends on audio availability.
     - Puddles still draw on the map-change frame.
 
+**Found by the phase 3a pixel-parity harness** (`gpu-webgl2/smoke/`, 2026-10-15):
+
+64. **[FLAG, fixed per the delegated HITL policy] R-SPR-014 palette index 255.** The 256-wide palette texture uses the default REPEAT wrap, and the shader's lookup of index 255 wraps to entry 0 (`SpriteRenderer.fs:115-151`). Palette entry 255 is therefore never shown. The rebuild clamps (CLAMP_TO_EDGE / clamped `texelFetch`) so index 255 shows entry 255; this is a declared divergence in the pixel-parity scene.
+65. **R-SPR-014:** the manual bilinear palette filter steps half a texel, because `uTextSize = 2 × frame size` (`Core/Client.js` palette upload, `SpriteRenderer.fs`). Records carry `paletteSize`; the default is 2× the frame size.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|
