@@ -4,27 +4,29 @@ import { NORMAL, pipelineSpecKey } from './pipelineKey.js';
 
 /**
  * Build the GPURenderPipelineDescriptor for a spec. Depth test off is expressed
- * as depthCompare 'always' (pipelines always carry the single depth attachment).
+ * as depthCompare 'always' (pipelines always carry the single depth attachment);
+ * like GL, a disabled depth test also writes no depth.
  * @param {import('./pipelineKey.js').PipelineSpec} spec
- * @param {{module: GPUShaderModule, layout: GPUPipelineLayout|'auto', buffers?: GPUVertexBufferLayout[]}} shader
+ * @param {{module: GPUShaderModule, layout: GPUPipelineLayout|'auto', buffers?: GPUVertexBufferLayout[], vertexEntry?: string, fragmentEntry?: string}} shader
+ * @param {{sampleCount?: number}} [options]  sampleCount 1 when the target has MSAA off
  */
-export function describePipeline(spec, shader) {
+export function describePipeline(spec, shader, { sampleCount = MSAA_SAMPLES } = {}) {
 	return {
 		label: pipelineSpecKey(spec),
 		layout: shader.layout,
-		vertex: { module: shader.module, entryPoint: 'vs_main', buffers: shader.buffers ?? [] },
+		vertex: { module: shader.module, entryPoint: shader.vertexEntry ?? 'vs_main', buffers: shader.buffers ?? [] },
 		fragment: {
 			module: shader.module,
-			entryPoint: 'fs_main',
+			entryPoint: shader.fragmentEntry ?? 'fs_main',
 			targets: [{ format: RENDER_FORMAT, blend: toGpuBlend(spec.blend) }]
 		},
 		primitive: { topology: spec.topology ?? 'triangle-list', cullMode: 'none' },
 		depthStencil: {
 			format: DEPTH_FORMAT,
-			depthWriteEnabled: spec.depthWrite,
+			depthWriteEnabled: Boolean(spec.depthTest && spec.depthWrite),
 			depthCompare: spec.depthTest ? DEFAULT_DEPTH_COMPARE : 'always'
 		},
-		multisample: { count: MSAA_SAMPLES }
+		multisample: { count: sampleCount }
 	};
 }
 
@@ -55,11 +57,13 @@ export function expandCensus(census) {
 export class PipelineSet {
 	/**
 	 * @param {GPUDevice} device
-	 * @param {(family: string) => {module: any, layout: any, buffers?: any[]}} shaderFor
+	 * @param {(family: string) => {module: any, layout: any, buffers?: any[], vertexEntry?: string, fragmentEntry?: string}} shaderFor
+	 * @param {{sampleCount?: number}} [options]
 	 */
-	constructor(device, shaderFor) {
+	constructor(device, shaderFor, { sampleCount = MSAA_SAMPLES } = {}) {
 		this._device = device;
 		this._shaderFor = shaderFor;
+		this._sampleCount = sampleCount;
 		/** @type {Map<string, GPURenderPipeline>} */
 		this._ready = new Map();
 		/** @type {Map<string, Promise<GPURenderPipeline>>} */
@@ -73,7 +77,9 @@ export class PipelineSet {
 			return this._pending.get(key) ?? Promise.resolve(this._ready.get(key));
 		}
 		const p = this._device
-			.createRenderPipelineAsync(describePipeline(spec, this._shaderFor(spec.family)))
+			.createRenderPipelineAsync(
+				describePipeline(spec, this._shaderFor(spec.family), { sampleCount: this._sampleCount })
+			)
 			.then(pipeline => {
 				this._ready.set(key, pipeline);
 				this._pending.delete(key);
@@ -106,6 +112,13 @@ export class PipelineSet {
 		this.compile(spec);
 		const fallback = this._ready.get(pipelineSpecKey({ ...spec, blend: NORMAL }));
 		return { pipeline: fallback ?? null, fellBack: true };
+	}
+
+	/** Resolves once every pipeline requested so far has compiled (tests, harness warm-up). */
+	async settled() {
+		while (this._pending.size) {
+			await Promise.all([...this._pending.values()]);
+		}
 	}
 
 	get readyCount() {

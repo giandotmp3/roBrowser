@@ -16,9 +16,13 @@ export function sceneSize({ width, height, performanceMode }) {
  * blitted to the swapchain (architecture §2.2 "Single render format").
  */
 export class OffscreenTarget {
-	/** @param {GPUDevice} device */
-	constructor(device) {
+	/**
+	 * @param {GPUDevice} device
+	 * @param {{sampleCount?: number}} [options]  1 renders straight into the resolve texture (MSAA off)
+	 */
+	constructor(device, { sampleCount = MSAA_SAMPLES } = {}) {
 		this._device = device;
+		this.sampleCount = sampleCount;
 		this.msaa = null;
 		this.depth = null;
 		this.resolve = null;
@@ -27,14 +31,14 @@ export class OffscreenTarget {
 	}
 
 	/** Descriptors (exposed so tests can assert format/sample count without a GPU). */
-	static descriptors(width, height) {
+	static descriptors(width, height, sampleCount = MSAA_SAMPLES) {
 		const size = { width, height };
 		const RENDER_ATTACHMENT = 0x10;
 		const TEXTURE_BINDING = 0x04;
 		const COPY_SRC = 0x01;
 		return {
-			msaa: { size, format: RENDER_FORMAT, sampleCount: MSAA_SAMPLES, usage: RENDER_ATTACHMENT },
-			depth: { size, format: DEPTH_FORMAT, sampleCount: MSAA_SAMPLES, usage: RENDER_ATTACHMENT },
+			msaa: sampleCount > 1 ? { size, format: RENDER_FORMAT, sampleCount, usage: RENDER_ATTACHMENT } : null,
+			depth: { size, format: DEPTH_FORMAT, sampleCount, usage: RENDER_ATTACHMENT },
 			resolve: {
 				size,
 				format: RENDER_FORMAT,
@@ -49,8 +53,8 @@ export class OffscreenTarget {
 			return;
 		}
 		this.destroy();
-		const d = OffscreenTarget.descriptors(width, height);
-		this.msaa = this._device.createTexture(d.msaa);
+		const d = OffscreenTarget.descriptors(width, height, this.sampleCount);
+		this.msaa = d.msaa ? this._device.createTexture(d.msaa) : null;
 		this.depth = this._device.createTexture(d.depth);
 		this.resolve = this._device.createTexture(d.resolve);
 		this.width = width;
@@ -63,16 +67,11 @@ export class OffscreenTarget {
 	 */
 	passDescriptor(clearColor, occlusionQuerySet = null) {
 		const [r, g, b, a] = clearColor;
+		const color = this.msaa
+			? { view: this.msaa.createView(), resolveTarget: this.resolve.createView(), storeOp: 'discard' }
+			: { view: this.resolve.createView(), storeOp: 'store' };
 		return {
-			colorAttachments: [
-				{
-					view: this.msaa.createView(),
-					resolveTarget: this.resolve.createView(),
-					clearValue: { r, g, b, a },
-					loadOp: 'clear',
-					storeOp: 'discard'
-				}
-			],
+			colorAttachments: [{ ...color, clearValue: { r, g, b, a }, loadOp: 'clear' }],
 			depthStencilAttachment: {
 				view: this.depth.createView(),
 				depthClearValue: 1.0,

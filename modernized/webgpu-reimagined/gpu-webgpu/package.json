@@ -10,12 +10,16 @@
 	},
 	"scripts": {
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"smoke:parity": "node smoke/run-parity.mjs",
+		"smoke:parity:aa": "node smoke/run-parity.mjs --aa --max-diff-pct=0.05"
 	},
 	"engines": {
 		"node": ">=22"
 	},
 	"devDependencies": {
+		"playwright": "^1.56.1",
+		"vite": "^8.3.4",
 		"vitest": "^4.1.2"
 	}
 }

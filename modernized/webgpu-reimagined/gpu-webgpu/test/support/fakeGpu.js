@@ -8,10 +8,18 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 	const lost = new Promise(resolve => {
 		loseDevice = resolve;
 	});
-	const defaultLimits = { maxTextureDimension2D: 8192, maxTextureArrayLayers: 256, maxStorageBufferBindingSize: 134217728 };
+	const defaultLimits = {
+		maxTextureDimension2D: 8192,
+		maxTextureArrayLayers: 256,
+		maxStorageBufferBindingSize: 134217728
+	};
 	const deviceLimits = { ...defaultLimits, ...limits };
 
-	const texture = desc => ({ desc, createView: () => ({ texture: desc }), destroy: () => calls.push(['texture.destroy', desc]) });
+	const texture = desc => ({
+		desc,
+		createView: (view = {}) => ({ texture: desc, ...view }),
+		destroy: () => calls.push(['texture.destroy', desc])
+	});
 
 	const device = {
 		limits: deviceLimits,
@@ -36,6 +44,18 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 		createQuerySet: desc => {
 			calls.push(['createQuerySet', desc]);
 			return { desc, destroy() {} };
+		},
+		createBindGroupLayout: desc => {
+			calls.push(['createBindGroupLayout', desc]);
+			return { desc };
+		},
+		createPipelineLayout: desc => {
+			calls.push(['createPipelineLayout', desc]);
+			return { desc };
+		},
+		createBindGroup: desc => {
+			calls.push(['createBindGroup', desc]);
+			return { desc };
 		},
 		createShaderModule: desc => {
 			calls.push(['createShaderModule', desc]);
@@ -76,7 +96,15 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 	};
 	const canvas = { width: 800, height: 600, getContext: type => (type === 'webgpu' ? context : null) };
 
-	return { gpu, canvas, device, adapter: fakeAdapter, context, calls, loseDevice: (reason = 'unknown') => loseDevice({ reason, message: 'fake loss' }) };
+	return {
+		gpu,
+		canvas,
+		device,
+		adapter: fakeAdapter,
+		context,
+		calls,
+		loseDevice: (reason = 'unknown') => loseDevice({ reason, message: 'fake loss' })
+	};
 }
 
 /** In-memory settings port. */

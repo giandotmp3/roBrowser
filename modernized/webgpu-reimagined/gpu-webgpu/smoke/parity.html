@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>WebGPU Sprite Parity</title>
+		<style>
+			body {
+				background: #222;
+				color: #ddd;
+				font: 12px monospace;
+			}
+			canvas {
+				margin: 4px;
+				image-rendering: pixelated;
+				border: 1px solid #555;
+			}
+		</style>
+		<!-- Legacy Core/Configs.js reads window.ROConfig at import time. -->
+		<script>
+			window.ROConfig = {};
+		</script>
+	</head>
+	<body>
+		<div id="canvases"></div>
+		<pre id="log"></pre>
+		<script type="module" src="./parity.js"></script>
+	</body>
+</html>
