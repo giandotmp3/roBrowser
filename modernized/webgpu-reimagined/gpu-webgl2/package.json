@@ -20,7 +20,9 @@
 		"smoke:parity:effects2": "node smoke/run-parity.mjs --page=effects2",
 		"smoke:parity:effects2:aa": "node smoke/run-parity.mjs --page=effects2 --aa",
 		"smoke:parity:world": "node smoke/run-parity.mjs --page=world",
-		"smoke:parity:world:aa": "node smoke/run-parity.mjs --page=world --aa"
+		"smoke:parity:world:aa": "node smoke/run-parity.mjs --page=world --aa",
+		"smoke:parity:gr2": "node smoke/run-parity.mjs --page=gr2",
+		"smoke:parity:gr2:aa": "node smoke/run-parity.mjs --page=gr2 --aa"
 	},
 	"engines": {
 		"node": ">=22"

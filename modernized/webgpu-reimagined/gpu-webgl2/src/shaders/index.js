@@ -7,6 +7,7 @@ import waterFrag from './water.frag?raw';
 import modelsFrag from './models.frag?raw';
 import strVert from './str.vert?raw';
 import strFrag from './str.frag?raw';
+import gr2Vert from './gr2.vert?raw';
 import gr2Frag from './gr2.frag?raw';
 import occluderFade from './occluderFade.glsl?raw';
 import groundVert from './world/ground.vert?raw';
@@ -63,6 +64,7 @@ export const SHADERS = Object.freeze({
 	gridFrag: resolveIncludes(gridFrag),
 	strVert,
 	strFrag: resolveIncludes(strFrag),
-	gr2Frag,
+	gr2Vert,
+	gr2Frag: resolveIncludes(gr2Frag),
 	fxaaFrag
 });

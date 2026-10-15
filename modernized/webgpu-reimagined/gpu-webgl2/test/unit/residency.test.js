@@ -224,7 +224,7 @@ describe('residency context-loss purge (R-CTX-006)', () => {
 		backend.drawFrame(frame);
 		expect(pools()).toHaveLength(2);
 		expect(backend.residency.residentCount).toBe(1);
-		expect(backend.evictIdle(-1)).toEqual({ frames: 1, palettes: 1 });
+		expect(backend.evictIdle(-1)).toEqual({ frames: 1, palettes: 1, gr2Emblems: 0 });
 	});
 });
 

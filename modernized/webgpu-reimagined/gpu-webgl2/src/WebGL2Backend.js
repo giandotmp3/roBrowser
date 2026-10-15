@@ -11,6 +11,8 @@ import { NotImplementedError } from './errors.js';
 import { GL } from './pipeline/glEnums.js';
 import { MapWorld } from './world/MapWorld.js';
 import { clearColorFor } from './world/lighting.js';
+import { Gr2Residency } from './gr2/Gr2Residency.js';
+import { Gr2Pipeline } from './gr2/Gr2Pipeline.js';
 
 /** R-CTX-010 steps whose world part this backend draws from the MAP_* payloads. */
 const WORLD_STEPS = Object.freeze([
@@ -44,6 +46,7 @@ export class WebGL2Backend {
 	 *   now: () => number,
 	 *   uploader?: ConstructorParameters<typeof Residency>[0]['uploader'],
 	 *   frames?: import('./residency/Residency.js').FrameSourcePort,
+	 *   gr2?: import('./gr2/Gr2Residency.js').Gr2SourcePort,
 	 *   postTargets?: ConstructorParameters<typeof PostChain>[0]['targets']
 	 * }} ports
 	 */
@@ -59,6 +62,10 @@ export class WebGL2Backend {
 		this.loss = null;
 		/** @type {MapWorld|null} */
 		this.world = null;
+		/** @type {Gr2Residency|null} */
+		this.gr2Residency = null;
+		/** @type {Gr2Pipeline|null} */
+		this.gr2 = null;
 		this._mapRequest = undefined;
 		this._size = { width: ports.canvas.width, height: ports.canvas.height };
 	}
@@ -81,6 +88,13 @@ export class WebGL2Backend {
 			createCanvas: this._ports.createCanvas,
 			mipmaps: Boolean(this._ports.settings?.get?.('enableMipmap'))
 		});
+		this.gr2Residency = new Gr2Residency({
+			gl,
+			source: this._ports.gr2 ?? null,
+			createCanvas: this._ports.createCanvas,
+			now: this._ports.now
+		});
+		this.gr2 = new Gr2Pipeline({ gl, state: this.state, residency: this.gr2Residency });
 		this.loss = new ContextLossController({
 			canvas: this._ports.canvas,
 			getGl: () => this.device.gl,
@@ -92,6 +106,8 @@ export class WebGL2Backend {
 				this.runs.reset();
 				this.state.reset();
 				this.world.contextLost();
+				this.gr2Residency.purgeAll();
+				this.gr2.reset();
 			},
 			reinitPost: () => this.post.reinit(),
 			resize: () => this.resize(this._size.width, this._size.height),
@@ -148,6 +164,8 @@ export class WebGL2Backend {
 			gpuPasses[name] = () => this.runs.draw(records, frame.view);
 		}
 		if (frame.view) {
+			const gr2Records = passes.gr2Models ?? [];
+			gpuPasses.gr2Models = () => this._drawGr2(frame, gr2Records);
 			for (const step of WORLD_STEPS) {
 				const records = passes[step] ?? [];
 				gpuPasses[step] = () => {
@@ -216,6 +234,30 @@ export class WebGL2Backend {
 		this.state.restoreDefault();
 	}
 
+	/**
+	 * R-CTX-010 step 11 (C-14): the `world`/`gr2` records with the map light (and the
+	 * frame's overrides), then any other record of the step.
+	 * @param {Parameters<WebGL2Backend['drawFrame']>[0]} frame
+	 * @param {ReadonlyArray<import('./ports.js').DrawRecord>} records
+	 */
+	_drawGr2(frame, records) {
+		const gr2 = records.filter(r => r.kind === 'world' && r.part === 'gr2');
+		if (gr2.length) {
+			this.gr2.draw(
+				/** @type {any} */ (gr2),
+				/** @type {any} */ (frame.view),
+				this.world.frameLight(frame.world ?? {})
+			);
+			this.state.restoreDefault();
+		}
+		if (gr2.length !== records.length) {
+			this.runs.draw(
+				records.filter(r => !(r.kind === 'world' && r.part === 'gr2')),
+				frame.view
+			);
+		}
+	}
+
 	/** R-CTX-009: post-process prepare clears colour (the sky colour) and depth. */
 	_clear(color) {
 		const gl = this.device.gl;
@@ -235,7 +277,8 @@ export class WebGL2Backend {
 	 * @param {number} [maxAgeMs]
 	 */
 	evictIdle(maxAgeMs) {
-		return this.residency ? this.residency.evictIdle(maxAgeMs) : { frames: 0, palettes: 0 };
+		const evicted = this.residency ? this.residency.evictIdle(maxAgeMs) : { frames: 0, palettes: 0 };
+		return { ...evicted, gr2Emblems: this.gr2Residency ? this.gr2Residency.evictIdle(maxAgeMs) : 0 };
 	}
 
 	/** R-CTX-005 */
@@ -266,6 +309,7 @@ export class WebGL2Backend {
 	 */
 	beginMap(request) {
 		this.world?.free();
+		this.gr2Residency?.free();
 		this._mapRequest = request;
 	}
 
@@ -279,9 +323,18 @@ export class WebGL2Backend {
 		throw new NotImplementedError('capture (C-20)');
 	}
 
+	/**
+	 * A GR2 instance went away (legacy GR2ModelRenderer.detach): free its emblem texture.
+	 * @param {unknown} emblem  the instance's emblem handle
+	 */
+	releaseGr2Emblem(emblem) {
+		this.gr2Residency?.releaseEmblem(emblem);
+	}
+
 	dispose() {
 		this.running = false;
 		this.world?.free();
+		this.gr2Residency?.free();
 		this.residency?.uploader.dispose?.();
 		this.residency?.purgeAll();
 	}

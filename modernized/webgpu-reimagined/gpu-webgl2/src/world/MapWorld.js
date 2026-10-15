@@ -702,6 +702,11 @@ export class MapWorld {
 		}
 	}
 
+	/** Map light with the frame's overrides (R-CTX-012, R-CTX-013); the GR2 pass reads it too. @param {WorldFrame} frame */
+	frameLight(frame) {
+		return this._light(frame);
+	}
+
 	/** Map light with the frame's overrides (R-CTX-012, R-CTX-013). @param {WorldFrame} frame */
 	_light(frame) {
 		const base =

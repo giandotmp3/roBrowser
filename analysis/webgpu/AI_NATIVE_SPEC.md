@@ -1609,6 +1609,10 @@ Source paths below are relative to `src/`.
 
 66. **[FLAG, fixed per the delegated HITL policy] R-EFX-006: late static pass defaults.** A class's `renderBeforeEntities` default is set only by its static `init` on first render. The first instance spawned before that (e.g. QuadHorn) has no default and draws *after* entities; later spawns draw before. The rebuild applies the class default from the first spawn.
 
+**Found by the gpu-webgl2 GR2 parity harness** (2026-10-16):
+
+67. **R-GR2-006 (clarification):** legacy does not apply the ≥248/<8/≥248 magenta key in the emblem path itself. Emblems are already keyed upstream by `Texture.load`, with the looser image threshold (R-MAP-024). The rebuild still applies the stricter key; it is a no-op on emblems that `Texture.load` has already keyed, and pixel parity confirms this. The emblem is drawn 24×24 onto a 32×32 canvas and quantised to A4R4G4B4.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|

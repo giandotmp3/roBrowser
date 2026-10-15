@@ -51,20 +51,22 @@ The exit code is 1 on failure. The run also fails if the **sensitivity control**
 
 ## Files
 
-| File                           | Role                                                                                                                            |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `scene.js`                     | Seeded synthetic scene: the camera (pitch 50°, fovy 20°, zoom 30), fog, and 40 SpriteDraw records                               |
-| `parity.html`, `parity.js`     | The phase 3a page. It renders both paths and puts its stats on `window.__parity`                                                |
-| `entities.html`, `entities.js` | The phase 3b page (below)                                                                                                       |
-| `entities/`                    | `stubs.js` (legacy seams), `assets.js` (synthetic SPR/ACT/PAL), `scene.js` (the 200 entities)                                   |
-| `effects.html`, `effects.js`   | The effect page (below)                                                                                                         |
-| `effects/`                     | `assets.js` (images, effect SPR/ACT), `scene.js` (STR, 3D and 2D spawns)                                                        |
-| `effects2.html`, `effects2.js` | The mesh effect page (below)                                                                                                    |
-| `effects2/`                    | `assets.js` (images and their four legacy upload paths), `scene.js` (spawns of the 18 mesh-family classes)                      |
-| `common.js`                    | Shared page helpers: canvases, draw counting, read-back, comparison, diff image, camera matrices                                |
-| `cameraStub.js`                | The legacy `Renderer/Camera.js` stand-in (zoom, latitude, direction, matrices)                                                  |
-| `vite.config.js`               | Serves the package root, resolves the repo `src/` aliases read-only, and swaps the `LEGACY_STUBS` seams for `entities/stubs.js` |
-| `run-parity.mjs`               | Starts Vite, launches Chromium, prints the results, writes the PNGs                                                             |
+| File                           | Role                                                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `scene.js`                     | Seeded synthetic scene: the camera (pitch 50°, fovy 20°, zoom 30), fog, and 40 SpriteDraw records                                      |
+| `parity.html`, `parity.js`     | The phase 3a page. It renders both paths and puts its stats on `window.__parity`                                                       |
+| `entities.html`, `entities.js` | The phase 3b page (below)                                                                                                              |
+| `entities/`                    | `stubs.js` (legacy seams), `assets.js` (synthetic SPR/ACT/PAL), `scene.js` (the 200 entities)                                          |
+| `effects.html`, `effects.js`   | The effect page (below)                                                                                                                |
+| `effects/`                     | `assets.js` (images, effect SPR/ACT), `scene.js` (STR, 3D and 2D spawns)                                                               |
+| `effects2.html`, `effects2.js` | The mesh effect page (below)                                                                                                           |
+| `effects2/`                    | `assets.js` (images and their four legacy upload paths), `scene.js` (spawns of the 18 mesh-family classes)                             |
+| `gr2.html`, `gr2.js`           | The GR2 page (below)                                                                                                                   |
+| `gr2/`                         | `assets.js` (synthetic skinned models in the granny-ro-js parse shape), `granny.js` (the parse seam), `scene.js` (instances, timeline) |
+| `common.js`                    | Shared page helpers: canvases, draw counting, read-back, comparison, diff image, camera matrices                                       |
+| `cameraStub.js`                | The legacy `Renderer/Camera.js` stand-in (zoom, latitude, direction, matrices)                                                         |
+| `vite.config.js`               | Serves the package root, resolves the repo `src/` aliases read-only, and swaps the `LEGACY_STUBS` seams for `entities/stubs.js`        |
+| `run-parity.mjs`               | Starts Vite, launches Chromium, prints the results, writes the PNGs                                                                    |
 
 **What `scene.js` covers:**
 
@@ -390,3 +392,41 @@ texture run; grid cells: one draw).
 **Legacy behaviour worth knowing, found here:** `SpriteRenderer.runWithDepth` is a no-op until the 3D context has
 been bound once (entity pass); before that, legacy water writes depth and the occluder query pass depth-tests.
 `?skip=ground,grid,models,animated,water` leaves passes out on both sides (diagnosis).
+
+## GR2 parity: skinned 3D mobs (guild flag, Emperium, guardians, treasure box)
+
+`npm run smoke:parity:gr2` (and `:aa`). The **real legacy GR2 path**, unmodified: `Renderer/GR2/GR2ModelRenderer.js`
+with the real `Loaders/GR2Loader.js`, `gr2Pack`, `gr2World`, `actorAction`, `gr2Banks` and granny-ro-js `poseAt`,
+draws into canvas A; `WebGL2Backend` draws the R-CTX-010 GR2 step (`gr2Models`) into canvas B.
+
+- **No real GR2 asset exists in the repository** (no `.gr2`, no GRF; `tests/renderer/GR2/*` test the pure helpers
+  only). `gr2/assets.js` therefore builds synthetic skinned models **in the shape granny-ro-js `parseAll` returns**
+  (skeleton with inverse world transforms, textured meshes with bone bindings and vertex weights, embedded textures,
+  LegacyCurve32f animation tracks, `models[0].initialPlacement`), so the real loader packs them and the real `poseAt`
+  poses them. `gr2/granny.js` stands in for `granny-ro-js/wasm` only for the parse (`parseAll`, `parseAnimated`);
+  `poseAt` and `ready` are the real ones. Models: the five roster families (guildflag90_1 with 41 bones and a Plane01
+  emblem plane, empelium90_0, k/a/sguardian90_7/8/9 with attack/damage/dead/move banks loaded through
+  `Client.getFile`, treasurebox_2), with translated and rotated InitialPlacements, an opaque magenta-keyed texture,
+  textures with their own alpha crossing 207/255, a texture with no pixels and a submesh with no texture.
+- **Records (capture path).** Legacy GR2 draws straight to GL and emits no records, and render-records does not
+  compose GR2 draws yet. The page observes the legacy context while `GR2ModelRenderer.render` runs: per instance the
+  `uBones` palette and `uAlpha` it uploads; the instance (type path, world matrix, emblem image) is identified by the
+  `uModelViewMat` it uploads (view·world, bit-exact). Each becomes a `world`/`gr2` record:
+  `{kind: 'world', part: 'gr2', alpha, matrices: palette, params: {type, world, emblem}}`. gpu-webgl2 derives the
+  rest itself: normal matrix and view-space light (legacy float32 arithmetic), R-GR2-001 per-model light, R-GR2-002
+  opaque state with the 207/255 alpha test, blend only for alpha < 1, R-GR2-006 emblem (24×24 on a 32×32 canvas,
+  key, A4R4G4B4).
+- **Scene** (`gr2/scene.js`): 10 entity-backed instances (attach) and 2 dev spawns, all 8 directions; actions stand,
+  move (loop), attack (auto-revert), damage, dead (hold); effectColor alpha 0.6 and 0.35; an NPC flag (bind pose); a
+  culled entity and an off-screen instance (R-GR2-004, never drawn); two emblems through the real `Texture.load`.
+  Every 25 ms tick renders legacy (the actor state machine is stateful); 4 frames are compared (fog off/on), plus a
+  frame after a real `WEBGL_lose_context` lose + restore.
+
+**Results (SwiftShader, 640×480):** 0 px on all 5 frames, with and without MSAA. 25 `drawElements` on both sides
+(one per drawn submesh per instance); 10 records share 8 palettes (one uniform-buffer upload per frame, bound per
+instance with `bindBufferRange`). Controls: the light direction nudged 0.01 changes ~7.6k px; the knight drawn
+with its bind-pose palette changes ~2.6k px (skinning is exercised).
+
+**Emblem key (R-GR2-006 vs legacy):** legacy `buildEmblemTexture` applies no magenta key of its own: the emblem
+reaching it already went through `Texture.load` (r > 230, g < 20, b > 230, a superset of ≥ 248 / < 8 / ≥ 248). The
+backend applies the spec's key before the quantisation; on such an emblem it is a no-op, which the parity confirms.

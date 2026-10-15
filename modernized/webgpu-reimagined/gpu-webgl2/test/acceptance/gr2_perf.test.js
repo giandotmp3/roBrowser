@@ -22,7 +22,7 @@ describe('R-GR2-002 hard alpha test', () => {
 	it('alpha < 207/255 discarded, rest opaque', () => {
 		expect(gr2AlphaTest(206 / 255)).toBeNull();
 		expect(gr2AlphaTest(207 / 255)).toBe(1);
-		expect(SHADERS.gr2Frag).toContain('tex.a < 207.0 / 255.0');
+		expect(SHADERS.gr2Frag).toContain('textureSample.a < uAlphaRef');
 	});
 	it('depth test, write and correction-disable on; blend only when fading; no lightmap pref, no occluder fade', () => {
 		expect(gr2PassState(false)).toEqual({ depthTest: true, depthWrite: true, disableDepthCorrection: true, blend: false, lightmapPref: false, occluderFade: false });

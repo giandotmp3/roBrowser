@@ -3,7 +3,7 @@
  * SwiftShader). Serves smoke/<page>.html with Vite, reads `window.__parity`,
  * prints the stats and writes legacy/modern/diff PNGs.
  *
- *   node smoke/run-parity.mjs [--page=parity|entities|effects|effects2|world] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir]
+ *   node smoke/run-parity.mjs [--page=parity|entities|effects|effects2|world|gr2] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir]
  *
  * Pages: `parity` (phase 3a, synthetic SpriteDraw records through the legacy
  * SpriteRenderer API), `entities` (phase 3b, the real legacy entity path's
@@ -12,7 +12,9 @@
  * mesh effect classes: cylinder, quadhorn, RSM, auras, spheres, tiles, rings, target
  * markers, rain puddles, waterfall) and `world` (the real legacy map renderers: ground,
  * water, static and animated RSM, grid selector, occluder fade, fed the MAP_* payloads
- * that gpu-webgl2's backend receives through acceptMapMessage).
+ * that gpu-webgl2's backend receives through acceptMapMessage) and `gr2` (the real legacy
+ * GR2ModelRenderer on synthetic skinned models vs the backend's GR2 step, fed `world`/`gr2`
+ * records captured from the legacy pass).
  *
  * Needs `vite` and `playwright` resolvable from this package (devDependencies,
  * or the repo root node_modules for vite) and a Chromium for Playwright
@@ -35,7 +37,7 @@ const tolerance = Number(args.tol ?? 2);
 const maxOverPct = Number(args['max-diff-pct'] ?? 0);
 const outDir = path.resolve(args.out ?? path.join(here, '.out'));
 const pageName = args.page ?? 'parity';
-if (!['parity', 'entities', 'effects', 'effects2', 'world'].includes(pageName)) {
+if (!['parity', 'entities', 'effects', 'effects2', 'world', 'gr2'].includes(pageName)) {
 	console.error(`unknown --page=${pageName}`);
 	process.exit(2);
 }

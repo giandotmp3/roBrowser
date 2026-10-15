@@ -61,14 +61,19 @@ const STUB_PREFIX = '\0legacy-stub:';
  * Stubbed seams a page drives for real: legacy module → the path prefixes whose
  * importers get the real module (the effects page imports the real StrEffect, the world
  * page the real ground, water and altitude, with the legacy GridSelector reading the real
- * Altitude; every other importer, e.g. the entity path, keeps the stub).
+ * Altitude; the gr2 page the real GR2ModelRenderer, whose `granny-ro-js/wasm` import resolves to
+ * smoke/gr2/granny.js; every other importer, e.g. the entity path, keeps the stub).
  */
 const WORLD_PAGE = path.join(packageRoot, 'smoke', 'world');
+const GR2_PAGE = path.join(packageRoot, 'smoke', 'gr2');
+/** The gr2 page's parse seam for `granny-ro-js/wasm` (synthetic models, real poseAt). */
+const GRANNY_SEAM = path.join(GR2_PAGE, 'granny.js');
 const REAL_FOR = Object.freeze({
 	'Renderer/Effects/StrEffect.js': [path.join(packageRoot, 'smoke', 'effects')],
 	'Renderer/Map/Ground.js': [WORLD_PAGE],
 	'Renderer/Map/Water.js': [WORLD_PAGE],
-	'Renderer/Map/Altitude.js': [WORLD_PAGE, path.join(legacy, 'Renderer', 'Map', 'GridSelector.js')]
+	'Renderer/Map/Altitude.js': [WORLD_PAGE, path.join(legacy, 'Renderer', 'Map', 'GridSelector.js')],
+	'Renderer/GR2/GR2ModelRenderer.js': [GR2_PAGE]
 });
 
 /**
@@ -88,6 +93,9 @@ export default {
 			name: 'legacy-seam-stubs',
 			enforce: 'pre',
 			async resolveId(source, importer) {
+				if (source === 'granny-ro-js/wasm') {
+					return GRANNY_SEAM;
+				}
 				if (!importer || importer.startsWith('\0') || !/\.js$/.test(source)) {
 					return null;
 				}
