@@ -1480,6 +1480,12 @@ Source paths below are relative to `src/`.
 11. `MapRenderer.fog.use` is initialised from a non-existent `MapPreferences.useFog` (it is overwritten every frame, so this is harmless).
 12. The `uIsRGBA`, `uLightOpacity` and `fog.factor` values are uploaded or stored but never read.
 
+**Found by the phase 1 legacy replay** (`tests/renderer/LegacyRecordReplay.test.js`, 2026-10-15):
+
+13. **[FLAG] Animation clock reset on spawn.** When spawn data includes `objecttype`, `Entity.set` re-runs the EntityAction init (`Renderer/Entity/Entity.js:281-284`). That replaces `animation` with a fresh object whose `tick` is 0. Until the next `setAction`, frame selection uses `Date.now() - 0` (`EntityRender.js:774`), so idle frames depend on wall-clock epoch time rather than spawn time. Per the HITL default, this is **fixed**: render-records keys the animation clock to spawn or `setAction` time. Legacy parity replays must pin the `FakeClock` epoch.
+14. **Clarification for R-SPR-006.** `zIndex++` only separates layers *within one element*. Each element resets zIndex (`EntityRender.js:433-515`), so a front-facing lower headgear and shield both draw at 550. That tie is settled by draw order and the depth function. Draw order also differs from zIndex order: the weapon (500) draws after the lower hat (550). Records must keep both the draw order and the zIndex.
+15. **Clarification for R-SPR-003.** Layer quads are sized from the **power-of-two padded** frame size (`EntityRender.js:1096-1101`); only the picking rectangle (R-PICK-003) uses the original size. For example, an 80×80 frame draws as 64×128 when padded to 64×128.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|

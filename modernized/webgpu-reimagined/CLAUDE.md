@@ -123,6 +123,13 @@ These were found at scaffold time and settled before phase 1.
 5. **SpriteDraw units.** `size`/`offset` are **sprite pixels**, plus `xSize`/`ySize` (default 5), matching legacy `SpriteRenderer` and the legacy record shim. The 3D backends convert with `spriteToWorld` (render-records); preview2d uses the pixels directly.
 6. **Copied record shapes in gpu-webgl2** stay, so the package builds on its own. `gpu-webgl2/test/contract/recordsDrift.test.js` fails as soon as they diverge from render-records.
 
+## Delivery status
+
+- **Phase 1 (harness determinism + legacy record shim): exit gate met.** `tests/renderer/LegacyRecordReplay.test.js`, in the root suite, drives the real legacy `Entity` → `EntityRender` → `SpriteRenderer` → `EntityManager` path in Node through the harness shim. It uses synthetic SPR/ACT data and a no-op GL. Over 40 frames (idle, attack, back-facing), 10 records per frame replay deep-equal under the same seed and clock. Layer order and zIndex are asserted against legacy. It needs no `src/` changes; the harness patches `Math.random`, `Date.now` and `performance.now` globally.
+  - **Pin the clock epoch** (default `FAKE_EPOCH_MS`) in parity runs. Legacy idle frames depend on absolute time after an `objecttype` spawn (spec discrepancy #13).
+  - **Not yet covered:** cart, riding, halo, trails, status tints, effects, damage numbers, and shader-side maths (uniforms aren't visible to the shim).
+- **Next: phase 2.** Have the legacy GL path draw from records (`gpu-webgl2`) behind the record shim, with record-diff green on all non-flagged rules and no visual change.
+
 ## Still open
 
 1. **Spec ambiguities that need an SME:**
