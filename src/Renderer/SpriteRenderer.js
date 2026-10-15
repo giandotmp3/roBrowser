@@ -20,60 +20,130 @@ import _fragmentShader from './SpriteRenderer.fs?raw';
 const mat4 = glMatrix.mat4;
 
 /**
- * Render in 3D mode
+ * Create an empty sprite draw record (backend-neutral SpriteDraw shape, see
+ * modernized/webgpu-reimagined/render-records). Sizes and offsets are sprite
+ * pixels; xSize/ySize convert them to world units.
+ *
+ * @returns {object} record
  */
-function RenderCanvas3D(isBlendModeOne) {
-	// Nothing to render ?
-	if (!this.image.texture || !this.color[3]) {
-		return;
+function createSpriteDrawRecord() {
+	return {
+		kind: 'sprite',
+		texture: null,
+		palette: null,
+		textureClass: 'rgba',
+		paletteSize: new Float32Array(2),
+		spriteType: 1,
+		position: new Float32Array(3),
+		offset: new Float32Array(2),
+		size: new Float32Array(2),
+		xSize: 5,
+		ySize: 5,
+		angle: 0,
+		color: new Float32Array(4),
+		shadowFactor: 1,
+		zIndex: 0,
+		depthBias: 0,
+		depthTest: true,
+		depthWrite: true,
+		depthCorrection: true,
+		ignoreDepthMinCap: false,
+		blend: 'normal',
+		setBlend: false
+	};
+}
+
+/**
+ * Snapshot the current SpriteRenderer state into a draw record.
+ * Consumes one zIndex, as the draw it describes does.
+ *
+ * @param {object} record to fill
+ * @param {object} sr SpriteRenderer state
+ * @param {boolean|undefined} isBlendModeOne true: additive, false: normal, undefined: unchanged
+ * @returns {object} record
+ */
+function fillSpriteDrawRecord(record, sr, isBlendModeOne) {
+	const usePal = sr.image.palette !== null;
+
+	if (isBlendModeOne === true || isBlendModeOne === false) {
+		_blendAdditive = isBlendModeOne;
 	}
 
+	record.texture = sr.image.texture;
+	record.palette = sr.image.palette;
+	record.textureClass = usePal ? 'indexed' : 'rgba';
+	record.paletteSize.set(sr.image.size);
+	record.spriteType = sr.sprite ? sr.sprite.type : 1;
+	record.position.set(sr.position);
+	record.offset.set(sr.offset);
+	record.size.set(sr.size);
+	record.xSize = sr.xSize;
+	record.ySize = sr.ySize;
+	record.angle = sr.angle;
+	record.color.set(sr.color);
+	record.shadowFactor = sr.shadow;
+	record.zIndex = sr.zIndex++;
+	record.depthBias = sr.depth;
+	record.depthTest = _depthTest;
+	record.depthWrite = _depthMask;
+	record.depthCorrection = !sr.disableDepthCorrection;
+	record.ignoreDepthMinCap = sr.ignoreDepthMinCap;
+	record.blend = _blendAdditive ? 'additive' : 'normal';
+	record.setBlend = isBlendModeOne === true || isBlendModeOne === false;
+
+	return record;
+}
+
+/**
+ * Draw one sprite record on the 3D context.
+ *
+ * @param {object} record sprite draw record
+ */
+function drawSpriteRecord3D(record) {
 	// gl.uniform* seems to be expensive
 	// cache values to avoid flooding the GPU and reducing perf.
 
 	const uniform = _program.uniform;
 	const gl = _gl;
-	const use_pal = this.image.palette !== null;
+	const usePal = record.palette !== null;
 
-	if (isBlendModeOne) {
-		gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-	} else if (isBlendModeOne === false) {
-		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	if (record.setBlend) {
+		gl.blendFunc(gl.SRC_ALPHA, record.blend === 'additive' ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
 	}
 
-	if (this.shadow !== _shadow) {
-		gl.uniform1f(uniform.uShadow, (_shadow = this.shadow));
+	if (record.shadowFactor !== _shadow) {
+		gl.uniform1f(uniform.uShadow, (_shadow = record.shadowFactor));
 	}
-	gl.uniform3fv(uniform.uSpriteRendererPosition, this.position);
+	gl.uniform3fv(uniform.uSpriteRendererPosition, record.position);
 
 	// Palette
-	if (use_pal) {
+	if (usePal) {
 		gl.activeTexture(gl.TEXTURE1);
-		gl.bindTexture(gl.TEXTURE_2D, this.image.palette);
-		gl.uniform2fv(uniform.uTextSize, this.image.size);
+		gl.bindTexture(gl.TEXTURE_2D, record.palette);
+		gl.uniform2fv(uniform.uTextSize, record.paletteSize);
 		gl.activeTexture(gl.TEXTURE0);
 	}
 
-	if (_usepal !== use_pal) {
-		gl.uniform1i(uniform.uUsePal, (_usepal = use_pal));
+	if (_usepal !== usePal) {
+		gl.uniform1i(uniform.uUsePal, (_usepal = usePal));
 	}
 
-	if (this.depth !== _depth) {
-		gl.uniform1f(uniform.uSpriteRendererDepth, (_depth = this.depth));
+	if (record.depthBias !== _depth) {
+		gl.uniform1f(uniform.uSpriteRendererDepth, (_depth = record.depthBias));
 	}
 
-	const disableDepthCorrection = !!this.disableDepthCorrection;
+	const disableDepthCorrection = !record.depthCorrection;
 	if (_disableDepthCorrection !== disableDepthCorrection) {
 		_disableDepthCorrection = disableDepthCorrection;
 		gl.uniform1i(uniform.uDisableDepthCorrection, disableDepthCorrection);
 	}
 
-	gl.uniform1i(uniform.uIgnoreZindexCap, this.ignoreDepthMinCap);
-	gl.uniform1f(uniform.uSpriteRendererZindex, this.zIndex++);
+	gl.uniform1i(uniform.uIgnoreZindexCap, record.ignoreDepthMinCap);
+	gl.uniform1f(uniform.uSpriteRendererZindex, record.zIndex);
 
 	// Rotate
-	if (this.angle !== _angle) {
-		_angle = this.angle;
+	if (record.angle !== _angle) {
+		_angle = record.angle;
 
 		mat4.identity(_matrix);
 		if (_angle) {
@@ -83,22 +153,42 @@ function RenderCanvas3D(isBlendModeOne) {
 		gl.uniformMatrix4fv(uniform.uSpriteRendererAngle, false, _matrix);
 	}
 
-	_offset[0] = (this.offset[0] / 175.0) * this.xSize;
-	_offset[1] = (this.offset[1] / 175.0) * this.ySize - 0.5;
-	_size[0] = (this.size[0] / 175.0) * this.xSize;
-	_size[1] = (this.size[1] / 175.0) * this.ySize;
+	_offset[0] = (record.offset[0] / 175.0) * record.xSize;
+	_offset[1] = (record.offset[1] / 175.0) * record.ySize - 0.5;
+	_size[0] = (record.size[0] / 175.0) * record.xSize;
+	_size[1] = (record.size[1] / 175.0) * record.ySize;
 
-	gl.uniform4fv(uniform.uSpriteRendererColor, this.color);
+	gl.uniform4fv(uniform.uSpriteRendererColor, record.color);
 	gl.uniform2fv(uniform.uSpriteRendererSize, _size);
 	gl.uniform2fv(uniform.uSpriteRendererOffset, _offset);
-	gl.uniform1i(uniform.uIsRGBA, this.sprite ? this.sprite.type : 1);
+	gl.uniform1i(uniform.uIsRGBA, record.spriteType);
 
 	// Avoid binding the new texture 150 times if it's the same.
-	if (_groupId !== _lastGroupId || _texture !== this.image.texture) {
+	if (_groupId !== _lastGroupId || _texture !== record.texture) {
 		_lastGroupId = _groupId;
-		gl.bindTexture(gl.TEXTURE_2D, (_texture = this.image.texture));
+		gl.bindTexture(gl.TEXTURE_2D, (_texture = record.texture));
 	}
 	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+/**
+ * Render in 3D mode
+ */
+function RenderCanvas3D(isBlendModeOne) {
+	// Nothing to render ?
+	if (!this.image.texture || !this.color[3]) {
+		return;
+	}
+
+	// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+	if (_recordSinks.size) {
+		const record = fillSpriteDrawRecord(createSpriteDrawRecord(), this, isBlendModeOne);
+		_recordSinks.forEach(sink => sink(record));
+		drawSpriteRecord3D(record);
+		return;
+	}
+
+	drawSpriteRecord3D(fillSpriteDrawRecord(_scratchRecord, this, isBlendModeOne));
 }
 
 /**
@@ -381,6 +471,21 @@ const _size = new Float32Array(2);
 const _offset = new Float32Array(2);
 
 /**
+ * @type {boolean} blend mode last requested through render(isBlendModeOne)
+ */
+let _blendAdditive = false;
+
+/**
+ * @type {Set<function>} draw-record observers (empty in production)
+ */
+const _recordSinks = new Set();
+
+/**
+ * @type {object} reusable draw record when nobody observes
+ */
+const _scratchRecord = createSpriteDrawRecord();
+
+/**
  * Sprite Renderer NameSpace
  */
 class SpriteRenderer {
@@ -467,6 +572,18 @@ class SpriteRenderer {
 	 * @type {number} height unity
 	 */
 	static ySize = 5;
+
+	/**
+	 * Observe every 3D sprite draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
+	}
 
 	/**
 	 * Initialize SpriteRenderer Renderer

@@ -318,7 +318,7 @@ let shim = null;
  * 30-39 IDLE facing back. Each frame is one EntityManager.render (EntityManager.js:400-454),
  * which binds SpriteRenderer's 3D context and calls entity.render(modelView, projection).
  */
-function runScene(seed, { epoch = FAKE_EPOCH_MS } = {}) {
+function runScene(seed, { epoch = FAKE_EPOCH_MS, onNativeRecord = null } = {}) {
 	determinism = installDeterminism({ rng: new SeededRng(seed), clock: new FakeClock({ epoch }) });
 	const { clock, rng } = determinism;
 	const { files, names } = buildAssets();
@@ -334,6 +334,7 @@ function runScene(seed, { epoch = FAKE_EPOCH_MS } = {}) {
 	});
 	const gl = noopGL();
 	SpriteRenderer.init(gl);
+	const stopNative = onNativeRecord ? SpriteRenderer.addRecordSink(onNativeRecord) : null;
 
 	const entity = new Entity({
 		GID,
@@ -374,6 +375,9 @@ function runScene(seed, { epoch = FAKE_EPOCH_MS } = {}) {
 	}
 
 	EntityManager.free();
+	if (stopNative) {
+		stopNative();
+	}
 	shim.uninstall();
 	shim = null;
 	const rngCalls = rng.calls;
@@ -523,5 +527,34 @@ describe('legacy entity scene record/replay (phase 1 exit gate)', () => {
 		]);
 		const shield = frame.records.find(r => part(r) === 'shield');
 		expect(shield.depth).toMatchObject({ test: true, write: false });
+	});
+	it('native SpriteRenderer records match the harness shim record-for-record (phase 2 seam)', () => {
+		const native = [];
+		const { recorder } = runScene(0x5eed, { onNativeRecord: r => native.push(r) });
+		const shimmed = recorder.frames.flatMap(f => f.records);
+		expect(native).toHaveLength(shimmed.length);
+		native.forEach((n, i) => {
+			const r = shimmed[i];
+			expect(n.texture).not.toBeNull();
+			expect([n.zIndex, n.depthTest, n.depthWrite, n.depthCorrection, n.ignoreDepthMinCap]).toEqual([
+				r.zIndex,
+				r.depth.test,
+				r.depth.write,
+				r.depth.correction,
+				r.depth.ignoreMinCap
+			]);
+			expect([n.xSize, n.ySize, n.angle, n.depthBias, n.shadowFactor]).toEqual([
+				r.xSize,
+				r.ySize,
+				r.angle,
+				r.depthBias,
+				r.shadow
+			]);
+			expect(Array.from(n.position)).toEqual(Array.from(r.position));
+			expect(Array.from(n.size)).toEqual(Array.from(r.size));
+			expect(Array.from(n.offset)).toEqual(Array.from(r.offset));
+			expect(Array.from(n.color)).toEqual(Array.from(r.color));
+			expect(n.textureClass).toBe(r.texture.indexed ? 'indexed' : 'rgba');
+		});
 	});
 });
