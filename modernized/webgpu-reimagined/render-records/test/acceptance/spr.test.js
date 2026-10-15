@@ -22,6 +22,7 @@ import {
 	createSpriteDraw,
 	decodeRgbaFrame,
 	depthCorrectionFlags,
+	directionTo,
 	droppedItemZ,
 	entityPass,
 	entitySortDepth,
@@ -309,9 +310,12 @@ describe('C-08 entity sprites', () => {
 	});
 
 	it('R-SPR-024: Assumptio halo redraws at 1.15×, (1,1,1,0.6), zIndex −100, no depth write', () => {
-		const halo = haloFromLayer(createSpriteDraw({ size: [2, 4], zIndex: 150 }));
+		const halo = haloFromLayer(createSpriteDraw({ size: [2, 4], zIndex: 150, color: [1, 0.5, 1, 1] }));
 		close(halo.size, [2.3, 4.6]);
-		expect(halo).toMatchObject({ color: [1, 1, 1, 0.6], zIndex: -100, depthWrite: false });
+		// Legacy: zIndex − 100 is relative to the element (EntityRender.js:608-609); the effect colour
+		// multiplies the layer colour, and the redraw is additive (renderLayer(…, true), :614)
+		close(halo.color, [1, 0.5, 1, 0.6]);
+		expect(halo).toMatchObject({ zIndex: 50, depthWrite: false, blend: BLEND_ADDITIVE });
 	});
 
 	it('R-SPR-025: after-image trail intervals, counts, alpha and depth', () => {
@@ -347,8 +351,24 @@ describe('C-08 entity sprites', () => {
 		expect(walkFrame(2, 100, 8)).toBe(3);
 	});
 
-	it.fails('R-SPR-029 [pending]: a large turn rotates the body and straightens the head', () => {
-		expect(lookTo({ direction: 0, headDir: 1 }, 4)).toEqual({ direction: 4, headDir: 0 });
+	it('R-SPR-029: 1-step turns move only the head; further turns put the body one step short (legacy lookTo)', () => {
+		// d = current − target (mod 8). d 1 / 7: head only (2 / 1), or the body takes the target when
+		// the head already turned that way (Entity.js:525-554)
+		expect(lookTo({ direction: 1, headDir: 0 }, 0)).toEqual({ direction: 1, headDir: 2 });
+		expect(lookTo({ direction: 1, headDir: 2 }, 0)).toEqual({ direction: 0, headDir: 0 });
+		expect(lookTo({ direction: 7, headDir: 0 }, 0)).toEqual({ direction: 7, headDir: 1 });
+		expect(lookTo({ direction: 7, headDir: 1 }, 0)).toEqual({ direction: 0, headDir: 0 });
+		// d 2, 3 / 5, 6: the body rotates to one step short of the target, head turned
+		expect(lookTo({ direction: 3, headDir: 0 }, 0)).toEqual({ direction: 1, headDir: 2 });
+		expect(lookTo({ direction: 6, headDir: 0 }, 0)).toEqual({ direction: 7, headDir: 1 });
+		// d 0 straightens the head; d 4 (opposite) keeps a turned head's side, a straight head turns fully.
+		// Legacy contradicts the spec's "a larger turn rotates the body and straightens the head" here.
+		expect(lookTo({ direction: 0, headDir: 2 }, 0)).toEqual({ direction: 0, headDir: 0 });
+		expect(lookTo({ direction: 0, headDir: 1 }, 4)).toEqual({ direction: 3, headDir: 1 });
+		expect(lookTo({ direction: 0, headDir: 0 }, 4)).toEqual({ direction: 4, headDir: 0 });
+		expect([directionTo(1, 0), directionTo(-1, 0), directionTo(0, 1), directionTo(0, 0), directionTo(0.6, -2)]).toEqual([
+			6, 2, 4, 0, 7
+		]);
 	});
 
 	it('R-SPR-030: far→near sort with GID tie-break; re-sort cadence; pass split', () => {
@@ -381,8 +401,28 @@ describe('C-08 entity sprites', () => {
 		expect(attachmentRecordState({ behind: true }, 3)).toMatchObject({ zIndex: 1, ignoreShadow: true, direction: 0 });
 	});
 
-	it.fails('R-SPR-031 [pending]: non-repeating attachment is removed at its last frame unless stopAtEnd', () => {
+	it('R-SPR-031: non-repeating attachment is removed at its last frame unless stopAtEnd', () => {
 		expect(attachmentLifetime({ repeat: false, stopAtEnd: false, frames: 4, delay: 100, startTick: 0 }, 1000).alive).toBe(false);
+		// Drawn once more on that last frame
+		expect(attachmentLifetime({ repeat: false, frames: 4, delay: 100, startTick: 0 }, 300)).toMatchObject({
+			draw: true,
+			alive: false,
+			frame: 3
+		});
+		expect(attachmentLifetime({ repeat: false, stopAtEnd: true, frames: 4, delay: 100, startTick: 0 }, 1000)).toMatchObject({
+			alive: true,
+			frame: 3
+		});
+		// duration caps repeating ones (removed undrawn)
+		expect(attachmentLifetime({ repeat: true, duration: 500, frames: 4, delay: 100, startTick: 0 }, 499)).toMatchObject({
+			draw: true,
+			alive: true,
+			frame: 0
+		});
+		expect(attachmentLifetime({ repeat: true, duration: 500, frames: 4, delay: 100, startTick: 0 }, 500)).toMatchObject({
+			draw: false,
+			alive: false
+		});
 	});
 
 	it('R-SPR-032: STR attachments scale with the entity', () => {

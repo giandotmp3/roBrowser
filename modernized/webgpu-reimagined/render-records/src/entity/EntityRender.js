@@ -1,10 +1,21 @@
+import { BLEND_ADDITIVE, BLEND_NORMAL } from '../records/blend.js';
 import { DEFAULT_XSIZE, ENTITY_LIFT, EntityType, SHADOW_LIFT } from './constants.js';
 import { PC_ACTIONS, createAnimationState, selectAnimationFrame, startAction } from './animation.js';
+import { ATTACHMENT_ZINDEX, attachmentLifetime, attachmentOffset } from './attachments.js';
 import { cartOffset, cartState } from './cart.js';
 import { layerBlend, statusEffectColor } from './color.js';
 import { actIndex, visualDirection } from './geometry.js';
 import { planEntityLayers } from './layers.js';
 import { removalAlpha } from './lifecycle.js';
+import {
+	HALO_COLOR,
+	HALO_SCALE,
+	HALO_ZINDEX_OFFSET,
+	afterImageFlags,
+	shouldCaptureTrail,
+	trailAlpha,
+	trailConfig
+} from './overlays.js';
 import { frameSampling, selectPalette } from './palette.js';
 
 /**
@@ -82,6 +93,9 @@ function emitElement(records, ctx, entry) {
 		isShadowLayer: entry.part === 'shadow'
 	});
 
+	// R-SPR-024/025 halo and after-images are drawn before the element's own layers (EntityRender.js:851-865)
+	emitSecondBody.call(this, records, ctx, entry, animation.layers, spr, pal, view.size ?? 1, offset);
+
 	for (const layer of animation.layers) {
 		emitLayer.call(this, records, ctx, entry, layer, spr, pal, view.size ?? 1, offset, blend);
 	}
@@ -94,11 +108,115 @@ function emitElement(records, ctx, entry) {
 }
 
 /**
- * Emit one ACT layer (legacy renderLayer, EntityRender.js:1066-1154, plus the RenderCanvas3D
- * skip, SpriteRenderer.js:177-192).
+ * R-SPR-024 Assumptio halo and R-SPR-025 after-image trails of one element (legacy renderSecondBody,
+ * EntityRender.js:569-731). Both save the running zIndex and restore it, so the element's own
+ * layers still start at its zIndex.
  * @this {Object} entity
  */
-function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend) {
+function emitSecondBody(records, ctx, entry, layers, spr, pal, size, offset) {
+	const { halo, trail, blurType } = ctx.afterImage;
+	if ((!halo && !trail) || entry.part === 'shadow' || entry.part === 'cartshadow') {
+		return;
+	}
+
+	// Halo: every layer at 1.15× scale, effect colour (1,1,1,0.6), from zIndex − 100, no depth
+	// write, additive (renderLayer(…, true), EntityRender.js:588-623)
+	if (halo) {
+		const z = ctx.z;
+		ctx.z = z + HALO_ZINDEX_OFFSET;
+		for (const layer of layers) {
+			emitLayer.call(this, records, ctx, entry, layer, spr, pal, size, offset, BLEND_ADDITIVE, {
+				scale: HALO_SCALE,
+				effect: HALO_COLOR,
+				depthWrite: false
+			});
+		}
+		ctx.z = z;
+	}
+
+	if (!trail) {
+		return;
+	}
+
+	// One trail per legacy element *type*: head and the three headgears share the 'head' trail
+	// (EntityRender.js:631-641), so headgears redraw the head's snapshots.
+	const trails = (this.trails ??= {});
+	const state = (trails[entry.part] ??= { snapshots: [], lastTick: 0 });
+	const now = ctx.frame.tick;
+	const config = trailConfig({
+		blurType,
+		fastMove: !!this.isFastMoving,
+		performanceMode: !!ctx.frame.prefs?.performanceMode
+	});
+	const capture = shouldCaptureTrail({
+		blurType,
+		action: this.action,
+		actions: this.actions ?? PC_ACTIONS,
+		fastMove: !!this.isFastMoving,
+		sinceLast: now - state.lastTick,
+		stored: state.snapshots.length,
+		interval: config.interval
+	});
+	if (capture) {
+		// The snapshot keeps the raw entity position: ghosts draw without the 0.2 body lift (:671, 714)
+		state.snapshots.unshift({
+			position: [...this.position],
+			tick: now,
+			layers,
+			spr,
+			pal,
+			offset: [...offset]
+		});
+		state.lastTick = now;
+		if (state.snapshots.length > config.maxSnapshots) {
+			state.snapshots.pop();
+		}
+	}
+
+	const z = ctx.z;
+	state.snapshots.forEach((snapshot, i) => {
+		const alpha = trailAlpha(blurType, now - snapshot.tick);
+		// Dropped snapshots still take their index in the zIndex (:697-705); alpha-0 type-4 ghosts are
+		// skipped at draw time without consuming zIndex
+		if (!alpha && blurType !== 4) {
+			return;
+		}
+		const effect = config.white
+			? [1, 1, 1, alpha]
+			: [this.effectColor[0], this.effectColor[1], this.effectColor[2], alpha];
+		ctx.z = z - 10 - i;
+		for (const layer of snapshot.layers) {
+			emitLayer.call(
+				this,
+				records,
+				ctx,
+				entry,
+				layer,
+				snapshot.spr,
+				snapshot.pal,
+				size,
+				snapshot.offset,
+				BLEND_NORMAL,
+				{
+					effect,
+					depthWrite: false,
+					position: snapshot.position
+				}
+			);
+		}
+	});
+	ctx.z = z;
+}
+
+/**
+ * Emit one ACT layer (legacy renderLayer, EntityRender.js:1066-1154, plus the RenderCanvas3D
+ * skip, SpriteRenderer.js:177-192).
+ * `over` replaces what legacy changed around a renderLayer call: layer scale factor (halo),
+ * effect colour (halo, trails, attachments), position (trails, behind attachments), depth write,
+ * depth bias (attachments).
+ * @this {Object} entity
+ */
+function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend, over = {}) {
 	// Nothing to render (EntityRender.js:1067-1070)
 	if (layer.index < 0) {
 		return;
@@ -116,8 +234,9 @@ function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend) {
 	}
 
 	// Discrepancy #15: quads use the compiled (power-of-two padded) frame size (:1095-1101)
-	let width = frame.width * layer.scale[0] * size;
-	const height = frame.height * layer.scale[1] * size;
+	const scale = over.scale ?? 1;
+	let width = frame.width * (scale === 1 ? layer.scale[0] : layer.scale[0] * scale) * size;
+	const height = frame.height * (scale === 1 ? layer.scale[1] : layer.scale[1] * scale) * size;
 
 	// Measured heights feed R-SPR-009 on later elements / frames (:1112, 1115-1117)
 	if (entry.part === 'body') {
@@ -135,7 +254,7 @@ function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend) {
 	// R-SPR-017: layer colour × effectColor; the shadow ignores effectColor (:1124-1135). Legacy
 	// does NOT multiply the ground shadow into the colour: it travels as shadowFactor and the
 	// fragment shader applies it (SpriteRenderer.fs:159), so the record keeps them apart.
-	const effect = entry.part === 'shadow' ? [1, 1, 1, 1] : this.effectColor;
+	const effect = entry.part === 'shadow' ? [1, 1, 1, 1] : (over.effect ?? this.effectColor);
 	const color = [0, 1, 2, 3].map(i => layer.color[i] * effect[i]);
 
 	// R-SPR-026 removal fade (:1137-1140)
@@ -155,7 +274,7 @@ function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend) {
 		textureClass: indexed ? 'indexed' : 'rgba',
 		palette: indexed ? (pal.texture ?? null) : null,
 		sampler: frameSampling({ indexed }, ctx.frame.prefs).sampler,
-		position: entry.part === 'shadow' ? [...ctx.groundPosition] : [...ctx.bodyPosition],
+		position: [...(over.position ?? (entry.part === 'shadow' ? ctx.groundPosition : ctx.bodyPosition))],
 		offset: [layer.pos[0] + offset[0], layer.pos[1] + offset[1]],
 		size: [width, height],
 		xSize: this.xSize ?? DEFAULT_XSIZE,
@@ -166,9 +285,9 @@ function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend) {
 		shadowFactor: ctx.shadowFactor,
 		// zIndex post-increments per drawn layer only (SpriteRenderer.js:85, discrepancy #14)
 		zIndex: ctx.z++,
-		depthBias: 0,
+		depthBias: over.depthBias ?? 0,
 		depthTest: true,
-		depthWrite: entry.depthWrite,
+		depthWrite: over.depthWrite ?? entry.depthWrite,
 		// Every entity pass keeps depth correction on (runWithDepth(…, false), EntityRender.js:339, 366)
 		depthCorrection: true,
 		ignoreDepthMinCap: !!entry.ignoreDepthMinCap,
@@ -176,16 +295,104 @@ function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend) {
 	});
 }
 
+/** opt3 flag → OPT3 virtue name (StatusState.js:71-92). */
+const OPT3_NAMES = Object.freeze({
+	berserk: 'BERSERK',
+	marionette: 'MARIONETTE',
+	assumptio: 'ASSUMPTIO',
+	energyCoat: 'ENERGYCOAT',
+	bunshin: 'BUNSIN',
+	hallucinationWalk: 'HALLUCINATIONWALK',
+	quicken: 'QUICKEN',
+	overthrust: 'OVERTHRUST',
+	explosionSpirits: 'EXPLOSIONSPIRITS'
+});
+
 /**
- * R-SPR-023 opt3 flags: explicit `opt3`, else the status virtue names (getOpt3, EntityState.js:105-116).
- * @returns {{berserk: boolean, marionette: boolean}}
+ * R-SPR-023/024/025 opt3 flags: explicit `opt3`, else the status virtue names (getOpt3,
+ * EntityState.js:105-116).
+ * @returns {Object<string, boolean>} {berserk, marionette, assumptio, energyCoat, bunshin,
+ *          hallucinationWalk, quicken, overthrust, explosionSpirits}
  */
 function opt3Of(entity) {
-	if (entity.opt3) {
-		return { berserk: !!entity.opt3.berserk, marionette: !!entity.opt3.marionette };
-	}
 	const virtue = new Set(entity.status?.virtue ?? []);
-	return { berserk: virtue.has('BERSERK'), marionette: virtue.has('MARIONETTE') };
+	const out = {};
+	for (const [flag, name] of Object.entries(OPT3_NAMES)) {
+		out[flag] = entity.opt3 ? !!entity.opt3[flag] : virtue.has(name);
+	}
+	return out;
+}
+
+/**
+ * R-SPR-031 one attachment pass (legacy AttachmentManager._renderFiltered / renderAttachment,
+ * EntityAttachments.js:172-347). Attachments draw with the effect colour white × opacity, from
+ * zIndex 1 (behind) or 500 (front), no depth write, normal blend. Finished attachments are
+ * removed from `this.attachments` (non-repeating at their last frame unless stopAtEnd, repeating
+ * once `duration` elapsed).
+ *
+ * Legacy shadow state is reproduced as is: the pass resets the shadow factor to the ground value,
+ * and an attachment with ignoreShadow (every behind one) sets it to 1 for itself *and everything
+ * drawn after it* -- for a behind pass that is the whole entity body (:181-201).
+ * @this {Object} entity
+ * @param {boolean} behind
+ */
+function emitAttachments(records, ctx, behind) {
+	const list = this.attachments;
+	// Legacy matches the flag strictly here and by truthiness below (:181, 197)
+	if (!list || !list.some(a => a.renderBefore === behind)) {
+		return;
+	}
+	ctx.shadowFactor = ctx.groundShadowFactor;
+	for (let i = 0; i < list.length; ++i) {
+		const a = list[i];
+		if (!!a.renderBefore !== behind) {
+			continue;
+		}
+		if (a.ignoreShadow || a.renderBefore) {
+			ctx.shadowFactor = 1;
+		}
+		if (emitAttachment.call(this, records, ctx, a, behind)) {
+			list.splice(i, 1);
+			i--;
+		}
+	}
+}
+
+/**
+ * One sprite attachment; returns true when it must be removed (EntityAttachments.js:256-347).
+ * @this {Object} entity
+ */
+function emitAttachment(records, ctx, a, behind) {
+	const tick = ctx.frame.tick;
+	if (a.startTick > tick) {
+		return false;
+	}
+	const spr = a.view?.spr;
+	const act = a.view?.act;
+	if (!spr || !act || !spr.frames) {
+		return false;
+	}
+	// Direction-aware attachments pick the ACT action by visual direction (:309-310)
+	const actAction = act.actions[(a.direction ? ctx.visualDir : a.frame) % act.actions.length];
+	const life = attachmentLifetime(a, tick, { frames: actAction.animations.length, actDelay: actAction.delay });
+	if (!life.draw) {
+		return !life.alive;
+	}
+	const offset = attachmentOffset(a);
+	ctx.z = behind ? ATTACHMENT_ZINDEX.behind : ATTACHMENT_ZINDEX.front;
+	const entry = { slot: `attachment:${a.uid ?? ''}`, part: 'attachment', depthWrite: false, main: false };
+	for (const layer of actAction.animations[life.frame].layers) {
+		// The attachment sprite is its own palette (renderLayer(…, spr, spr, 1.0, …), :340)
+		emitLayer.call(this, records, ctx, entry, layer, spr, spr, 1.0, offset, BLEND_NORMAL, {
+			effect: [1, 1, 1, a.opacity],
+			depthWrite: false,
+			depthBias: a.depth || 0,
+			// Behind attachments sit at the raw entity position (EntityRender.js:344-346); front ones
+			// where the entity left the sprite position, the lifted body position
+			position: behind ? ctx.rawPosition : ctx.bodyPosition
+		});
+	}
+	return !life.alive;
 }
 
 /** Layer-plan input from the entity state (riding, cart gate, ids). */
@@ -223,8 +430,13 @@ function planInput(entity, visualDir, playing) {
  * effectColor / opt3 are absent), removal {tick, delay},
  * walk {dist, speed}, attackSpeed.
  *
- * Not composed here yet: Assumptio halo and after-image trails (R-SPR-024/025, EntityRender.js:569-731),
- * sprite/STR attachments (R-SPR-031/032), sounds, picking rectangles (R-PICK-003).
+ * Halo / after-image state (R-SPR-024/025): opt3 {assumptio, energyCoat, bunshin, hallucinationWalk,
+ * quicken, overthrust, explosionSpirits} (or status.virtue names), enableHalo, enableTrail,
+ * fastMoveTrail, isFastMoving, blurType; `trails` holds the per-element snapshots across frames.
+ * Sprite attachments (R-SPR-031): `attachments`, the list addAttachment() maintains (each with
+ * `view: {spr, act}`); finished ones are removed from it while composing.
+ *
+ * Not composed here yet: STR attachments (R-SPR-032), sounds, picking rectangles (R-PICK-003).
  *
  * @this {Object}
  */
@@ -272,15 +484,27 @@ export function EntityRender() {
 			idle: false,
 			frame: 0
 		});
+		const opt3 = opt3Of(this);
+		const groundShadowFactor = frame.shadowFactorAt ? frame.shadowFactorAt(position[0], position[1]) : 1;
 		const ctx = {
 			frame,
 			visualDir,
 			z: 1, // EntityRender.js:302
 			anchor: [0, 0], // EntityRender.js:306-307
-			opt3: opt3Of(this),
+			opt3,
+			afterImage: afterImageFlags({
+				opt3,
+				enableHalo: this.enableHalo,
+				enableTrail: this.enableTrail,
+				fastMoveTrail: this.fastMoveTrail,
+				blurType: this.blurType
+			}),
 			walkPhase: {},
-			// R-SPR-012 one factor per entity, applied to every layer (EntityRender.js:301)
-			shadowFactor: frame.shadowFactorAt ? frame.shadowFactorAt(position[0], position[1]) : 1,
+			// R-SPR-012 one factor per entity, applied to every layer (EntityRender.js:301); an
+			// attachment pass may override it for the rest of the entity (emitAttachments)
+			groundShadowFactor,
+			shadowFactor: groundShadowFactor,
+			rawPosition: [position[0], position[1], position[2]],
 			// R-SPR-011 shadow on the ground (:334-336); R-SPR-004 body lift (:360, 520, 527, 535, 544)
 			groundPosition: [position[0], position[1], cellHeight + SHADOW_LIFT],
 			bodyPosition: [position[0], position[1], position[2] + ENTITY_LIFT],
@@ -295,7 +519,13 @@ export function EntityRender() {
 			type: this.type ?? EntityType.PC
 		});
 		const bodyAt = before.findIndex(e => e.slot === 'body');
-		for (const entry of before.slice(0, bodyAt + 1)) {
+		const shadowAt = before[0]?.slot === 'shadow' ? 1 : 0;
+		for (const entry of before.slice(0, shadowAt)) {
+			emitElement.call(this, records, ctx, entry);
+		}
+		// R-SPR-031 behind-entity attachments: after the shadow, before every other element (EntityRender.js:344-346)
+		emitAttachments.call(this, records, ctx, true);
+		for (const entry of before.slice(shadowAt, bodyAt + 1)) {
 			emitElement.call(this, records, ctx, entry);
 		}
 		const after = planEntityLayers({
@@ -305,5 +535,7 @@ export function EntityRender() {
 		for (const entry of after.slice(after.findIndex(e => e.slot === 'body') + 1)) {
 			emitElement.call(this, records, ctx, entry);
 		}
+		// R-SPR-031 front attachments, after the whole entity (EntityRender.js:92-95)
+		emitAttachments.call(this, records, ctx, false);
 	};
 }

@@ -15,7 +15,10 @@
 import {
 	BLEND_ADDITIVE,
 	EntityRender,
-	RecordStream
+	RecordStream,
+	addAttachment,
+	createAttachment,
+	removeAttachment
 } from '../../../modernized/webgpu-reimagined/render-records/src/index.js';
 import { runLegacyScene } from './legacyPcScene.js';
 import { snapshotLegacyEntity } from './legacyEntitySnapshot.js';
@@ -68,6 +71,38 @@ export function diffFrame(frame, legacy, modern) {
 }
 
 /**
+ * Mirror the legacy entity's AttachmentManager add / remove calls (EntityAttachments.js:50-155)
+ * into a render-records attachment list. Only the calls are mirrored: normalisation, lifetime and
+ * removal at the end are render-records' own (createAttachment / addAttachment / renderRecords).
+ * The sprite is resolved through legacy Client.loadFile, as legacy's add does. STR attachments
+ * (R-SPR-032) are left out.
+ * @param {object} live legacy entity
+ * @param {object[]} list render-records attachment list (mutated)
+ */
+export function mirrorAttachments(live, list) {
+	const manager = live.attachments;
+	const add = manager.add.bind(manager);
+	const remove = manager.remove.bind(manager);
+	manager.add = def => {
+		const raw = { ...def };
+		add(def);
+		const attachment = createAttachment(raw, Date.now());
+		if (attachment) {
+			const spr = mocks.client.loadFile(attachment.spr) ?? null;
+			const act = mocks.client.loadFile(attachment.act) ?? null;
+			addAttachment(list, { ...attachment, view: { spr, act } });
+		}
+	};
+	manager.remove = uid => {
+		remove(uid);
+		removeAttachment(list, uid);
+	};
+}
+
+/** uids of the legacy entity's sprite attachments (STR ones left out). */
+export const legacyAttachmentUids = live => live.attachments.list.filter(a => !a.isStr).map(a => a.uid);
+
+/**
  * Run a legacy scene and the composer side by side.
  *
  * @param {object} opts runLegacyScene options (unit, frames, script, owner, ...) plus:
@@ -76,8 +111,13 @@ export function diffFrame(frame, legacy, modern) {
  * @param {boolean} [opts.composeStatus] composer derives effectColor / opt3 from the status (R-SPR-018…023)
  * @param {{shadowFactorAt: function, cellHeightAt: function}} [opts.ground] the seams the test
  *        mocked Ground.getShadowFactor / Altitude.getCellHeight with
+ * @param {function} [opts.onSnapshot] (snapshot, frameIndex, live) right before renderRecords: a
+ *        scene may replace state with what render-records computed itself (e.g. lookTo)
+ * The composer's cross-frame state -- after-image `trails` (R-SPR-025) and the mirrored
+ * `attachments` list (R-SPR-031) -- is carried from one frame's snapshot to the next.
  * @returns {{legacy: object[][], modern: object[][], states: object[], mismatches: object[], names: Map,
- *            entity: object, lastSnapshot: object|null}}
+ *            entity: object, lastSnapshot: object|null, attachments: object[]}} `attachments[frame]`
+ *            holds the legacy and render-records attachment uids after the frame
  */
 export function runEntityDiff({
 	seed = 0x5eed,
@@ -86,11 +126,15 @@ export function runEntityDiff({
 	ground = { shadowFactorAt: () => 1, cellHeightAt: () => 0 },
 	onSpawn,
 	beforeFrame,
+	afterFrame,
+	onSnapshot,
 	...scene
 } = {}) {
 	const legacy = [];
 	const modern = [];
 	const states = [];
+	const attachments = [];
+	const carried = { trails: {}, attachments: [] };
 	let spawnTick = 0;
 	let lastSnapshot = null;
 	const { names, entity } = runLegacyScene(seed, {
@@ -100,6 +144,7 @@ export function runEntityDiff({
 			if (pinAnimationClock) {
 				spawned.animation.tick = spawnTick;
 			}
+			mirrorAttachments(spawned, carried.attachments);
 			if (onSpawn) {
 				onSpawn(spawned, clock);
 			}
@@ -127,6 +172,11 @@ export function runEntityDiff({
 				action: snapshot.action,
 				walkDist: snapshot.walk ? snapshot.walk.dist : 0
 			};
+			snapshot.trails = carried.trails;
+			snapshot.attachments = carried.attachments;
+			if (onSnapshot) {
+				onSnapshot(snapshot, frame, live);
+			}
 			EntityRender.call(snapshot);
 			const stream = new RecordStream();
 			stream.beginFrame();
@@ -140,8 +190,17 @@ export function runEntityDiff({
 			});
 			modern[frame] = stream.records;
 			lastSnapshot = snapshot;
+		},
+		afterFrame: (frame, live, clock) => {
+			attachments[frame] = {
+				legacy: legacyAttachmentUids(live),
+				modern: carried.attachments.map(a => a.uid)
+			};
+			if (afterFrame) {
+				afterFrame(frame, live, clock);
+			}
 		}
 	});
 	const mismatches = legacy.flatMap((records, frame) => diffFrame(frame, records, modern[frame]));
-	return { legacy, modern, states, mismatches, names, entity, lastSnapshot };
+	return { legacy, modern, states, mismatches, names, entity, lastSnapshot, attachments };
 }

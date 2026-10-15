@@ -32,6 +32,7 @@ export { FAKE_EPOCH_MS };
 // ---------------------------------------------------------------------------------------------
 
 const PC_ACTIONS = 13; // EntityAction.js:160-172 (PC: IDLE 0 ... SKILL 12)
+const ATTACHMENT_DIR = 'data/sprite/\xc0\xcc\xc6\xd1\xc6\xae/'; // EntityAttachments.js:85-87
 const DIRECTIONS = 8;
 export const ATTACK_FRAMES = 4;
 export const ATTACK_DELAY = 100; // ms, the ACT delay legacy stores (Loaders/Action.js:60, ×25 ticks)
@@ -221,6 +222,45 @@ export function buildAssets() {
 			anchorOf: () => ({ x: 0, y: -50 })
 		})
 	);
+
+	// Sprite attachments (R-SPR-031), under legacy's 'data/sprite/이펙트/' folder in CP949 bytes
+	// (EntityAttachments.js:85-87): RGBA (loaded with to_rgba), 8 ACT actions (one per direction for
+	// direction-aware ones; `frame` picks one otherwise), distinct texture per action and frame.
+	const attachment = (part, file, { frames, delay = 100, layersOf }) =>
+		add(
+			`${ATTACHMENT_DIR}${file}`,
+			makeSpr(part, { indexed: false, frames: 8 * frames, width: 32, height: 32 }, names),
+			makeAct({
+				actions: 1,
+				framesOf: () => frames,
+				delayOf: () => delay,
+				layersOf: (a, d, f) => layersOf(d, f, d * frames + f),
+				anchorOf: () => ({ x: 0, y: 0 })
+			})
+		);
+	// Freeze ice (EntityState.js:212-216, 265-270): action 0 is the block, action 1 its break
+	attachment('att-freeze', '\xbe\xf3\xc0\xbd\xb6\xaf', {
+		frames: 4,
+		layersOf: (d, f, i) => [layer(i, [0, -20 + f], { color: [0.8, 0.9, 1, 0.9] })]
+	});
+	// Sleep / stun / curse head attachments (EntityState.js:252-258, 281-287, 315-321)
+	attachment('att-sleep', 'status-sleep', { frames: 3, delay: 120, layersOf: (d, f, i) => [layer(i, [2, -10])] });
+	attachment('att-stun', 'status-stun', {
+		frames: 4,
+		delay: 90,
+		layersOf: (d, f, i) => [layer(i, [-3, -12], { scale: [0.8, 0.8] }), layer(-1, [0, 0])]
+	});
+	attachment('att-curse', 'status-curse', {
+		frames: 2,
+		delay: 150,
+		layersOf: (d, f, i) => [layer(i, [d, -8], { is_mirror: d > 4 ? 1 : 0 })]
+	});
+	// Generic scene attachments: a two-layer behind aura and a one-shot front burst (delay from ACT 0 → 100 ms)
+	attachment('att-aura', 'test-aura', {
+		frames: 3,
+		layersOf: (d, f, i) => [layer(i, [0, 4], { scale: [1.5, 0.5] }), layer((i + 1) % 24, [0, -4], { angle: 30 })]
+	});
+	attachment('att-burst', 'test-burst', { frames: 5, delay: 0, layersOf: (d, f, i) => [layer(i, [f, -f])] });
 
 	return { files, names };
 }

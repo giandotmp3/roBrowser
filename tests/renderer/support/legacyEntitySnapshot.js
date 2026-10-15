@@ -105,6 +105,22 @@ function legacyStatus(entity, session) {
 	};
 }
 
+/** The opt3 flags legacy renderElement reads (EntityRender.js:835-865), by render-records name. */
+function legacyOpt3(entity) {
+	const { Status } = StatusConst;
+	return {
+		berserk: !!entity.getOpt3(Status.BERSERK),
+		marionette: !!entity.getOpt3(Status.MARIONETTE),
+		assumptio: !!entity.getOpt3(Status.ASSUMPTIO),
+		energyCoat: !!entity.getOpt3(Status.ENERGYCOAT),
+		bunshin: !!entity.getOpt3(Status.NJ_BUNSINJYUTSU),
+		hallucinationWalk: !!entity.getOpt3(Status.HALLUCINATIONWALK),
+		quicken: !!(entity.virtue & OPT3.QUICKEN),
+		overthrust: !!entity.getOpt3(Status.OVERTHRUST),
+		explosionSpirits: !!entity.getOpt3(Status.EXPLOSIONSPIRITS)
+	};
+}
+
 /**
  * @param {object} entity legacy Entity
  * @param {object} deps
@@ -187,10 +203,13 @@ export function snapshotLegacyEntity(
 		ySize: entity.ySize,
 		robeHeight: entity.robeHeight,
 		bodyHeight: entity.bodyHeight,
-		opt3: {
-			berserk: !!entity.getOpt3(StatusConst.Status.BERSERK),
-			marionette: !!entity.getOpt3(StatusConst.Status.MARIONETTE)
-		},
+		opt3: legacyOpt3(entity),
+		// R-SPR-024/025 halo and after-image switches set by skills / fast moves (EntityRender.js:843-865)
+		enableHalo: !!entity._enableHalo,
+		enableTrail: !!entity._enableTrail,
+		fastMoveTrail: !!entity._fastMoveTrail,
+		isFastMoving: !!entity.isFastMoving,
+		blurType: entity._blurType,
 		removal: entity.remove_tick ? { tick: entity.remove_tick, delay: entity.remove_delay } : null,
 		walk: entity.walk ? { dist: entity.walk.dist, speed: entity.walk.speed } : null,
 		attackSpeed: entity.attack_speed

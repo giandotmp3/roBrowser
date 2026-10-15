@@ -141,13 +141,17 @@ These were found at scaffold time and settled before phase 1.
 - **Phase 2 widening: done for entities and damage numbers.**
   - **Entity scenes** (`tests/renderer/RecordDiff.entityScenes.test.js`): walking, cart (front, back, Super Novice), riding, mob death fade, status tints, NPC. All match field by field over non-uniform terrain. This found and fixed a composer bug (INVISIBLE under intravision, spec #24).
   - **Damage numbers** (`tests/renderer/RecordDiff.damage.test.js`, `render-records/src/damage/DamageComposer.js`): all hit types, skins 0–3, suffixes, DPR 2, damageMotion 0–3, old PACKETVER. Texture identity is compared by glyph/skin key. The only declared divergences are the flagged R-DMG-004 and R-DMG-009 fixes.
-  - **Remaining for phase 2:**
-    - halo and trails (R-SPR-024/025);
-    - attachments (R-SPR-031/032);
-    - lookTo (R-SPR-029);
-    - attack-speed delays, falcon, homunculus/mercenary, baby/warp xSize, external palettes;
-    - effects (STR/2D/3D/cylinder…), which mostly draw outside `SpriteRenderer` and need their own record seam.
-- **Next:** effect record seam + diff, then phase 3 (gpu-webgl2 run batching over the record stream).
+- **Entity extras** (`RecordDiff.entityExtras.test.js`): the Assumptio halo, after-image trails, lookTo and SPR attachments (including status attachments) match legacy field by field.
+- **STR effects:**
+  - `src/Renderer/Effects/StrEffect.js` now draws from EffectDraw-shaped records, with `addRecordSink`. A GL snapshot taken on the unmodified file still matches.
+  - render-records `effects/StrPlayer.js` reproduces legacy STR records (`RecordDiff.strEffect.test.js`). The only declared divergence is the R-EFX-010 fog fix.
+- **Remaining for phase 2:**
+  - Point the R-SPR-032 test at `StrPlayer` (hat logic lives there).
+  - The other effect families (2D/3D/cylinder/RSM/aura/weather…) each need a record seam plus a diff.
+  - The EffectManager pass (R-EFX-006) and `EffectSystem.emit`.
+  - Picking-rect widening by halo and trails.
+  - HITL decisions: spec #34 (shadow leak) and #41 (invalid STR blend).
+- **Next:** the remaining effect families (record seam + diff each), then phase 3 (gpu-webgl2 run batching over the record stream).
 
 ## Still open
 

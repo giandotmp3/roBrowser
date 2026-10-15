@@ -1510,6 +1510,29 @@ Source paths below are relative to `src/`.
 32. **R-DMG-002:** endure is added without the ENDURE flag (`MapEngine/Entity.js:722-725`), so ENDURE only selects a sound.
 33. **R-DMG-009:** `SpriteRenderer.depth` is set before the alpha check (`Damage.js:670`), so the carried-over value can be the index of an entry that was never drawn.
 
+**Found by the entity-extras and STR record-diffs** (`RecordDiff.entityExtras.test.js`, `RecordDiff.strEffect.test.js`, 2026-10-15):
+
+34. **[PROPOSED FLAG, parity kept pending HITL] R-SPR-031 shadow leak.** A behind-entity or `ignoreShadow` attachment sets `SpriteRenderer.shadow = 1` and never restores it (`EntityAttachments.js:176-201`). Every later draw, including the whole entity body, then ignores the ground shadow. The rebuild currently reproduces this.
+35. **R-SPR-029 (correction):** legacy switches on `d−4` (`Entity.js:521-571`), so its "turn" default branch is unreachable. d=1 and d=7 turn only the head. d=2/3/5/6 rotate the body to one step short of the target and turn the head. At d=4 a turned head keeps its side, so `lookTo({dir 0, headDir 1}, 4)` gives `{3, 1}`.
+36. **R-SPR-024:** the halo's "zIndex −100" is relative to the element's zIndex (body 150 gives 50, 51…). The halo is drawn additive, multiplies the layer colour, and fades with removal (`EntityRender.js:608-614`).
+37. **R-SPR-025:**
+    - Ghosts are drawn at the unlifted position.
+    - There is one trail per element type, so the head and hats share the 'head' trail.
+    - A snapshot is dropped at alpha ≤ 0.05, tested before the type-3 doubling; type 4 is never dropped.
+    - Ghosts use normal blend even under Berserk, and type 1 uses the current `effectColor`.
+    - Precedence is Bunshin > Hallucination Walk > `_blurType` (`EntityRender.js:628-730`).
+38. **R-SPR-031:**
+    - The head lift applies only when there is no x/y offset.
+    - Behind attachments sit at the raw position; front ones at the lifted position.
+    - An attachment is direction-aware exactly when it has no `frame` key.
+    - A one-shot is drawn on its last frame and then removed; an expired `duration` removes it without drawing (`EntityAttachments.js`).
+39. **R-EFX-007:**
+    - anitype 4 ("reverse") yields negative indices, so the layer is invisible, not reversed (`StrEffect.js:399`).
+    - A final source key with no following delta key draws nothing (`:339`).
+    - Removal uses the wrapped key, so a persistent effect with maxKey 0 is removed immediately.
+40. **R-EFX-009:** keyframe `uv` is ignored; the quad always samples the full texture (`StrEffect.js:203-217`).
+41. **[SME] R-EFX-008:** D3D codes 0/12/13 call `blendFunc(undefined)` (INVALID_ENUM), so the previous blend stays. render-records falls back to normal alpha. This is kept out of the diff until decided.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|
