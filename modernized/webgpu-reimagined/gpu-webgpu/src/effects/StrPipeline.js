@@ -57,13 +57,14 @@ export function strBindGroupLayoutEntries() {
 export class StrPipeline {
 	/**
 	 * @param {{device: GPUDevice, residency: import('../residency/SpriteResidency.js').SpriteResidency,
-	 *   pools?: import('../residency/TextureArrayPools.js').TextureArrayPools, sampleCount?: number, ring?: InstanceRing}} deps
+	 *   pools?: import('../residency/TextureArrayPools.js').TextureArrayPools, sampleCount?: number, depthFormat?: GPUTextureFormat, ring?: InstanceRing}} deps
 	 */
-	constructor({ device, residency, pools, sampleCount, ring }) {
+	constructor({ device, residency, pools, sampleCount, depthFormat, ring }) {
 		this.device = device;
 		this.residency = residency;
 		this.pools = pools ?? /** @type {any} */ (residency.uploader);
 		this.sampleCount = sampleCount;
+		this.depthFormat = depthFormat;
 		this.ring = ring ?? new InstanceRing({ device });
 		this.module = null;
 		this.bindGroupLayout = null;
@@ -102,7 +103,7 @@ export class StrPipeline {
 				vertexEntry: 'vs_main',
 				fragmentEntry: 'fs_main'
 			}),
-			this.sampleCount === undefined ? undefined : { sampleCount: this.sampleCount }
+			{ sampleCount: this.sampleCount, depthFormat: this.depthFormat }
 		);
 		this.uniforms = device.createBuffer({
 			label: 'str-frame',

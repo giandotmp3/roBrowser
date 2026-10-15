@@ -347,17 +347,19 @@ export class SpriteRunRenderer {
 	 *   residency: import('../residency/SpriteResidency.js').SpriteResidency,
 	 *   pools?: import('../residency/TextureArrayPools.js').TextureArrayPools,
 	 *   sampleCount?: number,
+	 *   depthFormat?: GPUTextureFormat,
 	 *   ring?: InstanceRing,
 	 *   mixTextureClasses?: boolean
 	 * }} deps  `mixTextureClasses` defaults to `canMixTextureClasses(device)`
 	 */
-	constructor({ device, residency, pools, sampleCount, ring, mixTextureClasses }) {
+	constructor({ device, residency, pools, sampleCount, depthFormat, ring, mixTextureClasses }) {
 		this.device = device;
 		/** One bind group with both array sets, batches mix texture classes (else split fallback). */
 		this.mixTextureClasses = mixTextureClasses ?? canMixTextureClasses(device);
 		this.residency = residency;
 		this.pools = pools ?? /** @type {any} */ (residency.uploader);
 		this.sampleCount = sampleCount;
+		this.depthFormat = depthFormat;
 		this.ring = ring ?? new InstanceRing({ device });
 		this.module = null;
 		this.bindGroupLayout = null;
@@ -410,7 +412,7 @@ export class SpriteRunRenderer {
 				vertexEntry: 'vs_main',
 				fragmentEntry: 'fs_main'
 			}),
-			this.sampleCount === undefined ? undefined : { sampleCount: this.sampleCount }
+			{ sampleCount: this.sampleCount, depthFormat: this.depthFormat }
 		);
 		this.quad = device.createBuffer({
 			label: 'sprite-quad',

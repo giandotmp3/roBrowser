@@ -22,16 +22,18 @@ export class RunRenderer {
 	 *   device: GPUDevice,
 	 *   residency: import('../residency/SpriteResidency.js').SpriteResidency,
 	 *   sampleCount?: number,
+	 *   depthFormat?: GPUTextureFormat,
 	 *   sprites?: SpriteRunRenderer,
 	 *   str?: StrPipeline,
 	 *   mixTextureClasses?: boolean
 	 * }} deps
 	 */
-	constructor({ device, residency, sampleCount, sprites, str, mixTextureClasses }) {
+	constructor({ device, residency, sampleCount, depthFormat, sprites, str, mixTextureClasses }) {
 		this.device = device;
 		this.residency = residency;
-		this.sprites = sprites ?? new SpriteRunRenderer({ device, residency, sampleCount, mixTextureClasses });
-		this.str = str ?? new StrPipeline({ device, residency, sampleCount });
+		this.sprites =
+			sprites ?? new SpriteRunRenderer({ device, residency, sampleCount, depthFormat, mixTextureClasses });
+		this.str = str ?? new StrPipeline({ device, residency, sampleCount, depthFormat });
 		/** Draw calls issued by the last `encode()`. */
 		this.lastDrawCalls = 0;
 		/** render-records runs of the last `encode()` (pipeline-state boundaries), for diagnostics. */

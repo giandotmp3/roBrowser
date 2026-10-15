@@ -56,12 +56,12 @@ export const LEGACY_STUBS = Object.freeze([
 const STUB_PREFIX = '\0legacy-stub:';
 
 /**
- * Stubbed seams a page drives for real: legacy module → the smoke path prefix whose
- * importers get the real module (the effects page imports the real StrEffect; every
- * other importer, e.g. the entity path's attachments, keeps the stub). Same as gpu-webgl2.
+ * Stubbed seams a page drives for real: legacy module → the smoke path prefixes whose
+ * importers get the real module (the effects and backend pages import the real StrEffect;
+ * every other importer, e.g. the entity path's attachments, keeps the stub). Same as gpu-webgl2.
  */
 const REAL_FOR = Object.freeze({
-	'Renderer/Effects/StrEffect.js': path.join(packageRoot, 'smoke', 'effects')
+	'Renderer/Effects/StrEffect.js': [path.join(packageRoot, 'smoke', 'effects'), path.join(packageRoot, 'smoke', 'backend')]
 });
 
 /**
@@ -70,7 +70,7 @@ const REAL_FOR = Object.freeze({
  * with the LEGACY_STUBS seams swapped for smoke/entities/stubs.js whatever the
  * import spelling (alias or relative). `Renderer/Camera.js` is one of them, so
  * SpriteRenderer's `./Camera.js` gets smoke/cameraStub.js on every page. The
- * effects page gets the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`).
+ * effects and backend pages get the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`).
  */
 export default {
 	root: packageRoot,
@@ -91,7 +91,7 @@ export default {
 					return null;
 				}
 				const rel = path.relative(legacy, resolved.id.split('?')[0]).split(path.sep).join('/');
-				if (REAL_FOR[rel] && importer.split('?')[0].startsWith(REAL_FOR[rel])) {
+				if (REAL_FOR[rel]?.some(prefix => importer.split('?')[0].startsWith(prefix))) {
 					return null;
 				}
 				return LEGACY_STUBS.includes(rel) ? `${STUB_PREFIX}${rel}` : null;

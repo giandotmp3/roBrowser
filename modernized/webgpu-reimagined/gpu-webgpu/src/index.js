@@ -5,7 +5,7 @@
  */
 export * from './errors.js';
 export * from './constants.js';
-export { selectBackend } from './WebGpuBackend.js';
+export { selectBackend, WebGpuBackend, backingStoreSize } from './WebGpuBackend.js';
 
 export { RenderDevice, DEVICE_REQUEST, DEFAULT_PIPELINE_STATE, REQUIRED_LIMITS } from './device/RenderDevice.js';
 export { onRenderError } from './device/frameErrorPolicy.js';
@@ -121,4 +121,4 @@ export * from './post/postChain.js';
 export * from './post/postPasses.js';
 export { PostChain } from './post/PostChainRenderer.js';
 export { LivePreviews } from './preview/LivePreviews.js';
-export { Capture } from './capture/Capture.js';
+export { Capture, unpackRows, COPY_ROW_ALIGNMENT } from './capture/Capture.js';

@@ -18,11 +18,13 @@ export function sceneSize({ width, height, performanceMode }) {
 export class OffscreenTarget {
 	/**
 	 * @param {GPUDevice} device
-	 * @param {{sampleCount?: number}} [options]  1 renders straight into the resolve texture (MSAA off)
+	 * @param {{sampleCount?: number, depthFormat?: GPUTextureFormat}} [options]  sampleCount 1 renders straight
+	 *   into the resolve texture (MSAA off); depthFormat must match the pipelines' (default depth24plus)
 	 */
-	constructor(device, { sampleCount = MSAA_SAMPLES } = {}) {
+	constructor(device, { sampleCount = MSAA_SAMPLES, depthFormat = DEPTH_FORMAT } = {}) {
 		this._device = device;
 		this.sampleCount = sampleCount;
+		this.depthFormat = depthFormat;
 		this.msaa = null;
 		this.depth = null;
 		this.resolve = null;
@@ -31,14 +33,14 @@ export class OffscreenTarget {
 	}
 
 	/** Descriptors (exposed so tests can assert format/sample count without a GPU). */
-	static descriptors(width, height, sampleCount = MSAA_SAMPLES) {
+	static descriptors(width, height, sampleCount = MSAA_SAMPLES, depthFormat = DEPTH_FORMAT) {
 		const size = { width, height };
 		const RENDER_ATTACHMENT = 0x10;
 		const TEXTURE_BINDING = 0x04;
 		const COPY_SRC = 0x01;
 		return {
 			msaa: sampleCount > 1 ? { size, format: RENDER_FORMAT, sampleCount, usage: RENDER_ATTACHMENT } : null,
-			depth: { size, format: DEPTH_FORMAT, sampleCount, usage: RENDER_ATTACHMENT },
+			depth: { size, format: depthFormat, sampleCount, usage: RENDER_ATTACHMENT },
 			resolve: {
 				size,
 				format: RENDER_FORMAT,
@@ -53,7 +55,7 @@ export class OffscreenTarget {
 			return;
 		}
 		this.destroy();
-		const d = OffscreenTarget.descriptors(width, height, this.sampleCount);
+		const d = OffscreenTarget.descriptors(width, height, this.sampleCount, this.depthFormat);
 		this.msaa = d.msaa ? this._device.createTexture(d.msaa) : null;
 		this.depth = this._device.createTexture(d.depth);
 		this.resolve = this._device.createTexture(d.resolve);

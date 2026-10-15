@@ -13,7 +13,8 @@ import { CLEAR_DEPTH, DEFAULT_DEPTH_COMPARE, DEPTH_FORMAT, MSAA_SAMPLES, RENDER_
  */
 export const DEVICE_REQUEST = Object.freeze({
 	adapter: Object.freeze({ powerPreference: 'high-performance' }),
-	canvas: Object.freeze({ alphaMode: 'opaque' }),
+	// usage: RENDER_ATTACHMENT | COPY_SRC (C-20 capture copies the final frame from the swapchain texture).
+	canvas: Object.freeze({ alphaMode: 'opaque', usage: 0x10 | 0x01 }),
 	target: Object.freeze({
 		format: RENDER_FORMAT,
 		depthFormat: DEPTH_FORMAT,
@@ -87,7 +88,12 @@ export class RenderDevice {
 			throw new DeviceUnavailableError('canvas has no webgpu context');
 		}
 		this.canvasFormat = this._gpu.getPreferredCanvasFormat();
-		context.configure({ device, format: this.canvasFormat, alphaMode: DEVICE_REQUEST.canvas.alphaMode });
+		context.configure({
+			device,
+			format: this.canvasFormat,
+			alphaMode: DEVICE_REQUEST.canvas.alphaMode,
+			usage: DEVICE_REQUEST.canvas.usage
+		});
 		this.adapter = adapter;
 		this.device = device;
 		this.context = context;

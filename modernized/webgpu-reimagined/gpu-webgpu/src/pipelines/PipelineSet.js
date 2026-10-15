@@ -18,9 +18,10 @@ export const SCENE_WRITE_MASK = 0x7;
  * like GL, a disabled depth test also writes no depth.
  * @param {import('./pipelineKey.js').PipelineSpec} spec
  * @param {{module: GPUShaderModule, layout: GPUPipelineLayout|'auto', buffers?: GPUVertexBufferLayout[], vertexEntry?: string, fragmentEntry?: string}} shader
- * @param {{sampleCount?: number}} [options]  sampleCount 1 when the target has MSAA off
+ * @param {{sampleCount?: number, depthFormat?: GPUTextureFormat}} [options]  sampleCount 1 when the target has MSAA
+ *   off; depthFormat: the scene target's (default depth24plus; the backend smoke page also runs depth16unorm)
  */
-export function describePipeline(spec, shader, { sampleCount = MSAA_SAMPLES } = {}) {
+export function describePipeline(spec, shader, { sampleCount = MSAA_SAMPLES, depthFormat = DEPTH_FORMAT } = {}) {
 	return {
 		label: pipelineSpecKey(spec),
 		layout: shader.layout,
@@ -32,7 +33,7 @@ export function describePipeline(spec, shader, { sampleCount = MSAA_SAMPLES } = 
 		},
 		primitive: { topology: spec.topology ?? 'triangle-list', cullMode: 'none' },
 		depthStencil: {
-			format: DEPTH_FORMAT,
+			format: depthFormat,
 			depthWriteEnabled: Boolean(spec.depthTest && spec.depthWrite),
 			depthCompare: spec.depthTest ? DEFAULT_DEPTH_COMPARE : 'always'
 		},
@@ -68,12 +69,13 @@ export class PipelineSet {
 	/**
 	 * @param {GPUDevice} device
 	 * @param {(family: string) => {module: any, layout: any, buffers?: any[], vertexEntry?: string, fragmentEntry?: string}} shaderFor
-	 * @param {{sampleCount?: number}} [options]
+	 * @param {{sampleCount?: number, depthFormat?: GPUTextureFormat}} [options]
 	 */
-	constructor(device, shaderFor, { sampleCount = MSAA_SAMPLES } = {}) {
+	constructor(device, shaderFor, { sampleCount = MSAA_SAMPLES, depthFormat = DEPTH_FORMAT } = {}) {
 		this._device = device;
 		this._shaderFor = shaderFor;
 		this._sampleCount = sampleCount;
+		this._depthFormat = depthFormat;
 		/** @type {Map<string, GPURenderPipeline>} */
 		this._ready = new Map();
 		/** @type {Map<string, Promise<GPURenderPipeline>>} */
@@ -88,7 +90,10 @@ export class PipelineSet {
 		}
 		const p = this._device
 			.createRenderPipelineAsync(
-				describePipeline(spec, this._shaderFor(spec.family), { sampleCount: this._sampleCount })
+				describePipeline(spec, this._shaderFor(spec.family), {
+					sampleCount: this._sampleCount,
+					depthFormat: this._depthFormat
+				})
 			)
 			.then(pipeline => {
 				this._ready.set(key, pipeline);

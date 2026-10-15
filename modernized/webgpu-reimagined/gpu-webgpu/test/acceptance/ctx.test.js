@@ -76,12 +76,19 @@ describe('CTX: device, frame, loss', () => {
 		expect(ctl.shouldHandleResize()).toBe(false);
 	});
 
-	it.fails('R-CTX-007: rebuild hides the overlay, recreates pipelines/post targets, reconfigures previews, re-runs setMap(currentMap) and resumes', async () => {
+	it('R-CTX-007: rebuild hides the overlay, recreates pipelines/post targets, reconfigures previews, re-runs setMap(currentMap) and resumes', async () => {
 		const fake = createFakeGpu();
-		const overlay = { show: vi.fn(), hide: vi.fn() };
-		const scene = { runStep: vi.fn(), currentMap: () => 'prontera', setMap: vi.fn(async () => {}) };
-		const previews = { reconfigureAll: vi.fn() };
-		const postChain = { rebuild: vi.fn() };
+		const order = [];
+		const overlay = { show: vi.fn(), hide: vi.fn(() => order.push('hide')) };
+		const scene = {
+			runStep: vi.fn(),
+			currentMap: () => 'prontera',
+			setMap: vi.fn(async () => order.push('setMap'))
+		};
+		const previews = { reconfigureAll: vi.fn(() => order.push('previews')) };
+		const postChain = { rebuild: vi.fn(async () => order.push('post')) };
+		const pipelines = { rebuild: vi.fn(async () => order.push('pipelines')) };
+		const residency = { purgeAll: vi.fn(), reset: vi.fn(() => order.push('residency')) };
 		const ctl = new DeviceLossController({
 			overlay,
 			assets: { purge: vi.fn() },
@@ -89,23 +96,37 @@ describe('CTX: device, frame, loss', () => {
 			fallback: { switchToWebgl2: vi.fn() },
 			previews,
 			postChain,
+			pipelines,
+			residency,
 			createDevice: () => new RenderDevice({ gpu: fake.gpu, canvas: fake.canvas }).init()
 		});
-		ctl.onLost();
+		ctl.onLost({ reason: 'unknown', message: 'gpu reset' });
+		expect(residency.purgeAll).toHaveBeenCalledTimes(1);
 		expect(await ctl.rebuild()).toBe('webgpu');
+		const device = fake.devices[0];
 		expect(overlay.hide).toHaveBeenCalled();
-		expect(postChain.rebuild).toHaveBeenCalled();
-		expect(previews.reconfigureAll).toHaveBeenCalled();
+		expect(pipelines.rebuild).toHaveBeenCalledWith(device);
+		expect(postChain.rebuild).toHaveBeenCalledWith(device);
+		expect(previews.reconfigureAll).toHaveBeenCalledWith(device);
+		expect(residency.reset).toHaveBeenCalledWith(device);
 		expect(scene.setMap).toHaveBeenCalledWith('prontera');
+		// GPU objects first, then the overlay goes and the map is rebuilt (the legacy restore never did).
+		expect(order).toEqual(['residency', 'pipelines', 'post', 'previews', 'hide', 'setMap']);
+		expect(fake.calls.filter(c => c[0] === 'context.configure')).toHaveLength(1); // main canvas on the new device
 		expect(ctl.rendering).toBe(true);
+		expect(ctl.lost).toBe(false);
+		expect(ctl.shouldHandleResize()).toBe(true);
+		expect(ctl.lastLoss).toEqual({ reason: 'unknown', message: 'gpu reset' });
 	});
 
-	it.fails('R-CTX-007: with no adapter on rebuild, switches to gpu-webgl2 mid-session', async () => {
+	it('R-CTX-007: with no adapter on rebuild, switches to gpu-webgl2 mid-session', async () => {
 		const fallback = { switchToWebgl2: vi.fn(async () => {}) };
+		const overlay = { show: vi.fn(), hide: vi.fn() };
+		const scene = { runStep: vi.fn(), currentMap: () => 'prontera', setMap: vi.fn(async () => {}) };
 		const ctl = new DeviceLossController({
-			overlay: { show: vi.fn(), hide: vi.fn() },
+			overlay,
 			assets: { purge: vi.fn() },
-			scene: { runStep: vi.fn(), currentMap: () => 'prontera', setMap: vi.fn() },
+			scene,
 			fallback,
 			createDevice: async () => {
 				throw new DeviceUnavailableError('no adapter');
@@ -113,7 +134,11 @@ describe('CTX: device, frame, loss', () => {
 		});
 		ctl.onLost();
 		expect(await ctl.rebuild()).toBe('webgl2');
-		expect(fallback.switchToWebgl2).toHaveBeenCalled();
+		expect(fallback.switchToWebgl2).toHaveBeenCalledWith('WebGPU unavailable: no adapter');
+		expect(overlay.hide).toHaveBeenCalled();
+		expect(scene.setMap).toHaveBeenCalledWith('prontera'); // the map is rebuilt on gpu-webgl2
+		expect(ctl.active).toBe('webgl2');
+		expect(ctl.rendering).toBe(false); // this backend stays stopped
 	});
 
 	it("R-CTX-009: clear colour is the map's skyColor; no entry clears opaque black with no clouds", () => {

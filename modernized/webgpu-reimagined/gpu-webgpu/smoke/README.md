@@ -24,22 +24,23 @@ npm run smoke:parity:entities:aa # the same with MSAA (gate 0.1 %, see below)
 npm run smoke:parity:post        # legacy PostProcess chain vs gpu-webgpu PostChain, 26 configurations (gate 0.05 %)
 npm run smoke:parity:effects     # real legacy STR / 3D / 2D effect classes (gate 0.05 %)
 npm run smoke:parity:effects:aa  # the same with MSAA (0.05 % in ANGLE's raster orientation; native 0.75 %, see below)
+npm run smoke:parity:backend     # WebGpuBackend end to end (entities + effects + post) and a real device loss (gate 0.05 %; see below)
 ```
 
 You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script never runs `playwright install`.
 
 **Options** (`node smoke/run-parity.mjs …`):
 
-| Option             | Meaning                                                                                            |
-| ------------------ | -------------------------------------------------------------------------------------------------- |
-| `--page=P`         | `parity` (default, synthetic records), `entities` (real legacy entity stream), `post` or `effects` |
-| `--aa`             | Turn MSAA on                                                                                       |
-| `--tol=N`          | Per-channel tolerance (default 2)                                                                  |
-| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                                 |
-| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)                 |
-| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count                       |
-| `--only=F`         | `effects` page diagnostics: keep one legacy class, `str`, `3d` or `2d`                             |
-| `--flags="…"`      | Replace the Chromium flags (space-separated)                                                       |
+| Option             | Meaning                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `--page=P`         | `parity` (default), `entities` (real legacy entity stream), `post`, `effects` or `backend` |
+| `--aa`             | Turn MSAA on                                                                               |
+| `--tol=N`          | Per-channel tolerance (default 2)                                                          |
+| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                         |
+| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)         |
+| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count               |
+| `--only=F`         | `effects` page diagnostics: keep one legacy class, `str`, `3d` or `2d`                     |
+| `--flags="…"`      | Replace the Chromium flags (space-separated)                                               |
 
 **Exit codes:**
 
@@ -82,6 +83,7 @@ The page must be served from `http://127.0.0.1`. WebGPU needs a secure context, 
 | `post.html`, `post.js`            | The post-processing page (below)                                                                                                                                       |
 | `effects.html`, `effects.js`      | The effect page (below); `vite.config.js` serves it the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`), every other importer keeps the stub                         |
 | `effects/`                        | Copies of `gpu-webgl2/smoke/effects/*` (`assets.js`: 26 images, 3 SPRs; `scene.js`: STR, 3D and 2D spawns); keep them identical                                        |
+| `backend.html`, `backend.js`      | The backend page (below): `WebGpuBackend` end to end plus a real device loss; `REAL_FOR` serves it the real `StrEffect.js` too                                         |
 | `run-parity.mjs`                  | Starts Vite, launches Chromium, prints the results, writes the PNGs, sets the exit code                                                                                |
 
 ## Results (SwiftShader, 320×240, 40 records)
@@ -335,3 +337,50 @@ diagonal, goes from 34 to 0.86 levels), so the CPU fog check runs in that orient
 WebGPU's native orientation: a y-flipped scene target would have to be flipped back by the blit and the post chain, and
 the difference is a sub-pixel coverage step on antialiased diagonal edges. Raise the native gate only with a new
 analysis.
+
+## Backend page (`--page=backend`)
+
+`WebGpuBackend` (`src/WebGpuBackend.js`) end to end against legacy rendering the same frame, 640×480, MSAA off (the legacy
+page canvas and the PostProcess FBO have none).
+
+- **Legacy**, per 40 ms frame as `MapRenderer` does: R-CTX-002 state and the sky clear colour, `PostProcess.prepare`
+  (scene FBO when a module is active, else the screen), the real entity path (the entities page scene, ~200 entities),
+  the real `ThreeDEffect` / `StrEffect` / `TwoDEffect` classes (22 effects-page spawns that follow no owner, moved into
+  the entity area), then `PostProcess.render` with the real modules registered in `MapRenderer` order.
+- **gpu-webgpu**: the captured records as one R-CTX-010 stream (`{entitiesNonEffect, effectsAfterEntities}`) into
+  `backend.drawFrame(stream, frame)`: one scene pass through `RunRenderer`, then `PostChain` or the blit, read back with
+  `backend.capture()` (C-20, the swapchain texture copied in the frame's encoder). The `graphics` seam stub is both
+  sides' GraphicsSettings (the backend's `SettingsPort`), so the same post modules run; every other port is recorded.
+  Both asset sets build `data/sprite/shadow`; the entity one is kept. STR fog is off (R-EFX-010, declared).
+- **Device loss**: after the blit frame the page calls `backend.device.destroy()` (resolves `device.lost` with
+  `'destroyed'`). Checks: overlay shown with the R-CTX-006 spec, `.bmp/.jpg/.png/.spr/.pal/.str` purged, residency
+  emptied, `drawFrame` refused while lost; rebuilt on a new device (no fallback), overlay hidden after it,
+  `setMap(currentMap)` re-run; the blit frame redrawn first on the new device re-uploads every texture and equals the
+  pre-loss gpu-webgpu frame pixel for pixel (and legacy within the gate); the next post-chain frame matches as before.
+- Also fails on an unsupported record, a normal-alpha fallback, a skipped batch, a WebGPU error or a render error.
+
+### Results (SwiftShader, 640×480, tolerance 2)
+
+| Frame                        | Post (gpu-webgpu)            | Over tol 2, depth24plus (production) | Over tol 2, depth16unorm |
+| ---------------------------- | ---------------------------- | -----------------------------------: | -----------------------: |
+| t = 1080                     | Bloom + FXAA + Vibrance      |             2239 (0.729 %), gate 1 % |            136 (0.044 %) |
+| t = 1160, fog                | Bloom + FXAA + Vibrance      |             1963 (0.639 %), gate 1 % |            123 (0.040 %) |
+| t = 1200, performance mode   | Bloom + Upsampling (480×360) |             1297 (0.422 %), gate 1 % |             71 (0.023 %) |
+| t = 1240                     | blit                         |                         28 (0.009 %) |                        — |
+| t = 1240, redrawn after loss | blit                         |       28 (0.009 %), 0 px vs pre-loss |                        — |
+| t = 1320, after loss         | Bloom + FXAA + Vibrance      |             2197 (0.715 %), gate 1 % |            130 (0.042 %) |
+
+- 980–985 records per frame (954 entity layers, 26–31 STR/3D/2D); legacy ≈ 984–989 `drawArrays` vs 307–312
+  instanced draws; 0 fallbacks, 0 unsupported records, no WebGPU or GL error. Sensitivity control ≈ 4.4k px.
+- After the loss: 101 uploads on miss, ports `assets.purge → overlay.show → overlay.hide → scene.setMap`.
+
+### Gate for post-chain frames (declared 1 %, `FBO_DEPTH_GATE_PCT`)
+
+With a module active, legacy draws the scene into its PostProcess FBO, whose depth renderbuffer is
+`DEPTH_COMPONENT16` (`PostProcess.createFramebuffer`); without one it draws into the default framebuffer (24 bits).
+The zIndex bias separates an entity's stacked layers by about 1e-6 of window depth, below 16-bit resolution
+(1.5e-5), so in the FBO coincident layers tie and `LEQUAL` resolves them by draw order. The diff images show the
+depth-tie signature of the entities page (short horizontal runs inside entities). gpu-webgpu keeps depth24plus
+whether post is on or off. The page draws every post-chain frame a second time on a second backend whose scene
+target is `depth16unorm` (`depthFormat` port): 0.023–0.044 %, under the page gate. The blit frame, where legacy has
+24 bits too, is 0.009 % in production. Raise the gate only with a new analysis.
