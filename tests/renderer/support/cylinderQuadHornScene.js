@@ -99,6 +99,12 @@ export const CYLINDER_SPAWNS = [
 	cyl('missing-texture', { textureName: 'missing' })
 ];
 
+/**
+ * In-range non-integer blend codes (discrepancy #49): legacy's GL factor is undefined;
+ * render-records draws normal alpha. Kept out of the main spawn lists (declared divergence).
+ */
+export const INVALID_BLEND_CYLINDER = [cyl('blend-2.5', { blendMode: 2.5 }, { endTick: 300 })];
+
 const qh = (name, effect, inst = {}) => ({
 	name,
 	effect: { type: 'QuadHorn', textureFile: 'effect/ice.tga', ...effect },
@@ -196,6 +202,8 @@ export const QUADHORN_SPAWNS = [
 	),
 	qh('missing-texture', { textureFile: 'effect/missing.tga', height: 1 })
 ];
+
+export const INVALID_BLEND_QUADHORN = [qh('blend-8.5', { blendMode: 8.5, height: 1 }, { endTick: 300 })];
 
 /**
  * Build legacy instances the way EffectManager.spamEffect / add do (positions copied

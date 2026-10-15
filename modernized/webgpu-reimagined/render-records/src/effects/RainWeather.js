@@ -212,8 +212,8 @@ export function rainFlashAlpha(elapsed, multi) {
  *    at most 300 splashes), feeds the puddles and is dropped; the others fall, drift with
  *    the wind (+ jitter), fade by fall progress (in 8 %, out 15 %) with a shimmer, and draw
  *    as a streak tilted along their projected motion.
- * 6. Splashes, newest first: 220 ms, growing, fading from 0.45. Their angle is
- *    drop.angle · 0.2 with drop.angle never set, so NaN (kept).
+ * 6. Splashes, newest first: 220 ms, growing, fading from 0.45, angle 0 (discrepancy #63
+ *    [FLAG, fixed]: legacy uses drop.angle · 0.2 with drop.angle never set, so NaN).
  * puddles() — the before-entities pass, EffectDraw 'rainPuddle' records (see legacy
  * RainWeather.renderPuddles): puddles not hit for their life dry out, shrink and go.
  */
@@ -460,7 +460,7 @@ export class RainWeather {
 						z: drop.groundZ + 0.02,
 						startTick: tick,
 						maxSizePx: this._range(SPLASH_SIZE_PX[0], SPLASH_SIZE_PX[1]),
-						angle: drop.angle * 0.2
+						angle: 0 // #63: legacy drop.angle · 0.2 is NaN (drop.angle is never set)
 					});
 					if (this.splashes.length > MAX_SPLASHES) {
 						this.splashes.splice(0, this.splashes.length - MAX_SPLASHES);

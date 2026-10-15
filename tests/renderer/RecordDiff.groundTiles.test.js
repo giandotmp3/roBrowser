@@ -10,13 +10,17 @@
  * counters) and scene fog. Both streams are diffed per instance and per tick, field by
  * field (tolerance 1e-5, relative above 1).
  *
- * Declared divergences: none.
+ * Declared divergences -- discrepancy #59 [FLAG, fixed, HITL round 2], each scoped:
+ * - 'apple-foreign' only: a second FlatColorTile colour that legacy EffectManager files under
+ *   the first colour's list (every FlatColorTile class is named 'FlatColorTile') is never drawn
+ *   by legacy. render-records tracks effects per instance and draws it with its own colour;
+ *   its records are asserted on their own (legacy must draw nothing for it).
+ * - ForgetEffects (Songs.js): legacy caches FlatColorTile classes by name, and Songs.js reuses
+ *   'humming', so Forget draws Humming's colour. render-records caches by colour key; only
+ *   `color` of the Forget tile may differ from legacy, and it must be Forget's own colour.
  *
- * Not diffed:
- * - a class whose texture never loads (legacy's ready gate; residency is the backend's job);
- * - 'apple-foreign': a FlatColorTile instance that EffectManager files under another
- *   colour's list (every FlatColorTile class is named 'FlatColorTile') is never drawn by
- *   legacy. That is an EffectManager keying bug, not tile behaviour; the rebuild draws it.
+ * Not diffed: a class whose texture never loads (legacy's ready gate; residency is the
+ * backend's job).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -29,13 +33,14 @@ vi.mock('Renderer/SpriteRenderer.js', () => ({ default: { runWithDepth: (_t, _w,
 import {
 	FlatColorTileEffect,
 	FlatTextureTileEffect,
+	flatColorTileClass,
 	HoveringTextureEffect,
 	LandProtectorEffect,
 	SpiderWebEffect
 } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
 import { createLoggingGl, fogAt, installCanvasStub, renderClassFrame } from './support/legacyEffectMocks.js';
 import { diffEffectRecord } from './support/effectRecordDiff.js';
-import { TILE_TICKS, buildTileGroups } from './support/groundTileScene.js';
+import { FOREIGN_COLOR, TILE_TICKS, buildTileGroups } from './support/groundTileScene.js';
 
 const gl = createLoggingGl(null);
 let uninstallCanvas;
@@ -57,7 +62,8 @@ function rebuild(spec, effect, index) {
 		case 'spider':
 			return new SpiderWebEffect(inst);
 		default:
-			return new FlatColorTileEffect(spec.color, inst);
+			// #59: one class per colour key (the name is only a label)
+			return new (flatColorTileClass(spec.name, spec.color))(inst);
 	}
 }
 
@@ -78,15 +84,17 @@ async function runScene(mutate = {}) {
 	const counters = { hover: 0, lp: 0, spider: 0 };
 	const rebuilt = [];
 	for (const { spec, live } of groups) {
-		for (const { name, effect, foreign } of live) {
+		for (const { name, effect, foreign, color } of live) {
 			const index = spec.kind in counters ? ++counters[spec.kind] : 0;
-			const skip = foreign || String(spec.texture).includes('missing');
-			rebuilt.push({ name, skip, effect: rebuild(spec, effect, mutate.index ? mutate.index(index) : index) });
+			const skip = String(spec.texture).includes('missing');
+			const own = foreign ? { ...spec, name, color } : spec;
+			rebuilt.push({ name, skip, foreign, effect: rebuild(own, effect, mutate.index ? mutate.index(index) : index) });
 		}
 	}
 
 	const mismatches = [];
 	const perEffect = {};
+	const foreignDrawn = [];
 	let records = 0;
 	let sink = [];
 	const push = r => sink.push(r);
@@ -107,7 +115,7 @@ async function runScene(mutate = {}) {
 					sink = [];
 				});
 			}
-			for (const { name, skip, effect } of rebuilt) {
+			for (const { name, skip, foreign, effect } of rebuilt) {
 				if (skip) {
 					if (legacy[name]) {
 						mismatches.push(`${name}@${tick}: legacy drew a skipped instance`);
@@ -115,6 +123,14 @@ async function runScene(mutate = {}) {
 					continue;
 				}
 				const m = effect.frame(tick, { sceneFog: { use: !!(fog.use && fog.exist) } });
+				if (foreign) {
+					// #59: legacy never draws the foreign colour; render-records does
+					if (legacy[name]) {
+						mismatches.push(`${name}@${tick}: legacy drew the foreign colour`);
+					}
+					foreignDrawn.push(m);
+					continue;
+				}
 				const l = legacy[name];
 				if (!l) {
 					mismatches.push(`${name}@${tick}: only render-records drew`);
@@ -131,7 +147,7 @@ async function runScene(mutate = {}) {
 	} finally {
 		stops.forEach(stop => stop());
 	}
-	return { records, mismatches, perEffect };
+	return { records, mismatches, perEffect, foreignDrawn };
 }
 
 describe('ground tile record-diff (legacy vs render-records)', () => {
@@ -156,6 +172,47 @@ describe('ground tile record-diff (legacy vs render-records)', () => {
 			].sort()
 		);
 		expect(records).toBe(13 * TILE_TICKS.length);
+	});
+
+	it('#59 divergence: a second FlatColorTile colour draws with its own colour (legacy never draws it)', async () => {
+		const { mismatches, foreignDrawn } = await runScene();
+		expect(mismatches).toEqual([]);
+		expect(foreignDrawn).toHaveLength(TILE_TICKS.length);
+		for (const r of foreignDrawn) {
+			expect(r).toMatchObject({ family: 'flat-color-tile', texture: null });
+			expect(r.color).toEqual([FOREIGN_COLOR.r, FOREIGN_COLOR.g, FOREIGN_COLOR.b, FOREIGN_COLOR.a]);
+		}
+	});
+
+	it('#59 divergence: ForgetEffects keeps its own colour (legacy reuses the cached Humming class)', async () => {
+		vi.resetModules();
+		const Songs = await import('Renderer/Effects/Songs.js');
+		const FlatColorTile = (await import('Renderer/Effects/FlatColorTile.js')).default;
+		const Forget = Songs.ForgetEffects[0];
+		expect(Forget).toBe(Songs.HummingEffects[0]); // legacy: one class cached under 'humming'
+		// legacy Songs.js:175-190 colours
+		const humming = { r: 0xe6 / 255, g: 0xd1 / 255, b: 0xd1 / 255, a: 0.05 };
+		const forget = { r: 0x1c / 255, g: 0xff / 255, b: 0x73 / 255, a: 0.05 };
+		const sink = [];
+		const stop = FlatColorTile.addRecordSink(r => sink.push(r));
+		const legacyTile = new Forget([30, 40, 0], 0);
+		legacyTile.needInit = true;
+		Forget.needInit = true;
+		try {
+			renderClassFrame(gl, Forget, [{ name: 'forget', effect: legacyTile }], 0, fogAt(0));
+		} finally {
+			stop();
+		}
+		expect(sink).toHaveLength(1);
+		const mine = new (flatColorTileClass('humming', forget))({ position: [30, 40, 0], index: 0 }).frame(0, {
+			sceneFog: { use: false }
+		});
+		const diff = diffEffectRecord({ ...sink[0], texture: { id: null } }, mine);
+		expect(diff).toHaveLength(1);
+		expect(diff[0]).toMatch(/^color: /);
+		expect(Array.from(sink[0].color)).toEqual([humming.r, humming.g, humming.b, humming.a]);
+		expect(mine.color).toEqual([forget.r, forget.g, forget.b, forget.a]);
+		expect(flatColorTileClass('humming', humming)).not.toBe(flatColorTileClass('humming', forget));
 	});
 
 	it('flags a wrong pulse phase (mutation guard)', async () => {

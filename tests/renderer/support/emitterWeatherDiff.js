@@ -77,6 +77,8 @@ export function emitterFrames({ start = 1000, stopAt, step = i => (i % 2 ? 110 :
  * @param {function} [opts.textureKey] legacy texture → key
  * @param {function} [opts.onEvent] (event, frameIndex, tick, modern)
  * @param {function} [opts.legacyStop] (Legacy, tick) stop call
+ * @param {function} [opts.prepareFrame] (legacy, modern, label) => [legacy, modern, extraMismatches?]:
+ *        a declared divergence's narrow normalisation before the field-by-field diff
  * @returns {{mismatches: string[], records: number, framesDrawn: number, modernLog: object[]}}
  */
 export function runEmitterDiff({
@@ -92,7 +94,8 @@ export function runEmitterDiff({
 	beforeLegacyFrame,
 	textureKey,
 	onEvent,
-	legacyStop = (L, tick) => L.stop(-1, tick)
+	legacyStop = (L, tick) => L.stop(-1, tick),
+	prepareFrame
 }) {
 	SpriteRenderer.init(gl);
 	mocks.map.currentMap = WEATHER_MAP;
@@ -168,7 +171,14 @@ export function runEmitterDiff({
 			if (legacy.length) {
 				framesDrawn++;
 			}
-			mismatches.push(...diffSpriteFrame(`frame ${i} @${tick}`, legacy, mine, textureKey));
+			const label = `frame ${i} @${tick}`;
+			let [l, m] = [legacy, mine];
+			if (prepareFrame) {
+				let extra;
+				[l, m, extra = []] = prepareFrame(legacy, mine, label);
+				mismatches.push(...extra);
+			}
+			mismatches.push(...diffSpriteFrame(label, l, m, textureKey));
 		});
 	} finally {
 		stopSink();

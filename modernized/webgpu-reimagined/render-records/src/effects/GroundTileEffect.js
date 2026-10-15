@@ -197,26 +197,36 @@ export class SpiderWebEffect extends PulsingTileEffect {
 }
 
 /**
+ * Validated [r, g, b, a] of a FlatColorTile spec (legacy checks: each channel present and
+ * in 0..1; a defaults to 0.5). The spec is not mutated.
+ * @param {{r: number, g: number, b: number, a?: number}} spec
+ * @returns {number[]}
+ */
+function flatColor({ r, g, b, a = 0.5 }) {
+	for (const value of [r, g, b, a]) {
+		if (value === undefined) {
+			throw new Error('FlatColorTile: need to pass r, g, b, a');
+		}
+		if (value > 1.0 || value < 0.0) {
+			throw new Error('FlatColorTile: r, g, b, a need to be 0.0-1.0');
+		}
+	}
+	return [r, g, b, a];
+}
+
+/**
  * Untextured colour tile (legacy FlatColorTile(name, { r, g, b, a = 0.5 })), size 0.5,
  * no fog. The spec is validated like legacy (each channel present and in 0..1) but not
- * mutated.
+ * mutated. Every instance draws on its own (no per-class list or init gate, #59).
  */
 export class FlatColorTileEffect extends GroundTile {
 	/**
 	 * @param {{r: number, g: number, b: number, a?: number}} spec
 	 * @param {ConstructorParameters<typeof GroundTile>[0]} inst
 	 */
-	constructor({ r, g, b, a = 0.5 }, inst) {
+	constructor(spec, inst) {
 		super(inst);
-		for (const value of [r, g, b, a]) {
-			if (value === undefined) {
-				throw new Error('FlatColorTile: need to pass r, g, b, a');
-			}
-			if (value > 1.0 || value < 0.0) {
-				throw new Error('FlatColorTile: r, g, b, a need to be 0.0-1.0');
-			}
-		}
-		this.color = [r, g, b, a];
+		this.color = flatColor(spec);
 	}
 
 	/**
@@ -235,4 +245,38 @@ export class FlatColorTileEffect extends GroundTile {
 			stream
 		);
 	}
+}
+
+/** Cache key of a FlatColorTile colour (#59): the colour itself, never the song name. */
+export const flatColorTileKey = spec => flatColor(spec).join(',');
+
+/** @type {Map<string, typeof FlatColorTileEffect>} */
+const _flatColorTiles = new Map();
+
+/**
+ * Discrepancy #59 [FLAG, fixed]: the FlatColorTile class of a colour, cached by colour key.
+ * Legacy caches by `name`, and Songs.js reuses 'humming' for ForgetEffects, so Forget draws
+ * Humming's colour; here two specs share a class only when their colours are equal, and
+ * `name` is just a label. Instances of the returned class take only `inst`.
+ * @param {string} name label (legacy cache key, unused for caching)
+ * @param {{r: number, g: number, b: number, a?: number}} spec
+ * @returns {typeof FlatColorTileEffect}
+ */
+export function flatColorTileClass(name, spec) {
+	const key = flatColorTileKey(spec);
+	let Tile = _flatColorTiles.get(key);
+	if (!Tile) {
+		const [r, g, b, a] = flatColor(spec);
+		const color = Object.freeze({ r, g, b, a });
+		Tile = class extends FlatColorTileEffect {
+			static colorKey = key;
+			static label = name;
+			/** @param {ConstructorParameters<typeof GroundTile>[0]} inst */
+			constructor(inst) {
+				super(color, inst);
+			}
+		};
+		_flatColorTiles.set(key, Tile);
+	}
+	return Tile;
 }

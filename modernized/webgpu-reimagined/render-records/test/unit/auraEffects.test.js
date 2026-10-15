@@ -77,6 +77,18 @@ describe('GroundAuraEffect', () => {
 		expect(effect.rings[0].riseAngle).toBe(33);
 	});
 
+	it('#55: a frame before the start tick does not run the pulse backwards (dt clamped to [0, 250])', () => {
+		const early = new GroundAuraEffect({ size: 100, distance: 15, textureName: 'a' }, { position: [0, 0, 0], startTick: 1000 });
+		const plain = new GroundAuraEffect({ size: 100, distance: 15, textureName: 'a' }, { position: [0, 0, 0], startTick: 1000 });
+		early.frame(400, { heightAt: flat });
+		expect(early.accum).toBe(0);
+		expect(early.lastTick).toBe(1000);
+		for (const tick of [1030, 1060, 1500]) {
+			expect(early.frame(tick, { heightAt: flat })).toEqual(plain.frame(tick, { heightAt: flat }));
+		}
+		expect(early.rings[0].riseAngle).toBeGreaterThan(0);
+	});
+
 	it('keeps legacy degree-as-radian size maths', () => {
 		const [w, h] = groundAuraSizeStep(15, 3, 0);
 		const reach = 15 * 0.8 + 1.5 * (Math.sin(3) + 1);
@@ -148,8 +160,30 @@ describe('Level99BubbleEffect', () => {
 		expect(high.frame(1025, { heightAt: flat, cameraAngle: [230, 0] })).toHaveLength(0);
 	});
 
-	it('a start tick of 0 seeds the frame clock from dateNow', () => {
-		const effect = new Level99BubbleEffect({}, { position: [0, 0, 0], startTick: 0 }, { rng: () => 0, dateNow: () => 5000 });
-		expect(effect.lastTick).toBe(5000);
+	it('#53: a start tick of 0 seeds the frame clock at the spawn frame, not Date.now()', () => {
+		const zero = new Level99BubbleEffect({ flag1: 0 }, { position: [0, 0, 0], startTick: 0 }, { rng: seq([0.3, 0.7, 0.1]) });
+		const timed = new Level99BubbleEffect({ flag1: 0 }, { position: [0, 0, 0], startTick: 5000 }, { rng: seq([0.3, 0.7, 0.1]) });
+		const at = tick => ({ heightAt: flat, cameraAngle: [230, (tick / 7) % 360] });
+		let drawn = 0;
+		for (let tick = 5000; tick <= 25000; tick += 250) {
+			const records = zero.frame(tick, at(tick));
+			expect(records).toEqual(timed.frame(tick, at(tick)));
+			drawn += records.length;
+		}
+		expect(drawn).toBeGreaterThan(0);
+	});
+
+	it('#55: a frame before the start tick neither steps the bubbles nor draws randomness', () => {
+		let draws = 0;
+		const rng = () => (draws++ % 7) / 7;
+		const effect = new Level99BubbleEffect({ flag1: 0 }, { position: [0, 0, 0], startTick: 1000 }, { rng });
+		const before = JSON.stringify(effect.columns.map(c => c.anchors));
+		const consumed = draws;
+		effect.frame(600, { heightAt: flat, cameraAngle: [230, 0] });
+		expect(draws).toBe(consumed);
+		expect(JSON.stringify(effect.columns.map(c => c.anchors))).toBe(before);
+		expect(effect.lastTick).toBe(1000);
+		effect.frame(1100, { heightAt: flat, cameraAngle: [230, 0] });
+		expect(draws).toBeGreaterThan(consumed);
 	});
 });

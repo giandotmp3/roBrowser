@@ -273,6 +273,9 @@ export const RSM_SPAWNS = [
 	rsm('missing-model', 'effect\\missing')
 ];
 
+/** Discrepancy #56: an endTick legacy ignores (never sets needCleanUp). Not in RSM_SPAWNS. */
+export const RSM_TIMED_SPAWNS = [rsm('timed', 'effect\\spin', { startTick: 0, endTick: 1500 })];
+
 /**
  * Build legacy instances the way EffectManager.spamEffect / add do (positions copied
  * unless attached; needInit set).
@@ -284,7 +287,7 @@ export const RSM_SPAWNS = [
 export function spawnLegacy(Ctor, spawns, owner) {
 	return spawns.map(spawn => {
 		const position = spawn.attached ? owner.position : spawn.position.slice();
-		const Params = { effect: spawn.effect, Inst: { position, startTick: spawn.startTick }, Init: {} };
+		const Params = { effect: spawn.effect, Inst: { position, startTick: spawn.startTick, endTick: spawn.endTick ?? -1 }, Init: {} };
 		const effect = new Ctor(Params);
 		effect.needInit = true;
 		return { name: spawn.name, spawn, effect };

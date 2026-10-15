@@ -14,8 +14,13 @@
  *
  * STR attachments (R-SPR-032) are out of scope here.
  *
- * Declared divergence -- exactly one, discrepancy #13 [FLAG, fixed]: legacy runs with its
- * animation clock pinned to spawn time; everything else must match.
+ * Declared divergences:
+ *  - discrepancy #13 [FLAG, fixed]: legacy runs with its animation clock pinned to spawn time;
+ *  - discrepancy #34 [FLAG, fixed, HITL round 2]: in the scenes with an ignoreShadow / behind
+ *    attachment only, legacy leaks shadowFactor 1 into every later draw; render-records keeps the
+ *    ground factor. Only `shadowFactor` mismatches with legacy 1 and render-records at the ground
+ *    factor are excused there (withoutShadowLeak), and the fixed values are asserted on their own.
+ * Everything else must match.
  */
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -93,6 +98,19 @@ const MOB_UNIT = { GID: 210001, objecttype: Entity.TYPE_MOB, job: 1004, PosDir: 
 const isHalo = r => r.blend === 'additive' && Math.abs(r.color[3] - 0.6) < 1e-6 && !r.depthWrite;
 
 afterEach(cleanupScene);
+
+/**
+ * Discrepancy #34 scope: drop exactly the `shadowFactor` mismatches where legacy carries the leaked
+ * 1 and render-records the entity's ground factor; every other field and value must still match.
+ */
+const withoutShadowLeak = ({ mismatches, states }) =>
+	mismatches.filter(m => {
+		if (m.field !== 'shadowFactor' || m.legacy !== 1) {
+			return true;
+		}
+		const [x, y] = states[m.frame].position;
+		return Math.abs(m.modern - GROUND.shadowFactorAt(x, y)) > 1e-5;
+	});
 
 afterAll(() => {
 	mocks.restoreCanvas();
@@ -444,8 +462,10 @@ describe('R-SPR-031: sprite attachments', () => {
 	};
 
 	it('scene attachments (behind, one-shot, stopAtEnd, offsets, delay, depth, stackable, replace) match', () => {
-		const { legacy, mismatches, names, attachments } = diff(CUSTOM);
-		expect(mismatches).toEqual([]);
+		const run = diff(CUSTOM);
+		const { legacy, names, attachments } = run;
+		expect(run.mismatches.some(m => m.field === 'shadowFactor')).toBe(true); // #34 really exercised
+		expect(withoutShadowLeak(run)).toEqual([]);
 		for (const { legacy: l, modern: m } of attachments.filter(Boolean)) {
 			expect(m).toEqual(l);
 		}
@@ -464,7 +484,7 @@ describe('R-SPR-031: sprite attachments', () => {
 		expect(fx).toBeDefined();
 	});
 
-	it('legacy quirk kept: a behind attachment leaves the shadow factor at 1 for the whole body', () => {
+	it('#34 divergence: legacy leaks shadow factor 1 from a behind attachment into the whole body', () => {
 		const { legacy, names } = diff(CUSTOM);
 		const body = recordsOf(names, legacy[4], 'body')[0];
 		const shadow = recordsOf(names, legacy[4], 'shadow')[0];
@@ -474,8 +494,28 @@ describe('R-SPR-031: sprite attachments', () => {
 		expect(plain.shadowFactor).toBe(shadow.shadowFactor);
 	});
 
+	it('#34 fix: only ignoreShadow / behind attachments draw at shadow factor 1; the body keeps its ground shadow', () => {
+		const { modern, names, states } = diff(CUSTOM);
+		let checked = 0;
+		modern.forEach((records, frame) => {
+			const [x, y] = states[frame].position;
+			const ground = GROUND.shadowFactorAt(x, y);
+			expect(ground).not.toBe(1);
+			for (const r of records) {
+				const part = partOf(names, r);
+				const ignores = part === 'att-aura' || (part === 'att-burst' && r.depthBias === 3.5);
+				expect(r.shadowFactor).toBe(ignores ? 1 : ground);
+				checked++;
+			}
+		});
+		expect(checked).toBeGreaterThan(100);
+		const body = recordsOf(names, modern[4], 'body')[0];
+		expect(recordsOf(names, modern[4], 'att-aura')[0].shadowFactor).toBe(1);
+		expect(body.shadowFactor).toBe(recordsOf(names, modern[4], 'shadow')[0].shadowFactor);
+	});
+
 	it('a mob with a behind attachment and a death fade matches', () => {
-		const { mismatches, legacy, names } = diff({
+		const run = diff({
 			unit: MOB_UNIT,
 			owner: 'mob',
 			frames: 30,
@@ -485,7 +525,8 @@ describe('R-SPR-031: sprite attachments', () => {
 				10: e => e.remove(Entity.VT.DEAD)
 			})
 		});
-		expect(mismatches).toEqual([]);
+		const { legacy, names } = run;
+		expect(withoutShadowLeak(run)).toEqual([]); // #34 is the only divergence
 		expect(recordsOf(names, legacy[20], 'att-aura').length).toBeGreaterThan(0);
 	});
 });

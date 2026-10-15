@@ -158,7 +158,7 @@ These were found at scaffold time and settled before phase 1.
   - Wire `EffectSystem` (spawn → pass R-EFX-006 → culling R-EFX-005 → repeat R-EFX-004) to the players.
   - World records (ground, water, models, GR2) are not seamed: these are static per map, and phase 3 consumes the `MAP_*` payloads directly.
   - Picking-rect widening by halo and trails.
-- **HITL backlog:** spec #34, #47, #52, #53, #56, #59, #60, #61, #63 (proposed flags) and #41, #49, #54, #57 (SME).
+- **HITL round 2 (decided, implemented):** the proposed flags #34, #47, #51, #52, #53, #55, #56, #59, #60, #61 and #63 are fixed in render-records. Each is a narrowly scoped, named divergence in its record-diff; #61 is exact only up to the first respawn, because the fix changes how the RNG is consumed. On the SME items: #41/#49 invalid blend codes fall back to normal alpha, #57 the sphere fade is time-based, #54 is kept, FXAA uses the 3.11 subpixel term (subpix 0 = legacy), and the cursor table and water corners follow legacy. See the spec's final section.
 - **Next:** EffectSystem wiring, then phase 3 (gpu-webgl2 run batching over the record stream).
 
 ## Still open

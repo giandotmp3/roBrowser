@@ -9,7 +9,11 @@
  * (sway retargeting consumes it per frame). Records are diffed per frame, field by field
  * (tolerance 1e-5, relative above 1).
  *
- * Declared divergences: none.
+ * Declared divergence: #60 [FLAG, fixed, HITL round 2], map-flag scene only. The map-flag
+ * 'leaves' weather starts with `Inst.effectId = EF_MAPLE` (ScreenEffectManager), but legacy
+ * SakuraWeatherEffect reads `effectID`, so it shows sakura petals. render-records reads either
+ * spelling (weatherEffectId) and shows maple: its records from the map-flag params must equal
+ * legacy's maple records (spawned with the spelling legacy reads), field by field.
  */
 import { describe, expect, it, vi } from 'vitest';
 
@@ -35,7 +39,12 @@ vi.mock('Engine/SessionStorage.js', () => ({ default: mocks.session }));
 
 import SpriteRenderer from 'Renderer/SpriteRenderer.js';
 import SakuraWeatherLegacy from 'Renderer/Effects/SakuraWeatherEffect.js';
-import { EF_MAPLE, EF_SAKURA, SakuraWeather } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
+import {
+	EF_MAPLE,
+	EF_SAKURA,
+	MAP_FLAG_WEATHER_EFFECTS,
+	SakuraWeather
+} from '../../modernized/webgpu-reimagined/render-records/src/index.js';
 import { installDeterminism } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/installDeterminism.js';
 import { SeededRng } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/SeededRng.js';
 import { WEATHER_SPRITES, cellHeight, makeGl } from './support/weatherScene.js';
@@ -50,8 +59,11 @@ FRAMES[40].events.push('noSprite');
 /**
  * @param {number} seed
  * @param {function} kindAt (frameIndex) => effect id of a start event
+ * @param {object} [opts]
+ * @param {'effectID'|'effectId'} [opts.legacyKey] id spelling legacy is started with
+ * @param {'effectID'|'effectId'} [opts.modernKey] id spelling render-records is started with
  */
-function run(seed, kindAt) {
+function run(seed, kindAt, { legacyKey = 'effectID', modernKey = 'effectID' } = {}) {
 	const rng = new SeededRng(seed).fn;
 	const { restore } = installDeterminism({ rng: new SeededRng(seed) });
 	try {
@@ -61,10 +73,13 @@ function run(seed, kindAt) {
 			gl: makeGl(),
 			mocks,
 			frames: FRAMES,
-			params: (tick, i) => ({ Inst: { effectID: kindAt(i), startTick: tick, endTick: -1 }, Init: { ownerAID: -1 } }),
+			params: (tick, i) => ({ Inst: { [legacyKey]: kindAt(i), startTick: tick, endTick: -1 }, Init: { ownerAID: -1 } }),
 			create: (tick, p) =>
-				new SakuraWeather({ effectId: p.Inst.effectID, startTick: p.Inst.startTick, endTick: p.Inst.endTick }, { rng }),
-			reuse: (modern, p) => modern.isMaple === (p.Inst.effectID === EF_MAPLE),
+				new SakuraWeather(
+					{ [modernKey]: p.Inst[legacyKey], startTick: p.Inst.startTick, endTick: p.Inst.endTick },
+					{ rng }
+				),
+			reuse: (modern, p) => modern.isMaple === (p.Inst[legacyKey] === EF_MAPLE),
 			beforeLegacyFrame: i => {
 				mocks.files.missing = FRAMES[i].events.includes('noSprite');
 			},
@@ -112,6 +127,17 @@ describe('SakuraWeather record-diff (legacy vs render-records)', { timeout: 6000
 		const { mismatches, records } = run(11, i => (i >= 9 && i < 60 ? EF_MAPLE : EF_SAKURA));
 		expect(mismatches.slice(0, 20)).toEqual([]);
 		expect(records).toBeGreaterThan(2000);
+	});
+
+	it('#60 divergence: map-flag leaves (effectId) shows maple in render-records, sakura in legacy', () => {
+		const leaves = () => MAP_FLAG_WEATHER_EFFECTS.leaves;
+		// legacy started the map-flag way reads no id: sakura petals; render-records: maple
+		const flag = run(0x3a9, leaves, { legacyKey: 'effectId', modernKey: 'effectId' });
+		expect(flag.mismatches.length).toBeGreaterThan(100);
+		// the fixed records equal legacy's maple records (started with the spelling it reads)
+		const fixed = run(0x3a9, leaves, { legacyKey: 'effectID', modernKey: 'effectId' });
+		expect(fixed.mismatches.slice(0, 20)).toEqual([]);
+		expect(fixed.records).toBeGreaterThan(2000);
 	});
 
 	it('fails the diff when a rule is broken (mutation guard)', () => {

@@ -330,9 +330,10 @@ function opt3Of(entity) {
  * removed from `this.attachments` (non-repeating at their last frame unless stopAtEnd, repeating
  * once `duration` elapsed).
  *
- * Legacy shadow state is reproduced as is: the pass resets the shadow factor to the ground value,
- * and an attachment with ignoreShadow (every behind one) sets it to 1 for itself *and everything
- * drawn after it* -- for a behind pass that is the whole entity body (:181-201).
+ * Shadow state, discrepancy #34 [FLAG, fixed]: an attachment with ignoreShadow (every behind one)
+ * draws with shadow factor 1 for itself only; the factor is restored to the ground value for the
+ * next attachment and for everything drawn after the pass. Legacy leaks the 1 into every later
+ * draw -- for a behind pass the whole entity body (EntityAttachments.js:181-201).
  * @this {Object} entity
  * @param {boolean} behind
  */
@@ -348,14 +349,13 @@ function emitAttachments(records, ctx, behind) {
 		if (!!a.renderBefore !== behind) {
 			continue;
 		}
-		if (a.ignoreShadow || a.renderBefore) {
-			ctx.shadowFactor = 1;
-		}
+		ctx.shadowFactor = a.ignoreShadow || a.renderBefore ? 1 : ctx.groundShadowFactor;
 		if (emitAttachment.call(this, records, ctx, a, behind)) {
 			list.splice(i, 1);
 			i--;
 		}
 	}
+	ctx.shadowFactor = ctx.groundShadowFactor;
 }
 
 /**
@@ -501,7 +501,7 @@ export function EntityRender() {
 			}),
 			walkPhase: {},
 			// R-SPR-012 one factor per entity, applied to every layer (EntityRender.js:301); an
-			// attachment pass may override it for the rest of the entity (emitAttachments)
+			// ignoreShadow attachment uses 1 for itself only (emitAttachments, #34)
 			groundShadowFactor,
 			shadowFactor: groundShadowFactor,
 			rawPosition: [position[0], position[1], position[2]],

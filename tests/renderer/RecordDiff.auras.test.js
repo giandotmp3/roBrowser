@@ -9,11 +9,20 @@
  * scene fog toggling), and their native records are collected through addRecordSink.
  * The render-records players get the same spawns, followed entity, terrain, camera,
  * fog and seeded randomness (Level99Bubble consumes Math.random in legacy order across
- * all instances, so every instance is advanced in legacy order; a start tick of 0 reads
- * the same fake clock). Both streams are diffed per effect, per tick and per draw,
- * field by field (tolerance 1e-5, relative above 1).
+ * all instances, so every instance is advanced in legacy order). Both streams are diffed
+ * per effect, per tick and per draw, field by field (tolerance 1e-5, relative above 1).
  *
- * Declared divergences: none.
+ * Declared divergences (HITL round 2), each in its own scenario only:
+ * - #55 [FLAG, fixed]: GroundAura / Level99Bubble frame deltas are clamped to [0, 250] ms, so
+ *   a frame before an instance's start tick no longer runs it backwards. The main GroundAura
+ *   and Level99Bubble diffs therefore leave out the frames before the common start (tick
+ *   900) and the 'delayed' spawns. The #55 scenario runs every spawn alone: legacy differs
+ *   when it sees the pre-start frames, and render-records over every tick equals legacy run
+ *   without its pre-start frames, field by field from the start tick on.
+ * - #53 [FLAG, fixed]: Level99Bubble with startTick 0 seeds its clock at the spawn frame.
+ *   Legacy seeds it from Date.now() and never draws; render-records equals legacy spawned
+ *   with startTick = the first frame's tick, field by field.
+ * SwirlingAura is unaffected and still diffed over every spawn and tick.
  *
  * Not diffed: an entry whose texture never loads (legacy's ready gate; residency is the
  * backend's job in the rebuild). Level99Bubble's debug spawn volume (unreachable).
@@ -57,7 +66,6 @@ import {
 } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
 import { installDeterminism } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/installDeterminism.js';
 import { SeededRng } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/SeededRng.js';
-import { FakeClock } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/FakeClock.js';
 import {
 	GROUND_AURA_SPAWNS,
 	LEVEL99_BUBBLE_SPAWNS,
@@ -103,28 +111,47 @@ const FAMILIES = {
 	}
 };
 
+/** Frames from the common start tick on (no frame before any main-scene start tick, #55). */
+const MAIN_TICKS = TICKS.filter(t => t >= 1000);
+
+/** Spawns of the main diffs: no 'delayed' (#55) and no zero-start bubble (#53). */
+const mainSpawns = key => FAMILIES[key].spawns.filter(s => s.name !== 'delayed' && !(key === 'bubble' && s.name === 'zero-start'));
+
 /**
  * Run one legacy family and its render-records players side by side over the ticks.
  * @param {keyof FAMILIES} key
  * @param {number} seed
  * @param {object} [mutate] optional { spawn name: (effect) => void } applied to the players
+ * @param {object} [opts]
+ * @param {Array} [opts.spawns] spawns (default: the family's main spawns)
+ * @param {number[]} [opts.ticks] frames render-records draws (default MAIN_TICKS)
+ * @param {(tick: number) => boolean} [opts.legacyTick] frames legacy draws (and that are compared)
+ * @param {(spawn: object) => Array} [opts.legacyArgs] legacy constructor args (default spawn.args)
  */
-function runScene(key, seed, mutate = {}) {
-	const { Legacy, spawns, build } = FAMILIES[key];
+function runScene(
+	key,
+	seed,
+	mutate = {},
+	{ spawns = mainSpawns(key), ticks = MAIN_TICKS, legacyTick = () => true, legacyArgs = s => s.args } = {}
+) {
+	const { Legacy, build } = FAMILIES[key];
 	Legacy.init(gl);
 	const legacyOwner = makeOwner();
 	const owner = makeOwner();
 	({ restore } = installDeterminism({ rng: new SeededRng(seed) }));
-	const live = spawnLegacy(Legacy, spawns, legacyOwner);
+	const live = spawnLegacy(
+		Legacy,
+		spawns.map(s => ({ ...s, args: legacyArgs(s) })),
+		legacyOwner
+	);
 	const rng = new SeededRng(seed).fn;
-	const clock = new FakeClock();
 	const rebuilt = spawns.map(s => ({
 		name: s.name,
 		skip: s.args.some(a => typeof a === 'string' && a.includes('missing')),
 		effect: build(
 			s.args,
 			{ position: s.attached ? owner.position : s.position, follow: s.attached ? owner : null },
-			{ rng, dateNow: () => clock.dateNow() }
+			{ rng }
 		)
 	}));
 	rebuilt.forEach(e => mutate[e.name]?.(e.effect));
@@ -135,23 +162,32 @@ function runScene(key, seed, mutate = {}) {
 	let sink = [];
 	const stop = Legacy.addRecordSink(r => sink.push(r));
 	try {
-		TICKS.forEach((tick, i) => {
+		ticks.forEach(tick => {
+			// scene state (fog) follows the tick, so a frame means the same in every scenario
+			const i = TICKS.indexOf(tick);
 			moveOwner(legacyOwner, tick);
 			moveOwner(owner, tick);
 			const cameraAngle = cameraAngleAt(tick);
 			[camera.angle[0], camera.angle[1]] = cameraAngle;
 			const fog = fogAt(i);
 			const legacy = {};
-			renderLegacyFrame(gl, Legacy, live, tick, fog, ({ name }, _t, drawn) => {
-				legacy[name] = drawn ? sink : null;
-				sink = [];
-			});
+			const compared = legacyTick(tick);
+			if (compared) {
+				renderLegacyFrame(gl, Legacy, live, tick, fog, ({ name }, _t, drawn) => {
+					legacy[name] = drawn ? sink : null;
+					sink = [];
+				});
+			}
 			for (const entry of rebuilt) {
+				const frameState = { heightAt: cellHeight, cameraAngle, sceneFog: { use: !!(fog.use && fog.exist) } };
+				if (!compared) {
+					entry.effect.frame(tick, frameState);
+					continue;
+				}
 				if (entry.skip) {
 					expect(legacy[entry.name]).toBeNull();
 					continue;
 				}
-				const frameState = { heightAt: cellHeight, cameraAngle, sceneFog: { use: !!(fog.use && fog.exist) } };
 				const mine = entry.effect.frame(tick, frameState);
 				const theirs = legacy[entry.name] ?? [];
 				if (mine.length !== theirs.length) {
@@ -181,12 +217,12 @@ describe('Aura record-diff (legacy vs render-records)', () => {
 	it('GroundAura: reproduces every legacy ring record field by field', () => {
 		const { records, mismatches, perEffect } = runScene('ground', 1);
 		expect(mismatches).toEqual([]);
-		expect(Object.keys(perEffect).sort()).toEqual(drawable(GROUND_AURA_SPAWNS).sort());
+		expect(Object.keys(perEffect).sort()).toEqual(drawable(mainSpawns('ground')).sort());
 		expect(records).toBeGreaterThan(500);
 	});
 
 	it('SwirlingAura: reproduces every legacy band record (mesh included) field by field', () => {
-		const { records, mismatches, perEffect } = runScene('swirl', 1);
+		const { records, mismatches, perEffect } = runScene('swirl', 1, {}, { spawns: SWIRLING_AURA_SPAWNS, ticks: TICKS });
 		expect(mismatches).toEqual([]);
 		expect(Object.keys(perEffect).sort()).toEqual(drawable(SWIRLING_AURA_SPAWNS).sort());
 		expect(records).toBeGreaterThan(900);
@@ -196,13 +232,52 @@ describe('Aura record-diff (legacy vs render-records)', () => {
 	it('Level99Bubble: reproduces every legacy anchor record (seeded) field by field', () => {
 		const { records, mismatches, perEffect } = runScene('bubble', 0x99b);
 		expect(mismatches).toEqual([]);
-		// zero-start seeds its clock from Date.now and runs backwards: it never draws (legacy too)
-		expect(Object.keys(perEffect).sort()).toEqual(
-			drawable(LEVEL99_BUBBLE_SPAWNS)
-				.filter(n => n !== 'zero-start')
-				.sort()
-		);
+		expect(Object.keys(perEffect).sort()).toEqual(drawable(mainSpawns('bubble')).sort());
 		expect(records).toBeGreaterThan(2000);
+	});
+
+	describe('#55 divergence: frames before the start tick (dt clamped to [0, 250] ms)', () => {
+		const PRE_START = {
+			ground: GROUND_AURA_SPAWNS.filter(s => s.args[3] > TICKS[0] && !s.name.includes('missing')),
+			bubble: LEVEL99_BUBBLE_SPAWNS.filter(s => s.args[1] > TICKS[0] && !s.name.includes('missing'))
+		};
+		const startOf = (key, s) => s.args[key === 'ground' ? 3 : 1];
+
+		for (const key of ['ground', 'bubble']) {
+			it(`${key}: legacy runs backwards on pre-start frames; render-records equals legacy without them`, () => {
+				expect(PRE_START[key].map(s => s.name)).toContain('delayed');
+				for (const spawn of PRE_START[key]) {
+					const start = startOf(key, spawn);
+					// legacy sees the pre-start frames: running 600 ms backwards, 'delayed' differs for good
+					// (a 100 ms backwards run can cancel out, so only 'delayed' must differ)
+					if (spawn.name === 'delayed') {
+						const raw = runScene(key, 0x55, {}, { spawns: [spawn], ticks: TICKS });
+						expect(raw.mismatches.length, spawn.name).toBeGreaterThan(0);
+					}
+					// fixed behaviour: identical to legacy that never saw a frame before its start tick
+					const fixed = runScene(key, 0x55, {}, { spawns: [spawn], ticks: TICKS, legacyTick: t => t >= start });
+					expect(fixed.mismatches, spawn.name).toEqual([]);
+					expect(fixed.records, spawn.name).toBeGreaterThan(0);
+				}
+			});
+		}
+	});
+
+	it('#53 divergence: a zero-start bubble seeds its clock at the spawn frame and draws', () => {
+		const zero = LEVEL99_BUBBLE_SPAWNS.filter(s => s.name === 'zero-start');
+		// legacy: seeded from Date.now(), the first delta is hugely negative and it never draws
+		const raw = runScene('bubble', 0x53, {}, { spawns: zero, ticks: TICKS });
+		expect(raw.records).toBe(0);
+		expect(raw.mismatches.length).toBeGreaterThan(0);
+		expect(raw.mismatches.every(m => / 0 legacy draws vs [1-9]/.test(m))).toBe(true);
+		// fixed: identical to legacy spawned with startTick = the first frame's tick
+		const fixed = runScene('bubble', 0x53, {}, {
+			spawns: zero,
+			ticks: TICKS,
+			legacyArgs: s => [s.args[0], TICKS[0], s.args[2]]
+		});
+		expect(fixed.mismatches).toEqual([]);
+		expect(fixed.records).toBeGreaterThan(100);
 	});
 
 	it('Level99Bubble: is deterministic per seed', () => {

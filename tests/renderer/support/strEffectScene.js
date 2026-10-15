@@ -112,6 +112,12 @@ export const STR_FILES = {
 		layer([tex('u2')], [key({ frame: 0, srcalpha: 0, destalpha: 0 }), delta({ frame: 0 })])
 	]),
 
+	// Non-integer D3D codes (discrepancy #41): GL receives undefined as well. Not in SPAWNS.
+	'data/texture/effect/fracblend.str': str(60, 30, [
+		layer([tex('f0')], [key({ frame: 0, srcalpha: 5.5, destalpha: 2 }), delta({ frame: 0 })]),
+		layer([tex('f1')], [key({ frame: 0, srcalpha: 5, destalpha: 6.25 }), delta({ frame: 0 })])
+	]),
+
 	// Persistent loop (wraps at maxKey, never removed).
 	'data/texture/effect/loop.str': str(20, 10, [
 		layer([tex('l0'), tex('l1')], [key({ frame: 0, angle: 5 }), delta({ frame: 0, pos: [2, 1], aniframe: 0.2 })])
@@ -179,6 +185,15 @@ export const SPAWNS = [
 	},
 	{ name: 'holes', file: 'data/texture/effect/holes.str', position: [1, 1, 1], startTick: 1040 },
 	{ name: 'missing', file: 'data/texture/effect/missing.str', position: [0, 0, 0], startTick: 1000 }
+];
+
+/**
+ * Invalid D3D blend codes (discrepancy #41: 0/12/13 and non-integer). Legacy hands GL an
+ * undefined factor; render-records draws normal alpha.
+ */
+export const INVALID_BLEND_SPAWNS = [
+	SPAWNS.find(s => s.name === 'badblend'),
+	{ name: 'fracblend', file: 'data/texture/effect/fracblend.str', position: [3, 4, 0], startTick: 1000 }
 ];
 
 /** Move an owner entity deterministically with the tick. */

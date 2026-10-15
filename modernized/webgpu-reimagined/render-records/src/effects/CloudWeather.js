@@ -1,5 +1,6 @@
 import { defaultRng } from '../util/injectables.js';
 import { NEUTRAL_SPRITE_STATE, weatherSpriteDraw } from './weatherSprites.js';
+import { weatherEffectId } from './weather.js';
 
 /**
  * Cloud weather profiles by EffectConst id (EF_CLOUD … EF_CLOUD8). Unknown ids use 229.
@@ -89,7 +90,8 @@ export function cloudWeatherTextures(effectId) {
  * Renderer/Effects/CloudWeatherEffect.js.
  *
  * - maxClouds billboards of 1000×1000 sprite px tinted with the profile colour, zIndex of
- *   the profile. Texture index = rng·(3 − 1) | 0, so only the first two textures are used.
+ *   the profile. Texture index = rng·3 | 0 over all three textures (discrepancy #61 fix;
+ *   legacy's rng·(3 − 1) | 0 never picks the third). Clouds are then sorted by texture.
  * - Clouds spawn within ±area (integer) cells of the player at z −10 and drift by
  *   (2·rng − 1)·speed per 25 ms (vertical (0.1·rng − 0.05)·speed), Δt capped at 250.
  *   Positions and directions are float32 (gl-matrix vec3).
@@ -103,10 +105,13 @@ export function cloudWeatherTextures(effectId) {
  */
 export class CloudWeather {
 	/**
-	 * @param {{effectId: number, startTick: number, endTick?: number}} inst
+	 * @param {{effectId?: number, effectID?: number, startTick: number, endTick?: number}} inst
+	 *        either id spelling (#60: EF_CLOUD2 from the EffectTable passes effectID)
 	 * @param {{rng?: function}} [ports]
 	 */
-	constructor({ effectId, startTick, endTick = -1 }, { rng = defaultRng } = {}) {
+	constructor(inst, { rng = defaultRng } = {}) {
+		const { startTick, endTick = -1 } = inst;
+		const effectId = weatherEffectId(inst);
 		this.effectId = effectId;
 		this.profile = CLOUD_WEATHER_PROFILES[effectId] || CLOUD_WEATHER_PROFILES[229];
 		this.startTick = startTick;
@@ -137,12 +142,22 @@ export class CloudWeather {
 			}
 			const cloud = this.clouds[i];
 			this._respawn(cloud, now, player);
-			cloud.sprite = (rng() * (this.textures.length - 1)) | 0;
+			cloud.sprite = this.textureIndex(rng());
 			cloud.deathTick = cloud.bornTick + rng() * 8000;
 			cloud.bornTick -= 2000;
 		}
 		// stable sort by texture
 		this.clouds.sort((a, b) => a.sprite - b.sprite);
+	}
+
+	/**
+	 * Discrepancy #61 [FLAG, fixed]: texture of a new cloud from one random draw r in [0, 1),
+	 * over all the profile's textures. Legacy's r·(3 − 1) | 0 never picks the third one.
+	 * @param {number} r
+	 * @returns {number}
+	 */
+	textureIndex(r) {
+		return (r * this.textures.length) | 0;
 	}
 
 	_respawn(cloud, now, player) {

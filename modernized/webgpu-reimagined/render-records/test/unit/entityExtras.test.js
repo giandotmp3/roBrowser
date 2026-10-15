@@ -218,8 +218,8 @@ describe('EntityRender.renderRecords: halo, trails, attachments', () => {
 		const records = render(entity, 350);
 		expect(records.map(r => [r.texture, r.zIndex, r.shadowFactor])).toEqual([
 			['att#3', 1, 1],
-			['mob#0', 150, 1], // legacy leaves the shadow factor at 1 after a behind attachment
-			['mob#1', 151, 1],
+			['mob#0', 150, 0.75], // #34: the body keeps its ground shadow (legacy leaks 1 here)
+			['mob#1', 151, 0.75],
 			['att#3', 500, 0.75]
 		]);
 		expect(records[0].position).toEqual([10, 20, 1]);
@@ -227,5 +227,21 @@ describe('EntityRender.renderRecords: halo, trails, attachments', () => {
 		expect(records[3].offset).toEqual([0, -110]);
 		expect(records[3].color).toEqual([1, 1, 1, 0.5]);
 		expect(entity.attachments.map(a => a.uid)).toEqual(['b']);
+	});
+
+	it('#34: an ignoreShadow attachment draws at shadow factor 1 without leaking it to later draws', () => {
+		const view = { spr: sprite('att', 4), act: actOf(4, f => [layer(f)], 8) };
+		const front = (uid, extra) => ({ ...createAttachment({ uid, file: uid, repeat: true, ...extra }, 0), view });
+		const entity = mob({ attachments: [front('a', { ignoreShadow: true }), front('b'), front('c', { ignoreShadow: true })] });
+		const records = render(entity, 350);
+		expect(records.map(r => [r.texture.split('#')[0], r.shadowFactor])).toEqual([
+			['mob', 0.75],
+			['mob', 0.75],
+			['att', 1],
+			['att', 0.75],
+			['att', 1]
+		]);
+		// the next frame starts from the ground factor again
+		expect(render(entity, 400)[0].shadowFactor).toBe(0.75);
 	});
 });

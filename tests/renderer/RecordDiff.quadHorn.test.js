@@ -9,7 +9,10 @@
  * Math.random in legacy order). Both streams are diffed per effect and per tick, field by
  * field (tolerance 1e-5, relative above 1); instances must finish on the same tick.
  *
- * Declared divergences: none. R-EFX-011 (FLAG) is normalised into the unified blend enum
+ * Declared divergence: #49 [SME, decided, HITL round 2], in the INVALID_BLEND_QUADHORN scene only: an
+ * in-range non-integer blend code has an undefined GL factor in legacy; render-records draws
+ * normal alpha. Only `blend` of those entries is excused. Otherwise R-EFX-011 (FLAG) is
+ * normalised into the unified blend enum
  * with the same visual result.
  *
  * Not diffed: an entry whose texture never loads (legacy's ready gate; residency is the
@@ -33,10 +36,11 @@ vi.mock('Core/Client.js', () => ({
 	}
 }));
 import QuadHorn from 'Renderer/Effects/QuadHorn.js';
-import { QUADHORN_TEXCOORDS, QUADHORN_VERTICES, QuadHornEffect } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
+import { BLEND_NORMAL, QUADHORN_TEXCOORDS, QUADHORN_VERTICES, QuadHornEffect } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
 import { installDeterminism } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/installDeterminism.js';
 import { SeededRng } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/SeededRng.js';
 import {
+	INVALID_BLEND_QUADHORN,
 	QUADHORN_SPAWNS,
 	TICKS,
 	fogAt,
@@ -58,13 +62,14 @@ afterEach(() => {
 /**
  * Run legacy and render-records side by side over the scripted ticks.
  * @param {number} seed
+ * @param {Array} [spawns]
  */
-function runScene(seed) {
+function runScene(seed, spawns = QUADHORN_SPAWNS) {
 	QuadHorn.init(gl);
 	const legacyOwner = makeOwner();
 	const owner = makeOwner();
 	({ restore } = installDeterminism({ rng: new SeededRng(seed) }));
-	const live = spawnLegacy(QuadHorn, QUADHORN_SPAWNS, legacyOwner);
+	const live = spawnLegacy(QuadHorn, spawns, legacyOwner);
 	restore();
 	restore = null;
 
@@ -126,6 +131,16 @@ function runScene(seed) {
 }
 
 describe('QuadHorn record-diff (legacy vs render-records)', () => {
+	it('#49 divergence: a non-integer blend code draws normal alpha in render-records only', () => {
+		const { records, mismatches, rebuilt } = runScene(0x49, INVALID_BLEND_QUADHORN);
+		expect(records).toBeGreaterThan(0);
+		expect(mismatches.length).toBeGreaterThan(0);
+		expect(mismatches.filter(m => !/^[^ ]+ blend: /.test(m))).toEqual([]);
+		for (const { effect } of rebuilt) {
+			expect(effect.blend).toEqual(BLEND_NORMAL);
+		}
+	});
+
 	it('reproduces every legacy QuadHorn record field by field', () => {
 		const { records, mismatches, perEffect } = runScene(0x9a4);
 		expect(mismatches).toEqual([]);

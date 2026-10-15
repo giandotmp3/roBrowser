@@ -241,3 +241,20 @@ export function level99Auras({ auraPref, baseLevel, visible, minLevel = 99 }) {
 	}
 	return [LEVEL99_EFFECTS.LEVEL99, LEVEL99_EFFECTS.LEVEL99_2, LEVEL99_EFFECTS.LEVEL99_3];
 }
+
+/**
+ * Discrepancy #55 [FLAG, fixed]: frame delta of the aura simulations (GroundAura,
+ * Level99Bubble), clamped to [0, max] ms. A clock of 0 means "not seeded yet": the frame
+ * delta is 0 and the clock starts at this frame. A tick earlier than the clock (a frame
+ * before the start tick) gives `null`: the simulation must not step and the clock stays.
+ * Legacy caps at max with no lower bound, so such a frame runs the simulation backwards
+ * (GroundAura.js:267, Level99Bubble.js:463).
+ * @param {number} tick
+ * @param {number} lastTick
+ * @param {number} max
+ * @returns {number|null}
+ */
+export function auraFrameDelta(tick, lastTick, max) {
+	const raw = tick - (lastTick || tick);
+	return raw < 0 ? null : Math.min(raw, max);
+}

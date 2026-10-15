@@ -49,6 +49,17 @@ describe('2D / 3D effect players', () => {
 		expect(two({ file: 'a', size: 10 }).frame(0, frame())[0].blend).toBe(BLEND_NORMAL);
 	});
 
+	it('#49: a non-integer blendMode draws normal alpha (2D and 3D)', () => {
+		expect(three({ file: 'a', blendMode: 2.5 }).frame(0, frame())[0].blend).toBe(BLEND_NORMAL);
+		expect(two({ file: 'a', size: 10, blendMode: 7.25 }).frame(0, frame())[0].blend).toBe(BLEND_NORMAL);
+	});
+
+	it('#47: a plain 3D record is self-contained (fresh SpriteRenderer offset, no palette, own angle / zIndex)', () => {
+		const [r] = three({ file: 'a', angle: 20, zIndex: 3 }).frame(400, frame());
+		expect(r.params).toMatchObject({ offset: [0, 0], palette: null, paletteSize: null, angle: 20, zIndex: 3, depthBias: 0 });
+		expect(r.params.shadowFactor).toBe(1);
+	});
+
 	it('R-EFX-012: fades over a quarter of the duration; 3D sparkles, 2D does not', () => {
 		const fade = three({ file: 'a', fadeIn: true, fadeOut: true, alphaMax: 0.8 });
 		expect(fade.frame(100, frame())[0].color[3]).toBeCloseTo(0.4);

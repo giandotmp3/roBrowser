@@ -1,7 +1,7 @@
 import { createEffectDraw } from '../records/EffectDraw.js';
 import { BLEND_ADDITIVE } from '../records/blend.js';
-import { defaultClock, defaultRng } from '../util/injectables.js';
-import { effectPass } from './rules.js';
+import { defaultRng } from '../util/injectables.js';
+import { auraFrameDelta, effectPass } from './rules.js';
 
 const DEG_TO_RAD = Math.PI / 180;
 const GAME_TO_WORLD = 0.1 * 2.2;
@@ -96,9 +96,14 @@ export function level99BubbleAlpha(y) {
  * Additive (R-EFX-014), depth test without write, before entities, scene fog.
  * Randomness goes through the rng port in legacy order (construction: per column 16
  * phase/target pairs then 4 anchor heights; per frame: one step draw per phase walk, one
- * more when a walk reaches its target, five per respawn). Like legacy, a start tick of
- * 0 seeds the frame clock from dateNow, and the frame delta is capped at 250 ms but not
- * floored (an earlier tick runs the simulation backwards).
+ * more when a walk reaches its target, five per respawn).
+ *
+ * Fixed legacy flags (HITL round 2):
+ * - #53: a start tick of 0 seeds the frame clock at the spawn (the first frame), so the
+ *   bubble plays. Legacy seeds it from Date.now() against a renderer tick, and the hugely
+ *   negative first delta sends the anchors away for good: it never draws.
+ * - #55: the frame delta is clamped to [0, 250] ms; a frame before the start tick does not
+ *   step the simulation (no random draws either) and does not move the clock back.
  */
 export class Level99BubbleEffect {
 	/**
@@ -111,15 +116,16 @@ export class Level99BubbleEffect {
 	 * @param {{position: ArrayLike<number>}} [inst.follow]  entity followed every frame
 	 * @param {number} [inst.effectId]
 	 * @param {boolean} [inst.renderBeforeEntities]
-	 * @param {{rng?: import('../util/injectables.js').Rng, dateNow?: import('../util/injectables.js').Clock}} [ports]
+	 * @param {{rng?: import('../util/injectables.js').Rng}} [ports]
 	 */
-	constructor({ textureName, flag1 }, inst, { rng = defaultRng, dateNow = defaultClock } = {}) {
+	constructor({ textureName, flag1 }, inst, { rng = defaultRng } = {}) {
 		this.rng = rng;
 		this.position = [inst.position[0], inst.position[1], inst.position[2]];
 		this.follow = inst.follow ?? null;
 		this.pass = effectPass({ effectId: inst.effectId, renderBeforeEntities: inst.renderBeforeEntities }, true);
 		this.texture = `data/texture/effect/${textureName || 'whitelight.tga'}`;
-		this.lastTick = inst.startTick || dateNow();
+		// #53: 0 = not seeded; the first frame (the spawn) starts the clock (auraFrameDelta)
+		this.lastTick = inst.startTick || 0;
 		this.flag1 = flag1 === 0 || flag1 ? flag1 : 1;
 		this.variant = level99BubbleVariant(this.flag1);
 
@@ -214,16 +220,23 @@ export class Level99BubbleEffect {
 			];
 		});
 
-		const dt = Math.min(tick - (this.lastTick || tick), MAX_FRAME_DT);
-		this.lastTick = tick;
-		const stepScale = dt / GAME_TICK_MS;
+		const dt = auraFrameDelta(tick, this.lastTick, MAX_FRAME_DT);
+		const simulate = dt !== null;
+		if (simulate) {
+			this.lastTick = tick;
+		}
+		const stepScale = (dt ?? 0) / GAME_TICK_MS;
 		const fog = Boolean(sceneFog && sceneFog.use);
 		const out = [];
 
 		this.columns.forEach((column, ec) => {
-			this.walkPhases(column, stepScale);
+			if (simulate) {
+				this.walkPhases(column, stepScale);
+			}
 			column.anchors.forEach((anchor, ai) => {
-				this.moveAnchor(column, ai, stepScale);
+				if (simulate) {
+					this.moveAnchor(column, ai, stepScale);
+				}
 				// above the ground line (positive y) is not drawn yet
 				if (anchor.y > 0) {
 					return;

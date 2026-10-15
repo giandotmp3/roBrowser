@@ -6,7 +6,9 @@ import { duplicateOffsets, effectTiming, effectsEnabled, normalizeDuplicate, res
 /**
  * @typedef {Object} EffectInstance
  * @property {number} effectId
- * @property {string} family      Constructor name alias used by remove(ctor, ...)
+ * @property {string} family      Class-name alias, matched by remove('Name', ...)
+ * @property {Function} [ctor]    Constructor of an instance added with add(); remove(ctor) matches it by identity (#59)
+ * @property {Object} [effect]    The effect object of an instance added with add()
  * @property {number} ownerAID
  * @property {number} startTick
  * @property {number} endTick
@@ -27,6 +29,11 @@ const FAMILY_BY_TYPE = Object.freeze({
 /**
  * Effect lifecycle and record emission. Replaces the legacy EffectManager
  * logic side; GPU drawing lives in the backends.
+ *
+ * Discrepancy #59 [FLAG, fixed]: effects are tracked per instance. Legacy EffectManager keys
+ * its lists by `constructor.name`, so two classes of the same name (every FlatColorTile
+ * colour) share one list and the second one is never initialised or drawn; here every
+ * instance stands alone, and remove(ctor) matches constructors by identity, not by name.
  */
 export class EffectSystem {
 	/**
@@ -92,20 +99,50 @@ export class EffectSystem {
 	}
 
 	/**
-	 * effects.remove(ctorOrNull, AID, effectID). `ctor` may be a constructor
-	 * (matched by its name) or a class-name alias string.
+	 * Track one effect object created outside the table types (e.g. by a FUNC entry), per
+	 * instance (#59): two classes that share a name stay separate.
+	 * @param {Object} effect  instance of its own class
+	 * @param {{effectId?: number, ownerAID?: number, startTick?: number, endTick?: number}} [inst]
+	 * @returns {EffectInstance}
+	 */
+	add(effect, { effectId = -1, ownerAID = 0, startTick = 0, endTick = -1 } = {}) {
+		const ctor = effect.constructor;
+		/** @type {EffectInstance} */
+		const instance = {
+			effectId,
+			family: ctor.name,
+			ctor,
+			effect,
+			ownerAID,
+			startTick,
+			endTick,
+			file: undefined,
+			blend: null,
+			spec: null
+		};
+		this.instances.push(instance);
+		return instance;
+	}
+
+	/**
+	 * effects.remove(ctorOrNull, AID, effectID). `ctor` may be a constructor or a
+	 * class-name alias string. A constructor matches the instances added with it by
+	 * identity (#59) and the table instances of its class name; a string matches by name.
 	 * @param {Function|string|null} ctor
 	 * @param {number} [aid]
 	 * @param {number} [effectId]
 	 * @returns {number} Number of instances removed
 	 */
 	remove(ctor, aid, effectId) {
-		const family = typeof ctor === 'function' ? ctor.name : ctor;
+		const byCtor = typeof ctor === 'function';
+		const family = byCtor ? ctor.name : ctor;
+		const matches = i =>
+			byCtor ? (i.ctor ? i.ctor === ctor : i.family === family) : !family || i.family === family;
 		const before = this.instances.length;
 		this.instances = this.instances.filter(
 			i =>
 				!(
-					(!family || i.family === family) &&
+					matches(i) &&
 					(aid === undefined || i.ownerAID === aid) &&
 					(effectId === undefined || i.effectId === effectId)
 				)

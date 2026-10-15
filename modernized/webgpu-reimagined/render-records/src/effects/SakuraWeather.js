@@ -1,5 +1,5 @@
 import { defaultRng } from '../util/injectables.js';
-import { RAG_TICK_MS, WEATHER_PARAMS } from './weather.js';
+import { RAG_TICK_MS, WEATHER_PARAMS, weatherEffectId } from './weather.js';
 import { actFrameDraws, remainingMs } from './weatherSprites.js';
 import { WEATHER_EMIT_STOP_BEFORE_END_MS, WEATHER_FADEOUT_TAIL_MS } from './SnowWeather.js';
 
@@ -65,10 +65,13 @@ export function sakuraSway(current, target, rng) {
  */
 export class SakuraWeather {
 	/**
-	 * @param {{effectId: number, startTick: number, endTick?: number}} inst
+	 * @param {{effectId?: number, effectID?: number, startTick: number, endTick?: number}} inst
+	 *        either id spelling (#60: map-flag 'leaves' passes effectId, the EffectTable effectID)
 	 * @param {{rng?: function}} [ports]
 	 */
-	constructor({ effectId, startTick, endTick = -1 }, { rng = defaultRng } = {}) {
+	constructor(inst, { rng = defaultRng } = {}) {
+		const { startTick, endTick = -1 } = inst;
+		const effectId = weatherEffectId(inst);
 		this.effectId = effectId;
 		this.isMaple = effectId === EF_MAPLE;
 		this.startTick = startTick;

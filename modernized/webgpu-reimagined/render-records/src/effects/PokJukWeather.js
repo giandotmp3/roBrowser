@@ -1,5 +1,5 @@
 import { defaultRng } from '../util/injectables.js';
-import { BLEND_NORMAL } from '../records/blend.js';
+import { BLEND_ADDITIVE } from '../records/blend.js';
 import { NEUTRAL_SPRITE_STATE, WEATHER_DEPTH, weatherSpriteDraw } from './weatherSprites.js';
 
 /** Procedural 6×6 radial-gradient particle texture (white, alpha 1 → 0.8 → 0). */
@@ -51,11 +51,14 @@ const WHITE = [255, 255, 255];
  *   255 per step. A spent firework is replaced by a new one around the current player.
  * - Every live firework / particle draws a 6×6 sprite-px billboard of its colour and
  *   alpha/255 (each particle's own size is unused).
- * - Blend is normal: render(false) re-sets SRC_ALPHA, ONE_MINUS_SRC_ALPHA before every
- *   particle, so the pass's additive blendFunc never reaches a draw.
- * - The fireworks set only position, colour, size and texture: angle, offset, shadow,
- *   palette, depth bias and the zIndex counter come from the SpriteRenderer state the
- *   previous user left (`ctx.inherited`); zIndex keeps counting from there.
+ * - Discrepancy #51 [FLAG, fixed]: fireworks draw additive (SRC_ALPHA, ONE), as the pass
+ *   intends. Legacy's render(false) re-sets normal alpha before every particle, so its
+ *   additive blendFunc never reaches a draw.
+ * - Discrepancies #47/#52 [FLAG, fixed]: every record is self-contained. Angle, offset,
+ *   shadow, palette, depth bias and the zIndex counter are the values of a fresh
+ *   SpriteRenderer state (NEUTRAL_SPRITE_STATE; zIndex counts from 0 each frame). Legacy
+ *   sets only position, colour, size and texture and inherits the rest from whatever the
+ *   previous SpriteRenderer user left.
  */
 export class PokJukWeather {
 	/**
@@ -190,11 +193,9 @@ export class PokJukWeather {
 	 * @param {number} tick
 	 * @param {Object} ctx
 	 * @param {ArrayLike<number>|null} ctx.player  read when a spent firework is replaced
-	 * @param {Object} [ctx.inherited] SpriteRenderer state left by the previous user
-	 *        (angle, offset, shadowFactor, zIndex, depthBias, palette, paletteSize)
 	 * @returns {Object[]} SpriteDraw records
 	 */
-	frame(tick, { player, inherited = NEUTRAL_SPRITE_STATE }) {
+	frame(tick, { player }) {
 		if (this.finished) {
 			return [];
 		}
@@ -209,7 +210,8 @@ export class PokJukWeather {
 		}
 
 		const out = [];
-		let zIndex = inherited.zIndex;
+		const state = NEUTRAL_SPRITE_STATE;
+		let zIndex = state.zIndex;
 		const draw = (pos, alpha, rgb) => {
 			const color = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, alpha / 255];
 			if (!color[3]) {
@@ -218,19 +220,19 @@ export class PokJukWeather {
 			out.push(
 				weatherSpriteDraw({
 					texture: POKJUK_TEXTURE,
-					palette: inherited.palette,
-					paletteSize: inherited.paletteSize,
+					palette: state.palette,
+					paletteSize: [state.paletteSize[0], state.paletteSize[1]],
 					position: [pos[0], pos[1], pos[2]],
-					offset: [inherited.offset[0], inherited.offset[1]],
+					offset: [state.offset[0], state.offset[1]],
 					size: [PARTICLE_SIZE, PARTICLE_SIZE],
 					xSize: 5,
 					ySize: 5,
-					angle: inherited.angle,
+					angle: state.angle,
 					color,
-					shadowFactor: inherited.shadowFactor,
+					shadowFactor: state.shadowFactor,
 					zIndex: zIndex++,
-					depthBias: inherited.depthBias,
-					blend: BLEND_NORMAL,
+					depthBias: state.depthBias,
+					blend: BLEND_ADDITIVE,
 					...WEATHER_DEPTH
 				})
 			);

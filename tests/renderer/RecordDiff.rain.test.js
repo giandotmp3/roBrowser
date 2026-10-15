@@ -14,7 +14,10 @@
  * jsdom has no AudioContext, so legacy's plink sound (which draws Math.random only when
  * audio exists) never runs — the same as render-records, which has no audio.
  *
- * Declared divergences: none.
+ * Declared divergence: #63 [FLAG, fixed, HITL round 2]. Legacy splash records carry angle
+ * NaN (drop.angle · 0.2, drop.angle never set); render-records draws them at angle 0. Only
+ * `angle: NaN vs 0` mismatches of splash-texture records are excused (one per splash
+ * record), and render-records' splash angles are asserted to be 0.
  */
 import { describe, expect, it, vi } from 'vitest';
 
@@ -76,7 +79,7 @@ async function run(seed, mutate = {}) {
 	let legacySprites = [];
 	let legacyPuddles = [];
 	const mismatches = [];
-	const counts = { sprites: 0, puddles: 0, flashes: 0, splashes: 0, events: [] };
+	const counts = { sprites: 0, puddles: 0, flashes: 0, splashes: 0, splashAngles: [], excused: 0, events: [] };
 	const stops = [
 		SpriteRenderer.addRecordSink(r => legacySprites.push(r)),
 		RainLegacy.addRecordSink(r => legacyPuddles.push({ ...r, texture: { id: textureKey(r.texture) } }))
@@ -143,7 +146,17 @@ async function run(seed, mutate = {}) {
 				if (modern?.finished) {
 					modern = null;
 				}
-				mismatches.push(...diffSpriteFrame(`frame ${i} @${tick}`, legacySprites, mine, textureKey));
+				// #63: legacy splash angle NaN vs render-records 0, excused on splash records only
+				const splash = r => textureKey(r.texture) === RAIN_TEXTURES.splash;
+				for (const d of diffSpriteFrame(`frame ${i} @${tick}`, legacySprites, mine, textureKey)) {
+					const k = Number(d.match(/#(\d+) angle: NaN vs 0$/)?.[1] ?? -1);
+					if (k >= 0 && splash(legacySprites[k]) && mine[k].texture === RAIN_TEXTURES.splash) {
+						counts.excused++;
+					} else {
+						mismatches.push(d);
+					}
+				}
+				counts.splashAngles.push(...mine.filter(r => r.texture === RAIN_TEXTURES.splash).map(r => r.angle));
 				counts.sprites += legacySprites.length;
 				counts.flashes += legacySprites.filter(r => r.zIndex === -1000 && r.color[0] > 0.8).length;
 				counts.splashes += legacySprites.filter(r => textureKey(r.texture) === RAIN_TEXTURES.splash).length;
@@ -169,6 +182,14 @@ describe('RainWeather record-diff (legacy vs render-records)', { timeout: 60000 
 		expect(counts.flashes).toBeGreaterThan(2);
 		expect(sounds.filter(s => s === 'thunder').length).toBeGreaterThan(2);
 		expect(RAIN_MAP).toBe('rain_map.rsw');
+	});
+
+	it('#63 divergence: splashes draw at angle 0 (legacy NaN)', async () => {
+		const { mismatches, counts } = await run(RAIN_SEED);
+		expect(mismatches.slice(0, 20)).toEqual([]);
+		expect(counts.excused).toBe(counts.splashes);
+		expect(counts.splashAngles.length).toBe(counts.splashes);
+		expect(counts.splashAngles.every(a => a === 0)).toBe(true);
 	});
 
 	it('is deterministic per seed', async () => {

@@ -9,6 +9,9 @@
 
 export const SPHERE_TICKS = [0, 16, 33, 50, 100, 250, 400, 640, 1000, 1500, 2300, 4096, 7000];
 
+/** Exactly 60 fps for 3.5 s (discrepancy #57: the time-based fade equals legacy's per-frame step here). */
+export const SPHERE_TICKS_60FPS = Array.from({ length: 211 }, (_, n) => (n * 1000) / 60);
+
 /** Camera of a tick (angle [pitch, yaw] read by beforeRender, zoom by render). */
 export function sphereCameraAt(tick) {
 	return { angle: [200 + (tick % 70), (tick / 7) % 360], zoom: 1 + (tick % 5) / 4 };

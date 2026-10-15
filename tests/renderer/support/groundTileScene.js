@@ -80,21 +80,24 @@ export function buildTileGroups({ Tiles, LPEffect, SpiderWeb, FlatColorTile }) {
 			group: 'salmon',
 			Ctor: salmon,
 			live: spawn(salmon, ['salmon-0', 'salmon-1']),
-			spec: { kind: 'color', color: { r: 1, g: 0x8a / 255, b: 0xbb / 255, a: 0.6 } }
+			spec: { kind: 'color', name: 'salmon', color: { r: 1, g: 0x8a / 255, b: 0xbb / 255, a: 0.6 } }
 		},
 		{
 			group: 'color-shared',
 			Ctor: lullaby,
 			live: [...spawn(lullaby, ['lullaby-0']), ...spawnForeign(FlatColorTile, at(5))],
-			spec: { kind: 'color', color: { ...lullabySpec, a: 0.5 } }
+			spec: { kind: 'color', name: 'lullaby', color: { ...lullabySpec, a: 0.5 } }
 		}
 	];
 }
 
+/** The second FlatColorTile colour of the scene (discrepancy #59). */
+export const FOREIGN_COLOR = Object.freeze({ r: 0.9, g: 0.1, b: 0.1, a: 0.3 });
+
 /** A different FlatColorTile colour whose instance joins another colour's list. */
 function spawnForeign(FlatColorTile, position) {
-	const Other = FlatColorTile('apple', { r: 0.9, g: 0.1, b: 0.1, a: 0.3 });
+	const Other = FlatColorTile('apple', { ...FOREIGN_COLOR });
 	const effect = new Other(position, 0);
 	effect.needInit = true;
-	return [{ name: 'apple-foreign', effect, foreign: true }];
+	return [{ name: 'apple-foreign', effect, foreign: true, color: FOREIGN_COLOR }];
 }

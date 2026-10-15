@@ -11,15 +11,20 @@
  * camera, terrain and ticks. Both streams are diffed per effect and per tick, field by
  * field (tolerance 1e-5, relative above magnitude 1: legacy keeps state in Float32Array).
  *
- * Declared divergences: none. R-EFX-011 [FLAG] is a normalisation, and both sides already
- * name the GL-order factors identically for codes 0..16 and -1.
+ * Declared divergences (R-EFX-011 [FLAG] is a normalisation, and both sides already name
+ * the GL-order factors identically for codes 0..16 and -1):
+ * - #47 [FLAG, fixed, HITL round 2]: in the LEAK_3D scene only, a plain 3D effect drawn right
+ *   after a sprite-backed one inherits that one's SpriteRenderer offset and palette in legacy.
+ *   render-records' records are self-contained (offset [0, 0], no palette). Only
+ *   params.offset / params.palette / params.paletteSize of the `afterSprite` effect are excused.
+ * - #41/#49 [SME, decided]: in the INVALID_BLEND_3D / INVALID_BLEND_2D scenes only, an in-range
+ *   non-integer blend code has no defined GL factor in legacy (undefined blendFunc argument);
+ *   render-records draws normal alpha. Only `blend` of those effects is excused.
  *
  * Not compared:
  * - params.spriteType: the uIsRGBA uniform is uploaded but never read (spec #12); legacy
  *   inherits it from whatever sprite SpriteRenderer drew last.
  * - params.paletteSize when the draw has no palette (uTextSize is only uploaded with one).
- * Not diffed (needs an HITL decision): a plain 3D effect drawn right after a sprite-backed
- * 3D effect in the same pass inherits its SpriteRenderer offset and palette (LEAK_3D).
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -62,11 +67,14 @@ import TwoDEffect from 'Renderer/Effects/TwoDEffect.js';
 import { installDeterminism } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/installDeterminism.js';
 import { SeededRng } from '../../modernized/webgpu-reimagined/test-harness/src/determinism/SeededRng.js';
 import {
+	BLEND_NORMAL,
 	ThreeDEffectPlayer,
 	TwoDEffectPlayer
 } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
 import {
 	ALL_FILES,
+	INVALID_BLEND_2D,
+	INVALID_BLEND_3D,
 	LEAK_3D,
 	SPAWNS_2D,
 	SPAWNS_3D,
@@ -176,6 +184,7 @@ function runScene(spawns3d, spawns2d, ticks = TICKS) {
 	groups.forEach(g => g.legacy.forEach(e => e.effect.init(gl)));
 	const mismatches = [];
 	const perEffect = {};
+	const drawn = {};
 	let records = 0;
 	let sink = [];
 	const stops = [ThreeDEffect.addRecordSink(r => sink.push(r)), TwoDEffect.addRecordSink(r => sink.push(r))];
@@ -200,6 +209,7 @@ function runScene(spawns3d, spawns2d, ticks = TICKS) {
 						e.effect.render(gl, tick);
 					}
 					const mine = players[i].frame(tick, frame);
+					(drawn[key] ??= []).push(...mine);
 					perEffect[key] = (perEffect[key] ?? 0) + sink.length;
 					records += sink.length;
 					if (sink.length !== mine.length) {
@@ -218,7 +228,7 @@ function runScene(spawns3d, spawns2d, ticks = TICKS) {
 	} finally {
 		stops.forEach(stop => stop());
 	}
-	return { records, mismatches, perEffect, groups };
+	return { records, mismatches, perEffect, groups, drawn };
 }
 
 describe('record-diff: legacy ThreeDEffect / TwoDEffect vs render-records players', () => {
@@ -272,13 +282,35 @@ describe('record-diff: legacy ThreeDEffect / TwoDEffect vs render-records player
 		expect(two.players[two.legacy.findIndex(e => e.name === 'ownerNoShadow')].shadowAttachment).toBeNull();
 	});
 
-	it('legacy leaks sprite-layer state into the next plain 3D draw (documented, not diffed)', () => {
+	it('#47 divergence: legacy leaks sprite-layer offset / palette into the next plain 3D draw; render-records does not', () => {
 		// the palette leaks once sprName (RGBA-only) has ended and sprAbs draws last
-		const { mismatches } = runScene([...SPAWNS_3D, ...LEAK_3D], []);
+		const { mismatches, drawn } = runScene([...SPAWNS_3D, ...LEAK_3D], []);
 		const leaked = mismatches.filter(m => m.startsWith('ThreeDEffect:afterSprite'));
 		expect(leaked.some(m => m.includes('params.offset'))).toBe(true);
 		expect(leaked.some(m => m.includes('params.palette'))).toBe(true);
+		expect(leaked.filter(m => !/#\d+ params\.(offset|palette|paletteSize): /.test(m))).toEqual([]);
 		expect(mismatches.filter(m => !m.startsWith('ThreeDEffect:afterSprite'))).toEqual([]);
+		// the fixed behaviour: the plain draw carries a fresh SpriteRenderer offset and no palette
+		const plain = drawn['ThreeDEffect:afterSprite'];
+		expect(plain.length).toBeGreaterThan(0);
+		for (const r of plain) {
+			expect(Array.from(r.params.offset)).toEqual([0, 0]);
+			expect(r.params.palette).toBeNull();
+		}
+	});
+
+	it('#41/#49 divergence: non-integer blend codes draw normal alpha in render-records only', () => {
+		const { mismatches, perEffect, groups } = runScene(INVALID_BLEND_3D, INVALID_BLEND_2D);
+		for (const s of [...INVALID_BLEND_3D, ...INVALID_BLEND_2D]) {
+			expect(Object.keys(perEffect).some(k => k.endsWith(`:${s.name}`) && perEffect[k] > 0)).toBe(true);
+		}
+		expect(mismatches.length).toBeGreaterThan(0);
+		expect(mismatches.filter(m => !/#\d+ blend: /.test(m))).toEqual([]);
+		for (const { players } of groups) {
+			for (const p of players) {
+				expect(p.blend).toEqual(BLEND_NORMAL);
+			}
+		}
 	});
 
 	it('fails when a composer is broken (mutation guard)', () => {

@@ -15,9 +15,10 @@
  *   the scene fog. Allowed: `fog` is false on every legacy record and equals the frame's
  *   sceneFog.use on every render-records record; no other field may differ.
  *
- * Not diffed: badblend.str (D3D codes 0/12/13). Legacy hands GL an undefined factor
- * (INVALID_ENUM, previous blend kept, record blend null); render-records' blendFromStr
- * falls back to normal alpha. That is not a declared divergence: it needs an SME decision.
+ * - #41 [SME, decided, HITL round 2], in the badblend.str scene only: D3D codes 0/12/13 (and
+ *   a non-integer code) hand GL an undefined factor in legacy (INVALID_ENUM, previous blend
+ *   kept, record blend null); render-records' blendFromStr draws normal alpha. Only `blend`
+ *   of that effect is excused, and the rebuild's normal alpha is asserted on its own.
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -38,8 +39,8 @@ vi.mock('Core/Client.js', () => ({
 }));
 
 import StrEffect from 'Renderer/Effects/StrEffect.js';
-import { StrPlayer } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
-import { SPAWNS, STR_FILES, spawnEffects } from './support/strEffectScene.js';
+import { BLEND_NORMAL, StrPlayer } from '../../modernized/webgpu-reimagined/render-records/src/index.js';
+import { INVALID_BLEND_SPAWNS, SPAWNS, STR_FILES, spawnEffects } from './support/strEffectScene.js';
 
 const gl = new Proxy({}, { get: (_t, k) => (/^[A-Z_0-9]+$/.test(String(k)) ? k : () => ({})) });
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -156,6 +157,23 @@ describe('record-diff: legacy StrEffect vs render-records StrPlayer', () => {
 	beforeAll(() => {
 		Object.assign(files, STR_FILES);
 		StrEffect.init(gl);
+	});
+
+	it('#41 divergence: invalid D3D blend codes draw normal alpha in render-records only', () => {
+		const { records, mismatches, perEffect } = runScene(INVALID_BLEND_SPAWNS, TICKS);
+		expect(perEffect.badblend).toBeGreaterThan(0);
+		expect(perEffect.fracblend).toBeGreaterThan(0);
+		const blend = mismatches.filter(m => m.includes(` blend: null vs ${JSON.stringify(BLEND_NORMAL)}`));
+		expect(blend.length).toBe(records);
+		expect(mismatches.filter(m => !blend.includes(m))).toEqual([]);
+		for (const spawn of INVALID_BLEND_SPAWNS) {
+			const player = new StrPlayer({ str: STR_FILES[spawn.file], startTick: spawn.startTick });
+			const drawn = player.frame(spawn.startTick + 10, { sceneFog: { use: false } });
+			expect(drawn.length).toBeGreaterThan(1);
+			for (const r of drawn) {
+				expect(r.blend).toEqual(BLEND_NORMAL);
+			}
+		}
 	});
 
 	it('every scripted effect matches field by field (only R-EFX-010 fog differs)', () => {

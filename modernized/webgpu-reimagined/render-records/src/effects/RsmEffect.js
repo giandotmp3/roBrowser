@@ -463,7 +463,15 @@ export function rsmMergeMeshes(meshes, textures) {
  * instance (scale (−0.075, −0.075, 0.075)) and starts from the loader's static compile;
  * a model with keyframes and animLen > 0 is rebuilt here whenever
  * floor((elapsed·fps/1000) mod animLen) changes (a first computed frame of −1 keeps the
- * static compile). Object textures are re-resolved only when the object count changes.
+ * static compile).
+ *
+ * Fixed legacy flags (discrepancy #56, HITL round 2):
+ * - every rebuild binds each object to its own mesh's texture (legacy re-resolves textures
+ *   only when the object count changes, so a same-count rebuild keeps stale textures);
+ * - an object whose texture failed to load (frameState.textureFailed) is not drawn (legacy
+ *   draws it with no texture bound after an object-count change);
+ * - `endTick` is honoured: past an endTick > 0 the effect draws nothing and is finished
+ *   (legacy never sets needCleanUp). endTick −1 (no duration) never ends.
  *
  * Sets no blend or depth state: the record describes the pass it runs in (after
  * entities: normal alpha, depth test and write). Scene fog applies.
@@ -475,6 +483,7 @@ export class RsmEffect {
 	 * @param {Object} inst
 	 * @param {ArrayLike<number>} inst.position
 	 * @param {number} [inst.startTick]
+	 * @param {number} [inst.endTick]  −1 / ≤ 0: open-ended
 	 * @param {{position: ArrayLike<number>}} [inst.follow]  entity followed every frame (attachedEntity)
 	 * @param {number} [inst.effectId]
 	 * @param {boolean} [inst.renderBeforeEntities]
@@ -486,6 +495,8 @@ export class RsmEffect {
 		this.pass = effectPass({ effectId: inst.effectId, renderBeforeEntities: inst.renderBeforeEntities }, false);
 		this.size = spec.size || 1;
 		this.startTick = inst.startTick || 0;
+		this.endTick = inst.endTick ?? -1;
+		this.finished = false;
 		this.model = model;
 		this.animLen = model.animLen || 0;
 		this.fps = model.frameRatePerSecond || RSM_DEFAULT_FPS;
@@ -511,7 +522,7 @@ export class RsmEffect {
 	}
 
 	/**
-	 * Rebuild the mesh at a keyframe (object textures re-resolved on a count change).
+	 * Rebuild the mesh at a keyframe; every object takes its own mesh's texture (#56).
 	 * @param {number} frame
 	 */
 	rebuild(frame) {
@@ -523,20 +534,21 @@ export class RsmEffect {
 		}
 		const { buffer, objects } = rsmMergeMeshes(meshes, this.model.textures);
 		this.buffer = buffer;
-		this.objects =
-			objects.length === this.objects.length
-				? objects.map((o, i) => ({ ...o, texture: this.objects[i].texture }))
-				: objects;
+		this.objects = objects;
 	}
 
 	/**
-	 * The records of one frame (one per object).
+	 * The records of one frame (one per object whose texture did not fail).
 	 * @param {number} tick
-	 * @param {{sceneFog?: {use: boolean}}} [frameState]
+	 * @param {{sceneFog?: {use: boolean}, textureFailed?: (texture: string) => boolean}} [frameState]
 	 * @param {import('../records/RecordStream.js').RecordStream} [stream]  also appended to, when given
 	 * @returns {Readonly<import('../records/EffectDraw.js').EffectDraw>[]}
 	 */
-	frame(tick, { sceneFog } = {}, stream) {
+	frame(tick, { sceneFog, textureFailed = () => false } = {}, stream) {
+		if (this.finished || (this.endTick > 0 && tick > this.endTick)) {
+			this.finished = true;
+			return [];
+		}
 		if (this.isAnimated && this.animLen > 0) {
 			const frame = Math.floor((((tick - this.startTick) * this.fps) / 1000) % this.animLen);
 			if (frame !== this.lastFrame) {
@@ -545,7 +557,11 @@ export class RsmEffect {
 			}
 		}
 		const source = this.follow ? this.follow.position : this.position;
-		return this.objects.map((object, i) => {
+		const out = [];
+		this.objects.forEach((object, i) => {
+			if (textureFailed(object.texture)) {
+				return;
+			}
 			const start = object.vertOffset * RSM_VERTEX_STRIDE;
 			/** @type {RsmParams} */
 			const params = {
@@ -570,7 +586,8 @@ export class RsmEffect {
 				params
 			});
 			stream?.effect(record);
-			return record;
+			out.push(record);
 		});
+		return out;
 	}
 }

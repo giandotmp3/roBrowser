@@ -80,15 +80,26 @@ export const GL_ORDER_BLEND_TABLE = Object.freeze({
 });
 
 /**
+ * Own-property table lookup by integer code (a numeric string counts, as legacy's table
+ * indexing allows); inherited keys ('constructor', ...) and non-integers miss.
+ */
+const lookup = (table, code) => {
+	const n = typeof code === 'string' && code.trim() !== '' ? Number(code) : code;
+	return Number.isInteger(n) && Object.hasOwn(table, n) ? table[n] : undefined;
+};
+
+/**
  * Normalise an STR (D3DBLEND) src/dst pair into the unified enum.
- * Unknown codes fall back to normal alpha blending (secure, visible default).
+ * Discrepancy #41 [SME, decided]: unknown codes (0, 12, 13, out of range, non-integer) fall
+ * back to normal alpha blending. Legacy hands GL an undefined factor (INVALID_ENUM), so its
+ * result is whatever blend the previous draw left and is not reproducible.
  * @param {number} srcCode
  * @param {number} dstCode
  * @returns {Readonly<BlendState>}
  */
 export function blendFromStr(srcCode, dstCode) {
-	const src = D3D_BLEND_TABLE[srcCode];
-	const dst = D3D_BLEND_TABLE[dstCode];
+	const src = lookup(D3D_BLEND_TABLE, srcCode);
+	const dst = lookup(D3D_BLEND_TABLE, dstCode);
 	if (!src || !dst) {
 		return BLEND_NORMAL;
 	}
@@ -97,15 +108,17 @@ export function blendFromStr(srcCode, dstCode) {
 
 /**
  * Normalise a 2D/3D/Cylinder/QuadHorn `blendMode` into the unified enum.
- * 0 or out-of-range means normal alpha blending (R-EFX-011).
+ * 0 or out-of-range means normal alpha blending (R-EFX-011). Discrepancy #49 [SME, decided]:
+ * an in-range non-integer code (legacy: undefined GL factor) also means normal alpha.
  * @param {number} blendMode
  * @returns {Readonly<BlendState>}
  */
 export function blendFromEffectMode(blendMode) {
-	if (!(blendMode > 0 && blendMode < 16)) {
+	const dst = lookup(GL_ORDER_BLEND_TABLE, blendMode);
+	if (!dst) {
 		return BLEND_NORMAL;
 	}
-	return Object.freeze({ src: BlendFactor.SRC_ALPHA, dst: GL_ORDER_BLEND_TABLE[blendMode] });
+	return Object.freeze({ src: BlendFactor.SRC_ALPHA, dst });
 }
 
 /**

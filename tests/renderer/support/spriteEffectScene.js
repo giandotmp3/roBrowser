@@ -281,6 +281,16 @@ export const SPAWNS_3D = [
  */
 export const LEAK_3D = [{ name: 'afterSprite', effect: { file: 'effect/a.tga', size: 30 }, duration: 900 }];
 
+/**
+ * In-range non-integer blend codes (discrepancy #49): legacy's GL factor is undefined;
+ * render-records draws normal alpha. Kept out of SPAWNS_3D / SPAWNS_2D (declared divergence).
+ */
+export const INVALID_BLEND_3D = [
+	{ name: 'blend2.5', effect: { file: 'effect/c.tga', blendMode: 2.5, size: 40 }, duration: 300 },
+	{ name: 'blend7.25', effect: { file: 'effect/a.tga', blendMode: 7.25, size: 30 }, duration: 300 }
+];
+export const INVALID_BLEND_2D = [{ name: 'blend4.5', effect: { file: 'effect/b.tga', blendMode: 4.5, size: 60 }, duration: 300 }];
+
 /** 2D spawns. */
 export const SPAWNS_2D = [
 	{ name: 'plain', effect: { file: 'effect/a.tga', size: 100, angle: 30 }, duration: 600 },

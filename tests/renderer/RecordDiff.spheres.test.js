@@ -8,7 +8,11 @@
  * diffed per instance and per tick, record by record, field by field (tolerance 1e-5,
  * relative above 1).
  *
- * Declared divergences: none.
+ * Declared divergence: #57 [SME, decided, HITL round 2]. render-records fades spheres in by
+ * 0.005 per 1000/60 ms of elapsed time; legacy by 0.005 per drawn frame. On exact 60 fps
+ * ticks (SPHERE_TICKS_60FPS) both are identical and every field must match. On the irregular
+ * SPHERE_TICKS only the alpha component of `color` may differ, and render-records' alpha must
+ * be the layer's base alpha × min(1, initial + 0.005 · elapsed / (1000/60)).
  */
 import { describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +28,8 @@ vi.mock('Renderer/SpriteRenderer.js', () => ({
 }));
 
 import {
+	SPHERE_FADE_IN_FRAME_MS,
+	SPHERE_FADE_IN_STEP,
 	SPHERE_LAYERS,
 	SpiritSphereEffect,
 	WarlockSphereEffect,
@@ -33,6 +39,7 @@ import { createLoggingGl, fogAt, renderClassFrame } from './support/legacyEffect
 import { diffEffectRecord } from './support/effectRecordDiff.js';
 import {
 	SPHERE_TICKS,
+	SPHERE_TICKS_60FPS,
 	SPIRIT_SPAWNS,
 	WARLOCK_SPAWNS,
 	makeSphereOwner,
@@ -60,8 +67,12 @@ const KINDS = {
  * Run legacy and render-records side by side over the scripted ticks.
  * @param {'spirit'|'warlock'} kind
  * @param {object} [mutate] { cameraAngle(angle) } render-records-side mutation
+ * @param {object} [opts]
+ * @param {number[]} [opts.ticks]
+ * @param {boolean} [opts.timeFade] #57 scope: compare color alpha against the time-based fade
+ *        instead of legacy (every other field and colour component still against legacy)
  */
-async function runScene(kind, mutate = {}) {
+async function runScene(kind, mutate = {}, { ticks = SPHERE_TICKS_60FPS, timeFade = false } = {}) {
 	vi.resetModules();
 	const Ctor = (await import(KINDS[kind].path)).default;
 	const { spawns } = KINDS[kind];
@@ -73,11 +84,12 @@ async function runScene(kind, mutate = {}) {
 	const mismatches = [];
 	const perEffect = {};
 	const layers = new Set();
+	let alphaDiffs = 0;
 	let records = 0;
 	let sink = [];
 	const stop = Ctor.addRecordSink(r => sink.push(r));
 	try {
-		SPHERE_TICKS.forEach((tick, i) => {
+		ticks.forEach((tick, i) => {
 			const cam = sphereCameraAt(tick);
 			Object.assign(camera, cam);
 			legacyOwners.forEach((o, k) => moveSphereOwner(o, k, tick));
@@ -99,7 +111,24 @@ async function runScene(kind, mutate = {}) {
 					records++;
 					perEffect[name] = (perEffect[name] ?? 0) + 1;
 					layers.add(m.params.layer);
-					for (const d of diffEffectRecord(theirs[j], m)) {
+					let l = theirs[j];
+					if (timeFade) {
+						const spawn = spawns.find(s => s.name === name);
+						const spec = SPHERE_LAYERS[m.params.layer];
+						const base = (spawn.isCoin ? spec.coin : spec.plain)[4];
+						const fade = Math.min(
+							1,
+							(spawn.initialAlpha ?? 0) + (SPHERE_FADE_IN_STEP * (tick - ticks[0])) / SPHERE_FADE_IN_FRAME_MS
+						);
+						if (Math.abs(m.color[3] - base * fade) > 1e-5) {
+							mismatches.push(`${name}@${tick}#${j} time-based alpha: ${m.color[3]} vs ${base * fade}`);
+						}
+						if (Math.abs(l.color[3] - m.color[3]) > 1e-5) {
+							alphaDiffs++;
+						}
+						l = { ...l, color: [l.color[0], l.color[1], l.color[2], m.color[3]] };
+					}
+					for (const d of diffEffectRecord(l, m)) {
 						mismatches.push(`${name}@${tick}#${j} ${d}`);
 					}
 				});
@@ -108,11 +137,11 @@ async function runScene(kind, mutate = {}) {
 	} finally {
 		stop();
 	}
-	return { records, mismatches, perEffect, layers };
+	return { records, mismatches, perEffect, layers, alphaDiffs };
 }
 
 describe.each(['spirit', 'warlock'])('%s sphere record-diff (legacy vs render-records)', kind => {
-	it('reproduces every legacy sphere record field by field', async () => {
+	it('reproduces every legacy sphere record field by field at 60 fps (#57 fade identical)', async () => {
 		const { records, mismatches, perEffect, layers } = await runScene(kind);
 		expect(mismatches).toEqual([]);
 		// every non-empty spawn is compared, every layer branch is hit
@@ -120,6 +149,16 @@ describe.each(['spirit', 'warlock'])('%s sphere record-diff (legacy vs render-re
 		expect(Object.keys(perEffect).sort()).toEqual(drawn.sort());
 		expect(layers).toEqual(new Set(Object.keys(SPHERE_LAYERS)));
 		expect(records).toBeGreaterThan(300);
+	});
+
+	it('#57 divergence: on irregular frames only the fade alpha differs, and it follows elapsed time', async () => {
+		const legacyOnly = await runScene(kind, {}, { ticks: SPHERE_TICKS });
+		expect(legacyOnly.mismatches.length).toBeGreaterThan(0);
+		expect(legacyOnly.mismatches.filter(m => !/#\d+ color: /.test(m))).toEqual([]);
+		const { mismatches, alphaDiffs, records } = await runScene(kind, {}, { ticks: SPHERE_TICKS, timeFade: true });
+		expect(mismatches).toEqual([]);
+		expect(alphaDiffs).toBeGreaterThan(0);
+		expect(records).toBeGreaterThan(50);
 	});
 
 	it('flags a wrong camera pitch (mutation guard)', async () => {

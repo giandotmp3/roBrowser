@@ -12,8 +12,11 @@ export const SPHERE_ORBIT_SLOTS = 5;
 /** One quad per layer draw. */
 export const SPHERE_VERTEX_COUNT = 6;
 
-/** Fade-in: alpha factor added per drawn frame (not per ms), clamped to 1. */
+/** Fade-in: alpha factor added per 60 fps frame (SPHERE_FADE_IN_FRAME_MS), clamped to 1. */
 export const SPHERE_FADE_IN_STEP = 0.005;
+
+/** Discrepancy #57: the fade-in step is per 1000/60 ms of elapsed time, not per drawn frame. */
+export const SPHERE_FADE_IN_FRAME_MS = 1000 / 60;
 
 /**
  * Size, rgb, base alpha (before the fade-in factor) and zIndex per layer and palette.
@@ -78,7 +81,9 @@ export function sphereOrbit(tick, cameraAngle) {
 /**
  * Orbiting spheres around an entity (legacy Renderer/Effects/SpiritSphere.js and
  * WarlockSphere.js). One EffectDraw per layer quad, additive (R-EFX-014), no fog.
- * Alpha fades in by SPHERE_FADE_IN_STEP per drawn frame.
+ * Alpha fades in by SPHERE_FADE_IN_STEP per SPHERE_FADE_IN_FRAME_MS of elapsed time since
+ * the first drawn frame, clamped to 1 (discrepancy #57 [SME, decided]: legacy steps 0.005 per
+ * drawn frame, so its fade depends on the frame rate; at 60 fps both are identical).
  */
 class SphereEffect {
 	/**
@@ -100,6 +105,7 @@ class SphereEffect {
 		this.depth = depth;
 		this.follow = inst.follow;
 		this.alpha = inst.initialAlpha ?? 0;
+		this.lastTick = null;
 		this.pass = effectPass({ effectId: inst.effectId, renderBeforeEntities: inst.renderBeforeEntities }, false);
 	}
 
@@ -111,6 +117,11 @@ class SphereEffect {
 	 * @returns {Readonly<import('../records/EffectDraw.js').EffectDraw>[]}
 	 */
 	frame(tick, { camera }, stream) {
+		if (this.lastTick !== null && this.alpha < 1) {
+			const elapsed = Math.max(0, tick - this.lastTick);
+			this.alpha = Math.min(this.alpha + (SPHERE_FADE_IN_STEP * elapsed) / SPHERE_FADE_IN_FRAME_MS, 1);
+		}
+		this.lastTick = this.lastTick === null ? tick : Math.max(this.lastTick, tick);
 		const orbit = sphereOrbit(tick, camera.angle);
 		const position = this.follow.position;
 		const records = [];
@@ -147,9 +158,6 @@ class SphereEffect {
 				stream?.effect(record);
 				records.push(record);
 			}
-		}
-		if (this.alpha < 1) {
-			this.alpha = Math.min(this.alpha + SPHERE_FADE_IN_STEP, 1);
 		}
 		return records;
 	}

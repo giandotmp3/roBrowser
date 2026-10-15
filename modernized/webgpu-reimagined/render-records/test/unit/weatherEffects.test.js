@@ -11,6 +11,7 @@ import {
 	CloudWeather,
 	EF_MAPLE,
 	EF_SAKURA,
+	MAP_FLAG_WEATHER_EFFECTS,
 	POKJUK_TEXTURE,
 	PokJukWeather,
 	RAIN_TEXTURES,
@@ -28,14 +29,10 @@ import {
 	rainTexturePixels,
 	rainWind,
 	sakuraSway,
+	weatherEffectId,
 	waterfallModelMatrix
 } from '../../src/index.js';
 
-/** Deterministic rng cycling through a fixed list. */
-const cycle = values => {
-	let i = 0;
-	return () => values[i++ % values.length];
-};
 const flat = () => 0;
 const player = [100, 100, 0];
 
@@ -106,6 +103,19 @@ describe('SakuraWeather', () => {
 		expect(sakuraSway(1, 0, () => 0.5)).toEqual({ c: 0, t: 359 });
 	});
 
+	it('#60: map-flag leaves (effectId spelling, MAP_FLAG_WEATHER_EFFECTS) and the effectID spelling both show maple', () => {
+		expect(MAP_FLAG_WEATHER_EFFECTS.leaves).toBe(EF_MAPLE);
+		expect(MAP_FLAG_WEATHER_EFFECTS.sakura).toBe(EF_SAKURA);
+		const flag = new SakuraWeather({ effectId: MAP_FLAG_WEATHER_EFFECTS.leaves, startTick: 0 });
+		const table = new SakuraWeather({ effectID: EF_MAPLE, startTick: 0 });
+		for (const leaves of [flag, table]) {
+			expect(leaves.isMaple).toBe(true);
+			expect(leaves.spritePath).toMatch(/\xb4\xdc\xc7\xb3$/);
+		}
+		expect(weatherEffectId({ effectID: 5 })).toBe(5);
+		expect(weatherEffectId({ effectId: 6, effectID: 5 })).toBe(6);
+	});
+
 	it('maple leaves use their own sprite; sakura alpha is capped at 0.5 only during the fades', () => {
 		expect(new SakuraWeather({ effectId: EF_MAPLE, startTick: 0 }).spritePath).toMatch(/\xb4\xdc\xc7\xb3$/);
 		const sakura = new SakuraWeather({ effectId: EF_SAKURA, startTick: 0 }, { rng: () => 0.5 });
@@ -117,11 +127,27 @@ describe('SakuraWeather', () => {
 });
 
 describe('CloudWeather', () => {
-	it('only ever picks the first two of its three textures', () => {
-		const clouds = new CloudWeather({ effectId: 233, startTick: 0 }, { rng: cycle([0.999, 0.1, 0.7, 0.3]) });
+	it('#61: picks from all three textures (rng·3 | 0), clouds sorted by texture', () => {
+		let seed = 7;
+		const lcg = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+		const clouds = new CloudWeather({ effectId: 233, startTick: 0 }, { rng: lcg });
 		clouds.setUp(0, player);
 		expect(cloudWeatherTextures(233)[0]).toBe('data/texture/effect/fog1.tga');
-		expect(new Set(clouds.clouds.map(c => c.sprite))).toEqual(new Set([0, 1]));
+		const sprites = clouds.clouds.map(c => c.sprite);
+		expect(new Set(sprites)).toEqual(new Set([0, 1, 2]));
+		expect(sprites).toEqual([...sprites].sort((x, y) => x - y));
+		// the third texture is the one rng ≥ 2/3 picks
+		const one = new CloudWeather({ effectId: 233, startTick: 0 }, { rng: () => 0.9 });
+		one.setUp(0, player);
+		expect(one.frame(500, { player })[0].texture).toBe('data/texture/effect/fog3.tga');
+	});
+
+	it('#60: the EffectTable spelling effectID selects the EF_CLOUD2 profile too', () => {
+		const table = new CloudWeather({ effectID: 230, startTick: 0 }, { rng: () => 0.25 });
+		const flag = new CloudWeather({ effectId: 230, startTick: 0 }, { rng: () => 0.25 });
+		expect(table.effectId).toBe(230);
+		expect(table.profile).toBe(flag.profile);
+		expect(table.profile).not.toBe(new CloudWeather({ effectId: 229, startTick: 0 }).profile);
 	});
 
 	it('overlay profiles draw without depth test; dead clouds reach negative alpha', () => {
@@ -167,14 +193,23 @@ describe('SkyClouds', () => {
 });
 
 describe('PokJukWeather', () => {
-	it('draws white ascending fireworks with normal blend and the inherited zIndex counter', () => {
+	it('#51: draws white ascending fireworks additive (SRC_ALPHA, ONE)', () => {
 		const fireworks = new PokJukWeather({ player }, { rng: () => 0 });
 		expect(fireworks.fireworks).toHaveLength(1);
 		fireworks.fireworks[0].process = 0;
 		fireworks.frame(1000, { player });
-		const draws = fireworks.frame(1032, { player, inherited: { angle: 5, offset: [1, 2], shadowFactor: 1, zIndex: 40, depthBias: 0, palette: null, paletteSize: [0, 0] } });
+		const draws = fireworks.frame(1032, { player });
 		expect(draws).toHaveLength(1);
-		expect(draws[0]).toMatchObject({ texture: POKJUK_TEXTURE, blend: BLEND_NORMAL, zIndex: 40, angle: 5, size: [6, 6] });
+		expect(draws[0]).toMatchObject({ texture: POKJUK_TEXTURE, blend: BLEND_ADDITIVE, size: [6, 6] });
+	});
+
+	it('#52: records are self-contained, with fresh SpriteRenderer state and no inherited state', () => {
+		const fireworks = new PokJukWeather({ player }, { rng: () => 0 });
+		fireworks.fireworks[0].process = 0;
+		fireworks.frame(1000, { player });
+		const leftover = { angle: 5, offset: [1, 2], shadowFactor: 0.5, zIndex: 40, depthBias: 0.1, palette: { id: 'p' }, paletteSize: [8, 8] };
+		const [draw] = fireworks.frame(1032, { player, inherited: leftover });
+		expect(draw).toMatchObject({ angle: 0, offset: [0, 0], shadowFactor: 1, zIndex: 0, depthBias: 0, palette: null, textureClass: 'rgba' });
 	});
 
 	it('has no fireworks without a player', () => {
@@ -213,6 +248,19 @@ describe('RainWeather', () => {
 		rain.frame(5000, ctx);
 		rain.frame(5100, ctx);
 		expect(rain.puddleFrame(5100, { player }).every(r => r.family === 'rainPuddle' && r.pass === 'before')).toBe(true);
+	});
+
+	it('#63: splashes draw at angle 0, never NaN', () => {
+		let seed = 11;
+		const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+		const rain = new RainWeather({ startTick: 0 }, { rng, now: () => 0 });
+		const ctx = { player, cellHeight: flat, camera: { yaw: 0, modelView: null } };
+		const splashes = [];
+		for (let tick = 50; tick <= 6000; tick += 50) {
+			splashes.push(...rain.frame(tick, ctx).filter(r => r.texture === RAIN_TEXTURES.splash));
+		}
+		expect(splashes.length).toBeGreaterThan(0);
+		expect(splashes.every(r => r.angle === 0)).toBe(true);
 	});
 });
 

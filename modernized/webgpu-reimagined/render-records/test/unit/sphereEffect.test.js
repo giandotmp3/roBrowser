@@ -54,13 +54,35 @@ describe('SpiritSphereEffect', () => {
 		expect(records[0].params).toMatchObject({ slot: 2, size: 0.25, zIndex: 0.02, cameraZoom: 1.5 });
 	});
 
-	it('fades in by 0.005 per drawn frame, clamped to 1; coins use the gold palette', () => {
+	it('#57: fades in by 0.005 per 1000/60 ms (time-based), clamped to 1; coins use the gold palette', () => {
 		const effect = new SpiritSphereEffect({ num: 1, isCoin: true }, { follow: { position: [0, 0, 0] } });
 		expect(effect.frame(0, { camera })[0].color).toEqual([1, 0.9, 0.4, 0]);
-		expect(effect.frame(0, { camera })[0].color[3]).toBeCloseTo(0.6 * 0.005);
+		expect(effect.frame(1000 / 60, { camera })[0].color[3]).toBeCloseTo(0.6 * 0.005, 10);
 		const full = new SpiritSphereEffect({ num: 1 }, { follow: { position: [0, 0, 0] }, initialAlpha: 0.999 });
 		full.frame(0, { camera });
+		full.frame(1000 / 60, { camera });
 		expect(full.alpha).toBe(1);
+	});
+
+	it('#57: the fade is frame-rate independent and identical to the per-frame step at 60 fps', () => {
+		const alphaAt = (fps, ms) => {
+			const effect = new SpiritSphereEffect({ num: 1 }, { follow: { position: [0, 0, 0] } });
+			for (let n = 0; n * (1000 / fps) <= ms + 1e-9; n++) {
+				effect.frame(n * (1000 / fps), { camera });
+			}
+			return effect.alpha;
+		};
+		// 60 fps: n frames in → 0.005·n, exactly the legacy per-frame step
+		expect(alphaAt(60, 1000)).toBeCloseTo(0.005 * 60, 10);
+		// 30 and 144 fps reach the same alpha at the same time
+		expect(alphaAt(30, 1000)).toBeCloseTo(0.3, 10);
+		expect(alphaAt(144, 1000)).toBeCloseTo(0.3, 10);
+		// a repeated or earlier tick does not fade
+		const effect = new SpiritSphereEffect({ num: 1 }, { follow: { position: [0, 0, 0] } });
+		effect.frame(100, { camera });
+		effect.frame(100, { camera });
+		effect.frame(50, { camera });
+		expect(effect.alpha).toBe(0);
 	});
 });
 

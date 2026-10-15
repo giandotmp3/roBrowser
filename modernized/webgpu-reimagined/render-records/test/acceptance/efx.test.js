@@ -149,6 +149,36 @@ describe('C-09 effects', () => {
 		expect(blendFromStr(5, 12)).toBe(BLEND_NORMAL);
 	});
 
+	it('#41: invalid D3D blend codes (0, 12, 13, out of range, non-integer, inherited keys) fall back to normal alpha', () => {
+		for (const [src, dst] of [
+			[0, 2],
+			[12, 2],
+			[5, 13],
+			[0, 0],
+			[16, 2],
+			[-1, 2],
+			[5.5, 2],
+			[5, 6.25],
+			['constructor', 2],
+			[undefined, 2]
+		]) {
+			expect(blendFromStr(src, dst), `${src}/${dst}`).toBe(BLEND_NORMAL);
+		}
+		expect(blendFromStr(5, 6)).toEqual({ src: BlendFactor.SRC_ALPHA, dst: BlendFactor.ONE_MINUS_SRC_ALPHA });
+	});
+
+	it('#49: invalid or non-integer 2D/3D/Cylinder/QuadHorn blend codes fall back to normal alpha', () => {
+		for (const code of [0, -1, 16, 1.5, 2.5, 7.25, 14.9, NaN, undefined, null, '', '2.5', 'constructor']) {
+			const blend = blendFromEffectMode(code);
+			expect(blend, String(code)).toBe(BLEND_NORMAL);
+			expect(blend.dst).toBeDefined();
+		}
+		for (let code = 1; code <= 15; code++) {
+			expect(blendFromEffectMode(code).dst, String(code)).toBeDefined();
+			expect(blendFromEffectMode(String(code))).toEqual(blendFromEffectMode(code));
+		}
+	});
+
 	it('R-EFX-012: fadeIn / fadeOut over a quarter of the duration; sparkling; clamped to [0,1]', () => {
 		const base = { duration: 800, alphaMax: 0.8 };
 		expect(alphaEnvelope({ ...base, elapsed: 0, fadeIn: true })).toBe(0);

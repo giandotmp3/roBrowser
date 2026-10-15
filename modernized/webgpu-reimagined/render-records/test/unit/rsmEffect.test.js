@@ -86,6 +86,43 @@ describe('RsmEffect', () => {
 		expect(at(1500).params.vertices[0]).toBeCloseTo(1);
 	});
 
+	it('#56: a same-count rebuild rebinds every object to its own mesh texture (no stale textures)', () => {
+		const nodes = [
+			triangleNode({ textures: [1], scaleKeyFrames: [{ Frame: 0, Scale: [1, 1, 1] }] }),
+			triangleNode({ textures: [0] })
+		];
+		const m = model(nodes, { animLen: 4, frameRatePerSecond: 10 });
+		// static compile in reverse node order: texture a first, then b
+		m.compile = function () {
+			return { meshes: this.nodes.map(n => rsmNodeMeshAtFrame(n, IDENTITY, 0, 1)).reverse(), textures: this.textures };
+		};
+		const effect = new RsmEffect({}, { position: [0, 0, 0], startTick: 0 }, { model: m });
+		expect(effect.objects.map(o => o.texture)).toEqual(['data/texture/effect/a.bmp', 'data/texture/effect/b.bmp']);
+		const records = effect.frame(150);
+		expect(records.map(r => r.params.frame)).toEqual([1, 1]);
+		expect(records.map(r => r.texture)).toEqual(['data/texture/effect/b.bmp', 'data/texture/effect/a.bmp']);
+	});
+
+	it('#56: objects whose texture failed to load are not drawn', () => {
+		const nodes = [triangleNode({ textures: [0] }), triangleNode({ textures: [1] })];
+		const effect = new RsmEffect({}, { position: [0, 0, 0] }, { model: model(nodes) });
+		const failed = texture => texture.endsWith('b.bmp');
+		const records = effect.frame(0, { textureFailed: failed });
+		expect(records.map(r => [r.texture, r.params.object])).toEqual([['data/texture/effect/a.bmp', 0]]);
+		expect(effect.frame(0)).toHaveLength(2);
+	});
+
+	it('#56: honours endTick (finished past it; endTick −1 never ends)', () => {
+		const timed = new RsmEffect({}, { position: [0, 0, 0], startTick: 0, endTick: 1000 }, { model: model([triangleNode()]) });
+		expect(timed.frame(1000)).toHaveLength(1);
+		expect(timed.finished).toBe(false);
+		expect(timed.frame(1001)).toEqual([]);
+		expect(timed.finished).toBe(true);
+		const open = new RsmEffect({}, { position: [0, 0, 0], startTick: 0, endTick: -1 }, { model: model([triangleNode()]) });
+		expect(open.frame(1e7)).toHaveLength(1);
+		expect(open.finished).toBe(false);
+	});
+
 	it('flat shading rotates the face normal with the node', () => {
 		const node = triangleNode({ main: { box: { center: [0, 0, 0], max: [0, 0, 0] }, alpha: 1, shadeType: 1 } });
 		const mesh = rsmNodeMeshAtFrame(node, IDENTITY, 0, 1)[0];

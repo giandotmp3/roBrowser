@@ -1,6 +1,6 @@
 import { createEffectDraw } from '../records/EffectDraw.js';
 import { BLEND_ADDITIVE } from '../records/blend.js';
-import { effectPass } from './rules.js';
+import { auraFrameDelta, effectPass } from './rules.js';
 
 /** Game tick of the aura pulse (ms). */
 export const AURA_GAME_TICK_MS = 25;
@@ -63,8 +63,9 @@ export function groundAuraSizeStep(distance, riseAngle, auraAngle) {
  * EffectDraw per ring per frame.
  *
  * Additive (R-EFX-014), depth test without write, before entities, scene fog. The
- * pulse integrates whole 25 ms game ticks of the frame delta (capped at 250 ms; a frame
- * before the start tick carries a negative remainder, like legacy). position is the
+ * pulse integrates whole 25 ms game ticks of the frame delta, clamped to [0, 250] ms
+ * (discrepancy #55 fix: a frame before the start tick does not run the pulse backwards, see
+ * auraFrameDelta). position is the
  * uploaded uWorldPosition: the followed (x, y) and the terrain height under it + 0.05.
  */
 export class GroundAuraEffect {
@@ -102,7 +103,10 @@ export class GroundAuraEffect {
 	 * @param {number} tick
 	 */
 	advance(tick) {
-		const dt = Math.min(tick - (this.lastTick || tick), AURA_MAX_FRAME_DT);
+		const dt = auraFrameDelta(tick, this.lastTick, AURA_MAX_FRAME_DT);
+		if (dt === null) {
+			return;
+		}
 		this.lastTick = tick;
 		this.accum += dt;
 		while (this.accum >= AURA_GAME_TICK_MS) {
