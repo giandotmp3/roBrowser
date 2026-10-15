@@ -50,15 +50,77 @@ const RIDING_MASK =
 	StatusConst.EffectState.DRAGON5 |
 	StatusConst.EffectState.WUGRIDER;
 
+const { BodyState, HealthState, EffectState, OPT3 } = StatusConst;
+
+/** Legacy bodyState value → render-records EntityStatus.body (EntityState.js:229-283). */
+const BODY_STATE_NAMES = new Map([
+	[BodyState.STONE, 'STONE'],
+	[BodyState.STONEWAIT, 'STONE_WAIT'],
+	[BodyState.FREEZE, 'FREEZE'],
+	[BodyState.SLEEP, 'SLEEP'],
+	[BodyState.STUN, 'STUN']
+]);
+
+/** Names of the bits set in a legacy bitmask, by a {NAME: bit} table. */
+const bitNames = (value, table) =>
+	Object.entries(table)
+		.filter(([, bit]) => bit && value & bit)
+		.map(([name]) => name);
+
+/**
+ * The legacy entity's status by name (render-records EntityStatus): what MapEngine set through
+ * bodyState / healthState / effectState / opt3 (EntityState.js), plus the local player's
+ * intravision (Session.Entity, EntityState.js:442-467) and the transient flash colour.
+ */
+function legacyStatus(entity, session) {
+	const effect = entity._effectState ?? 0;
+	const health = entity._healthState ?? 0;
+	const invisibility = bitNames(effect, {
+		INVISIBLE: EffectState.INVISIBLE,
+		HIDE: EffectState.HIDE,
+		CLOAK: EffectState.CLOAK,
+		CHASEWALK: EffectState.CHASEWALK
+	});
+	if (entity.Camouflage) {
+		invisibility.push('CAMOUFLAGE');
+	}
+	if (entity.Stealthfield) {
+		invisibility.push('STEALTHFIELD');
+	}
+	if (entity.Shadowform) {
+		invisibility.push('SHADOWFORM');
+	}
+	return {
+		body: BODY_STATE_NAMES.get(entity._bodyState) ?? 'NONE',
+		health: {
+			curse: !!(health & HealthState.CURSE),
+			poison: !!(health & HealthState.POISON),
+			silence: !!(health & HealthState.SILENCE)
+		},
+		invisibility,
+		intravision: !!session?.Entity?.intravision,
+		// OPT3 names are the R-SPR-022 names (QUICKEN, BERSERK, MARIONETTE, ...)
+		virtue: bitNames(entity._virtue ?? 0, OPT3),
+		flash: Array.from(entity._flashColor)
+	};
+}
+
 /**
  * @param {object} entity legacy Entity
  * @param {object} deps
  * @param {function} deps.loadFile legacy Client.loadFile (synchronous once cached)
  * @param {function} [deps.isSuperNovice] legacy DB.isSuperNovice
  * @param {number} deps.spawnTick when the entity was spawned (Date.now() at construction)
+ * @param {boolean} [deps.composeStatus] hand render-records the entity's status (bodyState,
+ *        healthState, effectState, opt3, intravision) instead of legacy's computed effectColor and
+ *        opt3 flags, so R-SPR-018…023 are composed by render-records and diffed, not copied
+ * @param {object} [deps.session] legacy Engine/SessionStorage (intravision of the local player)
  * @returns {object} entity snapshot for EntityRender.renderRecords
  */
-export function snapshotLegacyEntity(entity, { loadFile, isSuperNovice = () => false, spawnTick }) {
+export function snapshotLegacyEntity(
+	entity,
+	{ loadFile, isSuperNovice = () => false, spawnTick, composeStatus = false, session = null }
+) {
 	const view = files => {
 		if (!files || !files.spr || !files.act) {
 			return null;
@@ -73,7 +135,7 @@ export function snapshotLegacyEntity(entity, { loadFile, isSuperNovice = () => f
 	const f = entity.files;
 	const a = entity.animation;
 
-	return {
+	const snapshot = {
 		gid: entity.GID,
 		type: entityType(entity),
 		position: Array.from(entity.position),
@@ -133,4 +195,10 @@ export function snapshotLegacyEntity(entity, { loadFile, isSuperNovice = () => f
 		walk: entity.walk ? { dist: entity.walk.dist, speed: entity.walk.speed } : null,
 		attackSpeed: entity.attack_speed
 	};
+	if (composeStatus) {
+		delete snapshot.effectColor;
+		delete snapshot.opt3;
+		snapshot.status = legacyStatus(entity, session);
+	}
+	return snapshot;
 }

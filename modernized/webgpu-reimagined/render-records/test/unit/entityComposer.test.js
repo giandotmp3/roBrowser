@@ -11,9 +11,12 @@ import {
 	EntityType,
 	PC_ACTIONS,
 	RecordStream,
+	invisibilityTint,
 	planEntityLayers,
 	planPlayerLayers,
-	selectAnimationFrame
+	resolveInvisibility,
+	selectAnimationFrame,
+	statusEffectColor
 } from '../../src/index.js';
 
 const order = plan => plan.map(e => [e.slot, e.zIndex]);
@@ -352,5 +355,46 @@ describe('EntityRender.renderRecords', () => {
 		entity.renderRecords(playing, { ...frame(), playing: true });
 		const cart = playing.records.find(r => r.source === '7/cart');
 		expect(cart).toMatchObject({ texture: 'cart0#0', zIndex: 1, depthWrite: false, offset: [0, -40] });
+	});
+
+	it('R-SPR-018…023: without an effectColor, colour and blend come from the status', () => {
+		const stream = new RecordStream();
+		const entity = pcEntity({ effectColor: undefined, status: { body: 'STONE', virtue: ['BERSERK'] } });
+		entity.renderRecords(stream, frame());
+		const body = stream.records.find(r => r.source === '7/body');
+		expect(body.color.map(v => +v.toFixed(6))).toEqual([0.1, 0.04, 0.04, 1]);
+		expect(body.blend).toBe(BLEND_ADDITIVE);
+		expect(stream.records[0]).toMatchObject({ source: '7/shadow', blend: BLEND_NORMAL, color: [1, 1, 1, 0.5] });
+		const cloaked = new RecordStream();
+		pcEntity({ effectColor: undefined, status: { invisibility: ['CLOAK'] } }).renderRecords(cloaked, frame());
+		expect(cloaked.records).toHaveLength(0);
+	});
+});
+
+describe('entity status colour (R-SPR-018…022)', () => {
+	it('R-SPR-021: one invisibility state applies, by legacy precedence', () => {
+		expect(resolveInvisibility([])).toBe('NONE');
+		expect(resolveInvisibility(['SHADOWFORM', 'CLOAK'])).toBe('CLOAK');
+		expect(resolveInvisibility(['CAMOUFLAGE', 'SHADOWFORM'])).toBe('CAMOUFLAGE');
+		expect(resolveInvisibility(['CHASEWALK', 'INVISIBLE'])).toBe('INVISIBLE');
+	});
+
+	it('R-SPR-021: INVISIBLE stays hidden under intravision; the others turn black', () => {
+		expect(invisibilityTint('INVISIBLE', true)).toEqual([1, 1, 1, 0]);
+		expect(invisibilityTint('CLOAK', true)).toEqual([0, 0, 0, 1]);
+		expect(invisibilityTint('SHADOWFORM', true)).toEqual([0, 0, 0, 1]);
+	});
+
+	it('statusEffectColor multiplies body × health × effect × virtue × flash', () => {
+		expect(statusEffectColor()).toEqual([1, 1, 1, 1]);
+		const c = statusEffectColor({
+			body: 'FREEZE',
+			health: { poison: true },
+			invisibility: ['SHADOWFORM'],
+			virtue: ['QUICKEN', 'MARIONETTE'],
+			flash: [1, 1, 0.5, 1]
+		});
+		const expected = [0 * 0.9 * 0.2 * 1, 0.4 * 0.4 * 0.2 * 0.34, 0.8 * 0.8 * 0.2 * 0.71 * 0.5, 0.2 * 0.5];
+		c.forEach((v, i) => expect(v).toBeCloseTo(expected[i], 10));
 	});
 });

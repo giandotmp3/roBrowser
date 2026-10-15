@@ -284,6 +284,8 @@ describe('C-08 entity sprites', () => {
 
 	it('R-SPR-021: invisibility states and intravision', () => {
 		expect(invisibilityTint('INVISIBLE', false)[3]).toBe(0);
+		// Refined by the record-diff: INVISIBLE is checked before intravision (EntityState.js:432-434)
+		expect(invisibilityTint('INVISIBLE', true)[3]).toBe(0);
 		expect(invisibilityTint('HIDE', false)[3]).toBe(0);
 		expect(invisibilityTint('HIDE', true)).toEqual([0, 0, 0, 1]);
 		expect(invisibilityTint('CAMOUFLAGE', false)[3]).toBeCloseTo(0.1);

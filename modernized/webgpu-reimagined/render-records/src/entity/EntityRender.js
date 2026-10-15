@@ -1,7 +1,7 @@
 import { DEFAULT_XSIZE, ENTITY_LIFT, EntityType, SHADOW_LIFT } from './constants.js';
 import { PC_ACTIONS, createAnimationState, selectAnimationFrame, startAction } from './animation.js';
 import { cartOffset, cartState } from './cart.js';
-import { layerBlend } from './color.js';
+import { layerBlend, statusEffectColor } from './color.js';
 import { actIndex, visualDirection } from './geometry.js';
 import { planEntityLayers } from './layers.js';
 import { removalAlpha } from './lifecycle.js';
@@ -76,10 +76,9 @@ function emitElement(records, ctx, entry) {
 	}
 
 	// R-SPR-023 additive bodies (EntityRender.js:834-841)
-	const opt3 = this.opt3 ?? {};
 	const blend = layerBlend({
-		berserk: !!opt3.berserk,
-		marionette: !!opt3.marionette,
+		berserk: ctx.opt3.berserk,
+		marionette: ctx.opt3.marionette,
 		isShadowLayer: entry.part === 'shadow'
 	});
 
@@ -177,6 +176,18 @@ function emitLayer(records, ctx, entry, layer, spr, pal, size, offset, blend) {
 	});
 }
 
+/**
+ * R-SPR-023 opt3 flags: explicit `opt3`, else the status virtue names (getOpt3, EntityState.js:105-116).
+ * @returns {{berserk: boolean, marionette: boolean}}
+ */
+function opt3Of(entity) {
+	if (entity.opt3) {
+		return { berserk: !!entity.opt3.berserk, marionette: !!entity.opt3.marionette };
+	}
+	const virtue = new Set(entity.status?.virtue ?? []);
+	return { berserk: virtue.has('BERSERK'), marionette: virtue.has('MARIONETTE') };
+}
+
 /** Layer-plan input from the entity state (riding, cart gate, ids). */
 function planInput(entity, visualDir, playing) {
 	return {
@@ -208,7 +219,8 @@ function planInput(entity, visualDir, playing) {
  * length, save}, job, isSuperNovice, views {shadow, robe, body, head, hatMid, hatTop, hatBottom,
  * weapon, weaponTrail, shield, cartShadow, cart: EntityView[]}, weapon, shield, robe,
  * hats {top, mid, bottom}, hasCart, cartNum, riding, effectColor, hideShadow, hideEntity, gr2,
- * xSize, ySize, robeHeight, bodyHeight, opt3 {berserk, marionette}, removal {tick, delay},
+ * xSize, ySize, robeHeight, bodyHeight, opt3 {berserk, marionette}, status (EntityStatus, used when
+ * effectColor / opt3 are absent), removal {tick, delay},
  * walk {dist, speed}, attackSpeed.
  *
  * Not composed here yet: Assumptio halo and after-image trails (R-SPR-024/025, EntityRender.js:569-731),
@@ -225,7 +237,8 @@ export function EntityRender() {
 	 * @param {EntityFrame} frame
 	 */
 	this.renderRecords = function renderRecords(records, frame) {
-		const effectColor = this.effectColor ?? [1, 1, 1, 1];
+		// R-SPR-018…022: an explicit effectColor wins; otherwise it is composed from the status
+		const effectColor = this.effectColor ?? (this.status ? statusEffectColor(this.status) : [1, 1, 1, 1]);
 		// Invisible entities draw nothing (EntityRender.js:93); hidden ones neither (:296-298)
 		if (!effectColor[3] || this.hideEntity) {
 			return;
@@ -264,6 +277,7 @@ export function EntityRender() {
 			visualDir,
 			z: 1, // EntityRender.js:302
 			anchor: [0, 0], // EntityRender.js:306-307
+			opt3: opt3Of(this),
 			walkPhase: {},
 			// R-SPR-012 one factor per entity, applied to every layer (EntityRender.js:301)
 			shadowFactor: frame.shadowFactorAt ? frame.shadowFactorAt(position[0], position[1]) : 1,

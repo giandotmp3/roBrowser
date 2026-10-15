@@ -98,8 +98,35 @@ export function healthStateTint({ curse = false, poison = false, silence = false
 	return { color, attachments };
 }
 
+/** R-SPR-021 invisibility states, highest precedence first (legacy if/else chain, EntityState.js:432-480). */
+const INVISIBILITY_PRECEDENCE = [
+	['INVISIBLE'],
+	['HIDE', 'CLOAK', 'CHASEWALK'],
+	['CAMOUFLAGE', 'STEALTHFIELD'],
+	['SHADOWFORM']
+];
+
 /**
- * R-SPR-021 invisibility states.
+ * R-SPR-021 the one invisibility state that applies when several flags are set: INVISIBLE wins
+ * over Hide / Cloak / Chasewalk, which win over Camouflage / Stealth Field, then Shadow Form
+ * (EntityState.js:432-480 is an if / else-if chain).
+ * @param {Iterable<string>} flags e.g. ['CLOAK', 'SHADOWFORM']
+ * @returns {'NONE'|'INVISIBLE'|'HIDE'|'CLOAK'|'CHASEWALK'|'CAMOUFLAGE'|'STEALTHFIELD'|'SHADOWFORM'}
+ */
+export function resolveInvisibility(flags) {
+	const has = new Set(flags);
+	for (const group of INVISIBILITY_PRECEDENCE) {
+		const hit = group.find(state => has.has(state));
+		if (hit) {
+			return /** @type {any} */ (hit);
+		}
+	}
+	return 'NONE';
+}
+
+/**
+ * R-SPR-021 invisibility states. INVISIBLE is never revealed, not even by intravision: legacy
+ * checks it before the intravision branches (EntityState.js:432-434).
  * @param {'NONE'|'INVISIBLE'|'HIDE'|'CLOAK'|'CHASEWALK'|'CAMOUFLAGE'|'STEALTHFIELD'|'SHADOWFORM'} state
  * @param {boolean} localIntravision Local player has intravision
  * @returns {Rgba}
@@ -107,6 +134,9 @@ export function healthStateTint({ curse = false, poison = false, silence = false
 export function invisibilityTint(state, localIntravision) {
 	if (state === 'NONE') {
 		return [...WHITE];
+	}
+	if (state === 'INVISIBLE') {
+		return [1, 1, 1, 0];
 	}
 	if (localIntravision) {
 		return [0, 0, 0, 1];
@@ -180,4 +210,37 @@ export function layerBlend({ berserk = false, marionette = false, isShadowLayer 
 		return BLEND_ADDITIVE;
 	}
 	return BLEND_NORMAL;
+}
+
+/**
+ * @typedef {Object} EntityStatus  Render-relevant status of an entity (what MapEngine sets through
+ *           bodyState / healthState / effectState / opt3, EntityState.js), by name
+ * @property {'NONE'|'STONE'|'STONE_WAIT'|'FREEZE'|'SLEEP'|'STUN'} [body]
+ * @property {{curse?: boolean, poison?: boolean, silence?: boolean}} [health]
+ * @property {string[]} [invisibility]  flags: INVISIBLE, HIDE, CLOAK, CHASEWALK, CAMOUFLAGE, STEALTHFIELD, SHADOWFORM
+ * @property {boolean} [intravision]    the local player has intravision (Maya purple card)
+ * @property {string[]} [virtue]        opt3 flags, e.g. ['BERSERK'] (R-SPR-022 names)
+ * @property {Rgba} [flash]             transient flash colour (white when none)
+ */
+
+/**
+ * R-SPR-018…022 the entity's effectColor from its status.
+ * @param {EntityStatus} [status]
+ * @returns {Rgba}
+ */
+export function statusEffectColor({
+	body = 'NONE',
+	health = {},
+	invisibility = [],
+	intravision = false,
+	virtue = [],
+	flash = WHITE
+} = {}) {
+	return composeEffectColor({
+		bodyState: bodyStateTint(body).color,
+		healthState: healthStateTint(health).color,
+		effectState: invisibilityTint(resolveInvisibility(invisibility), intravision),
+		virtue: virtueTint(virtue),
+		flash
+	});
 }

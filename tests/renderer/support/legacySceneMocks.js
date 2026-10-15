@@ -55,6 +55,37 @@ export const mocks = {
 		}
 	},
 	camera: { direction: 0, zoom: 1, getLatitude: () => -45 },
+	/**
+	 * Non-uniform ground for scenes that opt in (RecordDiff.entityScenes): per-cell ground shadow
+	 * (R-SPR-012) and cell height (R-SPR-011, walk z). Pure functions of the position, so the
+	 * composer is handed the very same seams legacy reads.
+	 */
+	terrain: {
+		shadowFactor: (x, y) => 0.6 + (0.4 * ((Math.floor(x) * 3 + Math.floor(y)) % 5)) / 4,
+		cellHeight: (x, y) => 0.1 * Math.floor(x) - 0.05 * Math.floor(y)
+	},
+	/**
+	 * Minimal Utils/PathFinding for walk scenes: an obstacle-free 8-way path (diagonal first, then
+	 * straight), written as [x0, y0, x1, y1, ...] including the start cell, returning the node count
+	 * as PathFinding.search does (Utils/PathFinding.js:298-311).
+	 */
+	pathFinding: {
+		MAX_WALKPATH: 32,
+		search(x0, y0, x1, y1, _range, out) {
+			let x = x0;
+			let y = y0;
+			let n = 0;
+			out[n++] = x;
+			out[n++] = y;
+			while (x !== x1 || y !== y1) {
+				x += Math.sign(x1 - x);
+				y += Math.sign(y1 - y);
+				out[n++] = x;
+				out[n++] = y;
+			}
+			return n / 2;
+		}
+	},
 	session: { AdminList: [], Playing: false, Entity: null },
 	graphics: { performanceMode: false, viewArea: 10, pixelPerfectSprites: false },
 	// DB lookups: paths name the synthetic assets; every other query answers "no".
@@ -64,13 +95,20 @@ export const mocks = {
 		isMonster: () => false,
 		isSuperNovice: () => false,
 		isDoram: () => false,
-		getBodyPath: () => 'data/sprite/body',
+		// Mobs (1000-3999) and NPCs (50-999) get their own synthetic bodies; players share one.
+		getBodyPath: job => {
+			if (job >= 1000 && job < 4000) {
+				return 'data/sprite/mob';
+			}
+			return job >= 50 && job < 1000 ? 'data/sprite/npc' : 'data/sprite/body';
+		},
 		getHeadPath: () => 'data/sprite/head',
 		getWeaponPath: () => 'data/sprite/weapon',
 		getShieldPath: () => 'data/sprite/shield',
 		getHatPath: id => `data/sprite/hat${id}`,
-		getRobePath: () => 'data/sprite/robe',
-		getCartPath: () => 'data/sprite/cart',
+		// Robe 1 is short; robes 2 and 3 are tall enough to trip R-SPR-009 (riding / sitting variants).
+		getRobePath: id => (id === 2 || id === 3 ? `data/sprite/robe${id}` : 'data/sprite/robe'),
+		getCartPath: num => `data/sprite/cart${num}`,
 		getWeaponTrail: () => null,
 		getWeaponSound: () => null,
 		getBodyPalPath: () => null,
