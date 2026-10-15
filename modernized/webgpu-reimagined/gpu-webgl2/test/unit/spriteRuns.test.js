@@ -284,3 +284,10 @@ describe('sprite runs on the GL pipeline', () => {
 		expect(gl.callsTo('uniform1f').find(c => c[1]?.uniform === 'uZoom')[2]).toBe(2);
 	});
 });
+
+describe('spec #64 palette index 255 (fixed, HITL delegated policy)', () => {
+	it('clamps the palette column instead of wrapping index 255 to entry 0', () => {
+		expect(SHADERS.spriteFrag).toMatch(/min\(int\(floor\(i \* 256\.0\)\), 255\)/);
+		expect(SHADERS.spriteFrag).not.toMatch(/& 255/);
+	});
+});

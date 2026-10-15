@@ -80,10 +80,11 @@ ivec3 nearestTexel(vec2 uv) {
 	return ivec3(t, int(vLayer.x));
 }
 
-// Legacy texture(LUT, vec2(i, 1.0)): 256 wide, NEAREST, default REPEAT wrap
-// (so the normalised index 1.0, i.e. index 255, wraps to column 0).
+// Legacy texture(LUT, vec2(i, 1.0)): 256 wide, NEAREST. Legacy's default REPEAT wrap
+// sends index 255 (normalised 1.0) to column 0; the rebuild clamps so it shows entry
+// 255 (spec #64, HITL delegated policy).
 vec4 paletteAt(float i) {
-	int column = int(floor(i * 256.0)) & 255;
+	int column = min(int(floor(i * 256.0)), 255);
 	return vec4(texelFetch(uPalettes, ivec2(column, int(vLayer.y)), 0).rgb, 1.0);
 }
 

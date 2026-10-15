@@ -88,6 +88,14 @@ try {
 			console.error('control frame shows no difference: the comparison is not sensitive');
 			failed = true;
 		}
+		const { control64 } = result;
+		console.log(
+			`#64 control (legacy raw palette, index 255 wraps to entry 0): ${control64.differing} pixels differ, max ${control64.maxDiff}`
+		);
+		if (control64.differing === 0) {
+			console.error('#64 control shows no difference: the scene does not exercise palette index 255');
+			failed = true;
+		}
 		console.log(`images: ${outDir}`);
 		const warnings = logs.filter(l => !l.startsWith('[debug]') && !l.includes('GPU stall due to ReadPixels'));
 		if (warnings.length) {

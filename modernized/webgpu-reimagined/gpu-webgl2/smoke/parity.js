@@ -69,7 +69,19 @@ function readPixels(gl) {
 
 /* ------------------------------------------------------------------ legacy */
 
-function legacyUploads(gl) {
+/**
+ * Spec #64 (fixed in the rebuild): legacy's REPEAT-wrapped palette lookup shows entry 0
+ * for index 255. Index 0 is transparent and never looked up, so copying entry 255 into
+ * entry 0 makes legacy display exactly what the fixed lookup shows: the parity frames
+ * then prove the fix pixel-for-pixel. The #64 control renders legacy with the raw table.
+ */
+function compensate64(rgba) {
+	const out = new Uint8Array(rgba);
+	out.set(rgba.subarray(255 * 4, 256 * 4), 0);
+	return out;
+}
+
+function legacyUploads(gl, { compensate = true } = {}) {
 	// As Core/Client.js uploads SPR frames and palettes (per-frame TEXTURE_2D).
 	const textures = new Map();
 	for (const [handle, frame] of Object.entries(FRAMES)) {
@@ -92,7 +104,17 @@ function legacyUploads(gl) {
 	for (const [handle, rgba] of Object.entries(PALETTES)) {
 		const texture = gl.createTexture();
 		gl.bindTexture(gl.TEXTURE_2D, texture);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+		gl.texImage2D(
+			gl.TEXTURE_2D,
+			0,
+			gl.RGBA,
+			256,
+			1,
+			0,
+			gl.RGBA,
+			gl.UNSIGNED_BYTE,
+			compensate ? compensate64(rgba) : rgba
+		);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 		palettes.set(handle, texture);
@@ -280,6 +302,13 @@ function run() {
 	drawModern(modern.gl, residency, nudged, view, FOG);
 	const control = compare(readPixels(legacy.gl), readPixels(modern.gl));
 
+	// #64 control: legacy with its raw palettes (index 255 wraps to entry 0) must differ
+	// from the fixed lookup, or the scene does not exercise index 255.
+	const rawAssets = legacyUploads(legacy.gl, { compensate: false });
+	drawLegacy(legacy.gl, rawAssets, records, view, FOG);
+	drawModern(modern.gl, residency, records, view, FOG);
+	const control64 = compare(readPixels(legacy.gl), readPixels(modern.gl));
+
 	const glErrors = { legacy: legacy.gl.getError(), modern: modern.gl.getError() };
 	return {
 		ok: true,
@@ -291,6 +320,7 @@ function run() {
 		camera: CAMERA,
 		glErrors,
 		control: { differing: control.differing, maxDiff: control.maxDiff },
+		control64: { differing: control64.differing, maxDiff: control64.maxDiff },
 		frames
 	};
 }
