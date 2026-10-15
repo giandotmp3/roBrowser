@@ -27,17 +27,22 @@ export function resolveStrFile(spec, { mineffect = false } = {}) {
 }
 
 /**
- * R-EFX-002 duplicate count: −1 → 999, capped at 999, default 1.
+ * Legacy `!isNaN(v)` test (EffectManager.js): true for numbers, numeric strings and null.
+ * @param {*} v
+ */
+export function legacyIsNum(v) {
+	return !Number.isNaN(Number(v));
+}
+
+/**
+ * R-EFX-002 duplicate count: −1 → 999, capped at 999, default (and 0) 1.
  * @param {number|undefined} duplicate
  */
 export function normalizeDuplicate(duplicate) {
-	if (duplicate === undefined || Number.isNaN(duplicate)) {
-		return 1;
-	}
-	if (duplicate === -1) {
+	if (Number(duplicate) === -1) {
 		return MAX_DUPLICATES;
 	}
-	return Math.min(duplicate, MAX_DUPLICATES);
+	return duplicate ? Math.min(duplicate, MAX_DUPLICATES) : 1;
 }
 
 /**
@@ -59,7 +64,7 @@ export function duplicateOffsets(count, spacing = DEFAULT_DUPLI_SPACING_MS) {
  * @param {number} [s.initDuration]
  */
 export function effectTiming({ spawnTick, spec, duplicateID = 0, noDelay = false, initDuration }) {
-	const num = v => typeof v === 'number' && !Number.isNaN(v);
+	const num = legacyIsNum;
 	const duration = num(spec.duration) ? spec.duration : initDuration;
 	const offsetDelta = num(spec.delayOffsetDelta) ? spec.delayOffsetDelta * duplicateID : 0;
 	const lateDelta = num(spec.delayLateDelta) ? spec.delayLateDelta * duplicateID : 0;
@@ -67,7 +72,7 @@ export function effectTiming({ spawnTick, spec, duplicateID = 0, noDelay = false
 	const delayLate = num(spec.delayLate) ? spec.delayLate + lateDelta : 0;
 	const startTick = spawnTick + (noDelay ? delayOffset + delayLate : spec.delayStart || 0);
 	const endTick = duration > 0 ? startTick + (noDelay ? delayOffset : 0) + duration : -1;
-	return { startTick, endTick, duration };
+	return { startTick, endTick, duration, delayOffset, delayLate };
 }
 
 /**

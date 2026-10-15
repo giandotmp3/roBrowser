@@ -1605,6 +1605,10 @@ Source paths below are relative to `src/`.
 64. **[FLAG, fixed per the delegated HITL policy] R-SPR-014 palette index 255.** The 256-wide palette texture uses the default REPEAT wrap, and the shader's lookup of index 255 wraps to entry 0 (`SpriteRenderer.fs:115-151`). Palette entry 255 is therefore never shown. The rebuild clamps (CLAMP_TO_EDGE / clamped `texelFetch`) so index 255 shows entry 255; this is a declared divergence in the pixel-parity scene.
 65. **R-SPR-014:** the manual bilinear palette filter steps half a texel, because `uTextSize = 2 × frame size` (`Core/Client.js` palette upload, `SpriteRenderer.fs`). Records carry `paletteSize`; the default is 2× the frame size.
 
+**Found by the EffectManager record-diff** (`RecordDiff.effectManager.test.js`, 2026-10-15):
+
+66. **[FLAG, fixed per the delegated HITL policy] R-EFX-006: late static pass defaults.** A class's `renderBeforeEntities` default is set only by its static `init` on first render. The first instance spawned before that (e.g. QuadHorn) has no default and draws *after* entities; later spawns draw before. The rebuild applies the class default from the first spawn.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|

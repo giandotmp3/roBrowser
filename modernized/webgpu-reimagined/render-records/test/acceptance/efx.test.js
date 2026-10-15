@@ -64,8 +64,9 @@ describe('C-09 effects', () => {
 		expect(normalizeDuplicate(5000)).toBe(999);
 		expect(normalizeDuplicate(undefined)).toBe(1);
 		expect(duplicateOffsets(3)).toEqual([0, 200, 400]);
+		expect(normalizeDuplicate(0)).toBe(1);
 		const system = new EffectSystem({ table: { 7: [{ type: '2D', duplicate: 3, duration: 100 }] }, ctx: fakeCtx() });
-		expect(system.spam({ effectId: 7, startTick: 1000 }).map(i => i.startTick)).toEqual([1000, 1200, 1400]);
+		expect(system.spam({ effectId: 7, startTick: 1000, position: [0, 0, 0] }).map(i => i.startTick)).toEqual([1000, 1200, 1400]);
 	});
 
 	it('R-EFX-003: start = spawn + delayStart; end = start + duration, or −1 when open-ended', () => {
@@ -76,11 +77,23 @@ describe('C-09 effects', () => {
 		).toMatchObject({ startTick: 1070, endTick: 1620 });
 	});
 
-	it.fails('R-EFX-004 [pending]: persistent effects re-spawn at endTick + repeatDelay', () => {
+	it('R-EFX-004: persistent effects re-spawn at endTick + repeatDelay, until repeatEnd passes', () => {
 		const system = new EffectSystem({ table: { 3: [{ type: '2D', duration: 100, repeatDelay: 50 }] }, ctx: fakeCtx() });
-		system.spam({ effectId: 3, startTick: 0, persistent: true });
-		system.tick(151);
-		expect(system.instances.some(i => i.startTick === 150)).toBe(true);
+		system.spam({ effectId: 3, startTick: 1000, position: [0, 0, 0], persistent: true });
+		system.tick(1151);
+		expect(system.instances.map(i => [i.startTick, i.endTick])).toEqual([[1150, 1250]]);
+		// with no duration the successor starts repeatDelay after the cleanup tick
+		const open = new EffectSystem({ table: { 4: [{ FUNC: () => {} }] }, ctx: fakeCtx() });
+		const marker = { finished: false, frame: () => [] };
+		open.add(marker, { Inst: { effectID: 4, startTick: 1000, endTick: -1, persistent: true, repeatDelay: 30, position: [0, 0, 0] }, Init: { position: [0, 0, 0] }, effect: { type: '2D', duration: 0 } });
+		marker.finished = true;
+		open.tick(1300);
+		expect(open.instances.map(i => i.startTick)).toEqual([1330]);
+		// repeatEnd stops the chain
+		const bounded = new EffectSystem({ table: { 3: [{ type: '2D', duration: 100, repeatDelay: 50 }] }, ctx: fakeCtx() });
+		bounded.spam({ effectId: 3, startTick: 1000, position: [0, 0, 0], repeatEnd: 1100 });
+		bounded.tick(1151);
+		expect(bounded.instances).toHaveLength(0);
 	});
 
 	it('R-EFX-005: effects beyond 20 cells (viewArea in performance mode) are culled in XY', () => {
@@ -90,7 +103,7 @@ describe('C-09 effects', () => {
 		expect(isEffectInRange([15, 0, 0], [0, 0, 0], { performanceMode: true, viewArea: 14 })).toBe(false);
 	});
 
-	it.fails('R-EFX-005 [pending]: culled effects emit no records but keep their lifetime', () => {
+	it('R-EFX-005: culled effects emit no records but keep their lifetime', () => {
 		const system = new EffectSystem({ table: { 2: [{ type: '2D', duration: 1000 }] }, ctx: fakeCtx() });
 		system.spam({ effectId: 2, startTick: 0, position: [50, 50, 0] });
 		const records = new RecordStream();
@@ -213,7 +226,7 @@ describe('architecture contract: EffectTable FUNC(params, ctx) injection and rem
 		const ctx = fakeCtx();
 		const FUNC = vi.fn((params, c) => c.camera.setQuake(params.startTick, 650));
 		const system = new EffectSystem({ table: { 9: [{ FUNC }] }, ctx });
-		system.spam({ effectId: 9, startTick: 42 });
+		system.spam({ effectId: 9, startTick: 42, position: [1, 2, 0] });
 		expect(FUNC).toHaveBeenCalledTimes(1);
 		const [params, injected] = FUNC.mock.calls[0];
 		expect(params.startTick).toBe(42);
@@ -225,8 +238,8 @@ describe('architecture contract: EffectTable FUNC(params, ctx) injection and rem
 	it('remove(ctor, aid, id) accepts a constructor or its class-name alias', () => {
 		class TwoDEffect {}
 		const system = new EffectSystem({ table: { 1: [{ type: '2D' }], 2: [{ type: 'STR', file: 'x.str' }] }, ctx: fakeCtx() });
-		system.spam({ effectId: 1, startTick: 0, ownerAID: 7 });
-		system.spam({ effectId: 2, startTick: 0, ownerAID: 7 });
+		system.spam({ effectId: 1, startTick: 5, ownerAID: 7, position: [0, 0, 0] });
+		system.spam({ effectId: 2, startTick: 5, ownerAID: 7, position: [0, 0, 0] });
 		expect(system.remove(TwoDEffect, 7)).toBe(1);
 		expect(system.remove('StrEffect', 7, 2)).toBe(1);
 		expect(system.instances).toHaveLength(0);
