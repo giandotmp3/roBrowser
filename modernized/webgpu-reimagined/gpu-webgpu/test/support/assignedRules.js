@@ -35,4 +35,4 @@ export const ASSIGNED_RULES = Object.freeze([
 export const FIXED_FLAG_RULES = Object.freeze(['R-MAP-010', 'R-MAP-013', 'R-EFX-010', 'R-PP-006', 'R-PP-007', 'R-PP-009']);
 
 /** Rules whose acceptance tests are expected-failure (`it.fails`) until implemented. */
-export const PENDING_RULES = Object.freeze(['R-CTX-007', 'R-SPR-005', 'R-SPR-014', 'R-MAP-019']);
+export const PENDING_RULES = Object.freeze(['R-CTX-007', 'R-MAP-019']);

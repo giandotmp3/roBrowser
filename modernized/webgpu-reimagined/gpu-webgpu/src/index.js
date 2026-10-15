@@ -19,7 +19,13 @@ export { pipelineSpecKey, NORMAL, ADDITIVE } from './pipelines/pipelineKey.js';
 export { PipelineSet, describePipeline, expandCensus } from './pipelines/PipelineSet.js';
 
 export { applyMagentaKey, potSize, sizeClass, mipLevelCount, samplerDescriptor } from './residency/imageKey.js';
-export { prepareIndexedFrame, prepareRgbaFrame } from './residency/spriteFrames.js';
+export {
+	prepareIndexedFrame,
+	prepareRgbaFrame,
+	centerRgbaPot,
+	decodeSprFrame,
+	spriteSampler
+} from './residency/spriteFrames.js';
 export { Residency, ArrayPool, PaletteTable } from './residency/Residency.js';
 export { SpriteResidency } from './residency/SpriteResidency.js';
 export { TextureArrayPools, padLayer } from './residency/TextureArrayPools.js';
@@ -56,6 +62,8 @@ export {
 	SpriteRunRenderer,
 	zIndexBias,
 	depthCorrectedClipZ,
+	projectSprite,
+	spriteVertexClip,
 	samplePaletteBilinear,
 	SPRITE_INSTANCE_FLOATS,
 	SPRITE_FAMILIES,
@@ -71,8 +79,10 @@ export {
 	SPRITE_INSTANCE_STRIDE,
 	SPRITE_VERTEX_BUFFERS,
 	SPRITE_QUAD,
-	packSpriteInstance
+	packSpriteInstance,
+	unpackSpriteInstance
 } from './sprites/instanceLayout.js';
+export { fromLegacySpriteRecord } from './sprites/legacyRecord.js';
 export { InstanceRing } from './sprites/InstanceRing.js';
 export { splitRuns, recordRunKey } from './sprites/runs.js';
 export * from './effects/effectState.js';

@@ -1,5 +1,4 @@
 import { POT_CLASSES, ZINDEX_BIAS } from '../constants.js';
-import { NotImplementedError } from '../errors.js';
 import { identity, invert } from '../math.js';
 import { PipelineSet } from '../pipelines/PipelineSet.js';
 import { ADDITIVE, NORMAL } from '../pipelines/pipelineKey.js';
@@ -19,20 +18,164 @@ export function zIndexBias(zIndex, depthBias, zoom) {
 	return (zIndex * ZINDEX_BIAS + depthBias) / Math.max(zoom, 1);
 }
 
+/** Column-major mat4 × vec4 (WGSL `m * v`). */
+const mulVec4 = (m, v) => {
+	const out = [0, 0, 0, 0];
+	for (let r = 0; r < 4; r++) {
+		out[r] = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r] * v[3];
+	}
+	return out;
+};
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const length3 = a => Math.sqrt(dot3(a, a));
+/** WGSL normalize: v / length(v) (a zero vector gives NaN, as on the GPU). */
+const normalize3 = a => {
+	const l = length3(a);
+	return [a[0] / l, a[1] / l, a[2] / l];
+};
+const fract = x => x - Math.floor(x);
+const mix4 = (a, b, t) => a.map((v, i) => v * (1 - t) + b[i] * t);
+
 /**
- * R-SPR-005 CPU reference (the shader implements it; see sprite.wgsl vs_main and
- * the gpu-webgpu parity harness). Not yet mirrored on the CPU.
+ * R-SPR-002 `project()` of sprite.wgsl (legacy SpriteRenderer.vs `Project`): translate
+ * the model-view by the sprite's (x, −z, y) + half a cell, then drop the view rotation
+ * (spherical billboard; row 3 is kept).
+ * @param {ArrayLike<number>} modelView  Column-major mat4
+ * @param {ArrayLike<number>} pos        Sprite position (record `position`)
+ * @returns {number[]}
  */
-export function depthCorrectedClipZ(_vertexWorld, _spriteCentre, _camera, _ignoreDepthMinCap) {
-	throw new NotImplementedError('depthCorrectedClipZ CPU reference (R-SPR-005; shader side implemented)');
+export function projectSprite(modelView, pos) {
+	const m = Array.from(modelView);
+	const x = pos[0] + 0.5;
+	const y = -pos[2];
+	const z = pos[1] + 0.5;
+	for (let r = 0; r < 4; r++) {
+		m[12 + r] += m[r] * x + m[4 + r] * y + m[8 + r] * z;
+	}
+	m[0] = 1;
+	m[1] = 0;
+	m[2] = 0;
+	m[4] = 0;
+	m[5] = 1;
+	m[6] = 0;
+	m[8] = 0;
+	m[9] = 0;
+	m[10] = 1;
+	return m;
 }
 
 /**
- * R-SPR-014 CPU reference (the shader implements it; see sprite.wgsl sample_indexed).
- * Not yet mirrored on the CPU.
+ * R-SPR-005 CPU reference: the depth-correction block of sprite.wgsl `vs_main`
+ * (legacy SpriteRenderer.vs:69-89), operation for operation, in f64 (the GPU runs
+ * it in f32). The vertex takes the depth where its camera ray meets the vertical
+ * plane through the sprite centre (normal = flattened camera forward), capped with
+ * min(original, corrected) unless ignoreDepthMinCap (NPCs).
+ *
+ * @param {ArrayLike<number>} viewPosition  vec4: projectSprite(modelView, position) × the rotated quad corner
+ * @param {ArrayLike<number>} viewCenter    vec4: projectSprite(modelView, position) × (0, 0, 0, 1)
+ * @param {{modelView: ArrayLike<number>, projection: ArrayLike<number>, viewModel?: ArrayLike<number>}} frame
+ *   `viewModel` = inverse(modelView) (computed when absent, as packFrameUniforms does)
+ * @param {boolean} ignoreDepthMinCap
+ * @returns {number} GL-style clip z (before the R-SPR-006 bias and the WebGPU depth remap)
  */
-export function samplePaletteBilinear(_indexImage, _paletteRow, _u, _v) {
-	throw new NotImplementedError('samplePaletteBilinear CPU reference (R-SPR-014; shader side implemented)');
+export function depthCorrectedClipZ(viewPosition, viewCenter, frame, ignoreDepthMinCap) {
+	const viewModel = frame.viewModel ?? invert(frame.modelView) ?? identity();
+	const clip = mulVec4(frame.projection, viewPosition);
+	const cameraPos = mulVec4(viewModel, [0, 0, 0, 1]).slice(0, 3);
+	const cameraForward = normalize3(mulVec4(viewModel, [0, 0, -1, 0]).slice(0, 3));
+	const planePoint = mulVec4(viewModel, viewCenter).slice(0, 3);
+	let planeNormal = normalize3([cameraForward[0], 0, cameraForward[2]]);
+	if (length3(planeNormal) < 0.000001) {
+		planeNormal = cameraForward;
+	}
+
+	const worldVertex = mulVec4(viewModel, viewPosition).slice(0, 3);
+	const rayDir = normalize3(sub3(worldVertex, cameraPos));
+	const denom = Math.max(dot3(planeNormal, rayDir), 0.000001);
+	const dist = dot3(sub3(planePoint, cameraPos), planeNormal) / denom;
+
+	const hit = [cameraPos[0] + rayDir[0] * dist, cameraPos[1] + rayDir[1] * dist, cameraPos[2] + rayDir[2] * dist, 1];
+	const planeClip = mulVec4(frame.projection, mulVec4(frame.modelView, hit));
+	const correctedZBase = planeClip[2] * (clip[3] / Math.max(planeClip[3], 0.000001));
+
+	return ignoreDepthMinCap ? correctedZBase : Math.min(clip[2], correctedZBase);
+}
+
+/**
+ * CPU reference of the whole sprite.wgsl `vs_main` position for one quad corner
+ * (R-SPR-002/003/005/006): billboard, rotation, offset, depth correction, zIndex
+ * bias, then GL clip z [−w, w] → WebGPU [0, w].
+ * @param {ArrayLike<number>} corner  Quad corner (±0.5, ±0.5), SPRITE_QUAD
+ * @param {{position: ArrayLike<number>, offset: ArrayLike<number>, size: ArrayLike<number>,
+ *   rotation: ArrayLike<number>, zIndexBias: ArrayLike<number>, depthFlags: ArrayLike<number>}} inst
+ *   Instance fields as packed (world units; `unpackSpriteInstance` reads them back)
+ * @param {{modelView: ArrayLike<number>, projection: ArrayLike<number>, viewModel?: ArrayLike<number>, zoom: number}} frame
+ * @returns {number[]} WebGPU clip position (x, y, z, w)
+ */
+export function spriteVertexClip(corner, inst, frame) {
+	const [cos, sin] = inst.rotation;
+	const px = corner[0] * inst.size[0];
+	const py = corner[1] * inst.size[1];
+	const position = [cos * px - sin * py + inst.offset[0], sin * px + cos * py - (inst.offset[1] + 0.5), 0, 1];
+
+	const modelView = projectSprite(frame.modelView, inst.position);
+	const viewPosition = mulVec4(modelView, position);
+	const viewCenter = mulVec4(modelView, [0, 0, 0, 1]);
+	const clip = mulVec4(frame.projection, viewPosition);
+	if (inst.depthFlags[0] > 0.5) {
+		clip[2] = depthCorrectedClipZ(viewPosition, viewCenter, frame, inst.depthFlags[1] > 0.5);
+	}
+	clip[2] -= zIndexBias(inst.zIndexBias[0], inst.zIndexBias[1], frame.zoom);
+	clip[2] = (clip[2] + clip[3]) * 0.5;
+	return clip;
+}
+
+/**
+ * R-SPR-014 CPU reference: sprite.wgsl `sample_indexed` (legacy SpriteRenderer.fs
+ * `bilinearSample`), operation for operation. Four NEAREST, clamp-to-edge index taps
+ * `1/textSize` apart; index 0 is transparent; the palette lookup clamps index 255 to
+ * entry 255 (spec #64 fix); colours blend with f = fract(uv·textSize).
+ *
+ * Spec #65: legacy passes `uTextSize = 2 × frame size`, so the taps step half a texel
+ * and f advances twice per texel. That is the default here, as in packSpriteInstance;
+ * records carry `paletteSize` to override it.
+ *
+ * @param {{width: number, height: number, data: ArrayLike<number>}} indexImage  r8 indices
+ *   (the POT frame, as resident: width×height is the instance's frame size)
+ * @param {ArrayLike<number>} paletteRow  256×4 RGBA bytes
+ * @param {number} u
+ * @param {number} v
+ * @param {ArrayLike<number>} [textSize]  Legacy uTextSize (record `paletteSize`), default 2× the frame size
+ * @returns {number[]} RGBA in 0…1 (before shadow, colour and fog)
+ */
+export function samplePaletteBilinear(indexImage, paletteRow, u, v, textSize) {
+	const { width, height, data } = indexImage;
+	const tw = textSize ? textSize[0] : 2 * width;
+	const th = textSize ? textSize[1] : 2 * height;
+	const ix = 1 / tw;
+	const iy = 1 / th;
+	// nearest_texel + fetch_index: r8unorm index, normalised.
+	const index = (s, t) => {
+		const x = Math.min(Math.max(Math.floor(s * width), 0), width - 1);
+		const y = Math.min(Math.max(Math.floor(t * height), 0), height - 1);
+		return data[y * width + x] / 255;
+	};
+	// palette_at (+ the index-0 select).
+	const colour = i => {
+		if (i === 0) {
+			return [0, 0, 0, 0];
+		}
+		const column = Math.min(Math.floor(i * 256), 255) * 4;
+		return [paletteRow[column] / 255, paletteRow[column + 1] / 255, paletteRow[column + 2] / 255, 1];
+	};
+	const c00 = colour(index(u, v));
+	const c10 = colour(index(u + ix, v));
+	const c01 = colour(index(u, v + iy));
+	const c11 = colour(index(u + ix, v + iy));
+	const fx = fract(u * tw);
+	const fy = fract(v * th);
+	return mix4(mix4(c00, c10, fx), mix4(c01, c11, fx), fy);
 }
 
 /** Pipeline families: runs never mix texture classes, so the class picks the fragment entry point. */
@@ -171,6 +314,8 @@ export class SpriteRunRenderer {
 		this.lastRuns = [];
 		/** Runs drawn with the normal-alpha fallback pipeline in the last `encode()`. */
 		this.lastFallbacks = 0;
+		/** Frames and palette rows uploaded on miss by the last `encode()`. */
+		this.lastUploads = 0;
 	}
 
 	/**
@@ -245,8 +390,10 @@ export class SpriteRunRenderer {
 	}
 
 	/**
-	 * Encode every sprite run of `records` into `pass`. Writes the frame uniforms
-	 * and instance data with queue writes, so call once per submitted frame.
+	 * Encode every sprite run of `records` into `pass`. Uploads missing frames and
+	 * palettes through the residency's source first (C-16), then writes the frame
+	 * uniforms and instance data with queue writes, so call once per submitted frame
+	 * (after `residency.beginFrame()`).
 	 * Non-sprite runs are skipped (their family renderers are not wired here).
 	 * @param {GPURenderPassEncoder} pass
 	 * @param {ReadonlyArray<any>} records  Legacy order
@@ -256,6 +403,8 @@ export class SpriteRunRenderer {
 	encode(pass, records, view) {
 		this.lastDrawCalls = 0;
 		this.lastFallbacks = 0;
+		// C-16 upload on miss (no-op without a FrameSourcePort): before packing, so slots exist.
+		this.lastUploads = this.residency.prepare?.(records) ?? 0;
 		this.lastRuns = splitRuns(records).filter(run => records[run.start].kind === 'sprite');
 		if (!this.lastRuns.length) {
 			return { drawCalls: 0, runs: 0, fallbacks: 0 };

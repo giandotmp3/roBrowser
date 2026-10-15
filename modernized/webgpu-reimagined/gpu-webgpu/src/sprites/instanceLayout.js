@@ -130,3 +130,19 @@ export function packSpriteInstance(r, slot, out, offset) {
 	out[o++] = textH;
 	return o;
 }
+
+/**
+ * Read one packed instance back into named fields (the WGSL `Instance` view of it), for
+ * the CPU shader references (`spriteVertexClip`) and diagnostics.
+ * @param {ArrayLike<number>} data
+ * @param {number} [offset]  Float offset of the instance
+ * @returns {Record<string, number[]>}
+ */
+export function unpackSpriteInstance(data, offset = 0) {
+	const out = {};
+	for (const { name, size, offset: byteOffset } of SPRITE_INSTANCE_ATTRIBUTES) {
+		const at = offset + byteOffset / 4;
+		out[name] = Array.from({ length: size }, (_, i) => data[at + i]);
+	}
+	return out;
+}
