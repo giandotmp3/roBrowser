@@ -1,13 +1,14 @@
 // R-PP-006 FXAA (HITL round 2). Mirrors the CPU reference src/post/fxaa.js line for line.
 // Edge path: legacy Shaders/GLSL/FXAA.fs (Rec.601 luma, threshold, span 8, reduce 1/32 and 1/128).
 // fxaaSubpix drives the standard FXAA 3.11 (quality) subpixel aliasing removal term; 0 = off (legacy result).
-// textureSampleLevel keeps every tap valid after the non-uniform early exit.
+// textureSampleLevel keeps every tap valid after the non-uniform early exit. u.texel.y is negative (GL
+// orientation, see common.wgsl), so N/S/NW/... are the legacy taps and the 3.11 tie-breaks match gpu-webgl2.
 struct Fxaa { texel : vec2f, edge_threshold : f32, edge_threshold_min : f32, span : f32, reduce_mul : f32, reduce_min : f32, subpix : f32 };
 @group(0) @binding(2) var<uniform> u : Fxaa;
 
 fn fxaa_luma(c : vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }
 
-fn tap(uv : vec2f, off : vec2f) -> vec3f { return textureSampleLevel(src, samp, uv + off * u.texel, 0.0).rgb; }
+fn tap(uv : vec2f, off : vec2f) -> vec3f { return tex(uv + off * u.texel).rgb; }
 
 @fragment
 fn fs_main(i : VsOut) -> @location(0) vec4f {
@@ -25,9 +26,9 @@ fn fs_main(i : VsOut) -> @location(0) vec4f {
   var dir = vec2f(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
   let dir_reduce = max((nw + ne + sw + se) * u.reduce_mul, u.reduce_min);
   let rcp_dir_min = 1.0 / (min(abs(dir.x), abs(dir.y)) + dir_reduce);
-  dir = clamp(dir * rcp_dir_min, vec2f(-u.span), vec2f(u.span));
-  let rgb_a = 0.5 * (tap(i.uv, dir * (1.0 / 3.0 - 0.5)) + tap(i.uv, dir * (2.0 / 3.0 - 0.5)));
-  let rgb_b = rgb_a * 0.5 + 0.25 * (tap(i.uv, dir * -0.5) + tap(i.uv, dir * 0.5));
+  dir = min(vec2f(u.span), max(vec2f(-u.span), dir * rcp_dir_min)) * u.texel;
+  let rgb_a = 0.5 * (tex(i.uv + dir * (1.0 / 3.0 - 0.5)).rgb + tex(i.uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  let rgb_b = rgb_a * 0.5 + 0.25 * (tex(i.uv + dir * -0.5).rgb + tex(i.uv + dir * 0.5).rgb);
   let luma_b = fxaa_luma(rgb_b);
   let rgb_edge = select(rgb_b, rgb_a, luma_b < luma_min || luma_b > luma_max);
 

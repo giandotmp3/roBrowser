@@ -6,8 +6,10 @@
  *   node smoke/run-parity.mjs [--page=parity|entities] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir] [--flags="--a --b"]
  *
  * Pages: `parity` (synthetic SpriteDraw records through the legacy SpriteRenderer
- * API, 40 records) and `entities` (the real legacy entity path's captured record
- * stream, ~200 entities, replayed with upload-on-miss residency).
+ * API, 40 records), `entities` (the real legacy entity path's captured record
+ * stream, ~200 entities, replayed with upload-on-miss residency) and `post` (the
+ * legacy PostProcess chain vs gpu-webgpu's PostChain on one synthetic scene image,
+ * per configuration; the gate applies to each configuration, or its declared `gatePct`).
  *
  * Needs `vite` and `playwright` resolvable from this package (devDependencies,
  * or a symlinked node_modules) and a Chromium for Playwright
@@ -31,7 +33,7 @@ const tolerance = Number(args.tol ?? 2);
 const maxOverPct = Number(args['max-diff-pct'] ?? 0);
 const outDir = path.resolve(args.out ?? path.join(here, '.out'));
 const pageName = args.page ?? 'parity';
-if (!['parity', 'entities'].includes(pageName)) {
+if (!['parity', 'entities', 'post'].includes(pageName)) {
 	console.error(`unknown --page=${pageName}`);
 	process.exit(1);
 }
@@ -53,6 +55,60 @@ const DEFAULT_FLAGS = [
 	'--ignore-gpu-blocklist'
 ];
 const flags = args.flags ? args.flags.split(/\s+/).filter(Boolean) : DEFAULT_FLAGS;
+
+/** Prints the `post` page results, writes its PNGs, returns the exit code. */
+function reportPost(result, logs) {
+	let code = 0;
+	fs.mkdirSync(outDir, { recursive: true });
+	console.log(`WebGPU adapter: ${result.adapter}${result.fallbackAdapter ? ' (fallback adapter)' : ''}`);
+	console.log(`legacy WebGL2 renderer: ${result.legacyRenderer}`);
+	console.log(
+		`R-PP-004 bloom guard: legacy detectBadWebGL = ${result.legacyBadWebGL}; gpu-webgpu bloomSupported = ${result.bloomAllowedProduction} (production), ${result.bloomAllowed} (smoke, allowSoftwareAdapter)`
+	);
+	console.log(
+		`page post: canvas ${result.size.join('x')} (${result.canvasFormat}), ${result.pipelines} pipelines, tolerance ${result.tolerance}, gate ${maxOverPct} %`
+	);
+	console.log(
+		`gl error: ${result.glError}; WebGPU errors: ${result.gpuErrors.length ? result.gpuErrors.join(' | ') : 'none'}`
+	);
+	if (result.gpuErrors.length || result.glError) {
+		code = 1;
+	}
+	for (const c of result.configs) {
+		const gate = c.gatePct ?? maxOverPct;
+		const verdict = c.overTolerancePct > gate ? 'FAIL' : 'ok';
+		console.log(`\nconfig ${c.name} [${verdict}, gate ${gate} %] vs ${c.gatedAgainst}`);
+		console.log(`  passes: ${c.passes.join('  ')} (legacy module draws ${c.legacyModuleDraws})`);
+		console.log(
+			`  max diff ${c.maxDiff}; differing ${c.differing} (${c.differingPct.toFixed(4)} %); over tol ${c.overTolerance} (${c.overTolerancePct.toFixed(4)} %); histogram ${c.histogram.join(', ')}`
+		);
+		if (c.vsLegacy) {
+			console.log(
+				`  (informational) vs legacy: max diff ${c.vsLegacy.maxDiff}, over tol ${c.vsLegacy.overTolerance} (${c.vsLegacy.overTolerancePct.toFixed(4)} %)`
+			);
+		}
+		const slug = c.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+		for (const [kind, url] of Object.entries(c.images)) {
+			fs.writeFileSync(path.join(outDir, `post-${slug}-${kind}.png`), Buffer.from(url.split(',')[1], 'base64'));
+		}
+		if (c.overTolerancePct > gate) {
+			code = 1;
+		}
+	}
+	console.log(
+		`\nsensitivity control (WebGPU bloom intensity 0.5 vs legacy 0.55): ${result.control.differing} pixels differ, max ${result.control.maxDiff}`
+	);
+	if (result.control.differing === 0) {
+		console.error('control shows no difference: the comparison is not sensitive');
+		code = 1;
+	}
+	console.log(`images: ${outDir}`);
+	const warnings = logs.filter(l => !l.startsWith('[debug]') && !l.includes('GPU stall due to ReadPixels'));
+	if (warnings.length) {
+		console.log(`\nbrowser console:\n${warnings.join('\n')}`);
+	}
+	return code;
+}
 
 const { createServer } = await import('vite');
 const { chromium } = await import('playwright');
@@ -81,6 +137,8 @@ try {
 		console.error(result.error);
 		console.error(logs.join('\n'));
 		exitCode = 1;
+	} else if (pageName === 'post') {
+		exitCode = reportPost(result, logs);
 	} else {
 		fs.mkdirSync(outDir, { recursive: true });
 		console.log(`WebGPU adapter: ${result.adapter}${result.fallbackAdapter ? ' (fallback adapter)' : ''}`);

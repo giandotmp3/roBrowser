@@ -1,4 +1,12 @@
-// Shared full-screen triangle for post passes.
+// Shared full-screen triangle and bindings for the post passes (C-11).
+// Every pass binds: 0 linear clamp sampler, 1 input texture, 2 the pass uniforms (32 bytes), 3 a second
+// texture (bloom composite only; other passes get the input again).
+//
+// Orientation: WebGPU uv.y runs top-down, legacy GL vUv.y bottom-up. The pass graph uploads every texel step
+// with a negative y (postPasses.js `texel`), so an offset of +texel.y means "up the screen" exactly as in the
+// legacy GLSL and every tap is the mirror image of the legacy tap: the shaders below are the legacy GLSL
+// operation for operation. Taps use textureSampleLevel(…, 0) (the targets have one mip, as the legacy FBO
+// textures) so they stay valid after the legacy early exits.
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var src : texture_2d<f32>;
 
@@ -13,4 +21,4 @@ fn vs_main(@builtin(vertex_index) vi : u32) -> VsOut {
   return o;
 }
 
-fn luma(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
+fn tex(uv : vec2f) -> vec4f { return textureSampleLevel(src, samp, uv, 0.0); }

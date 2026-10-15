@@ -20,22 +20,23 @@ npm install --legacy-peer-deps   # vite + playwright devDependencies; or symlink
 npm run smoke:parity             # MSAA off: offscreen target sampleCount 1, WebGL antialias false
 npm run smoke:parity:aa          # MSAA on: 4x target + resolve, WebGL antialias true (gate 0.05 %)
 npm run smoke:parity:entities    # real legacy entity stream, ~200 entities (gate 0.05 %)
-npm run smoke:parity:entities:aa # the same with MSAA (gate 0.05 %)
+npm run smoke:parity:entities:aa # the same with MSAA (gate 0.1 %, see below)
+npm run smoke:parity:post        # legacy PostProcess chain vs gpu-webgpu PostChain, 26 configurations (gate 0.05 %)
 ```
 
 You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script never runs `playwright install`.
 
 **Options** (`node smoke/run-parity.mjs …`):
 
-| Option             | Meaning                                                                            |
-| ------------------ | ---------------------------------------------------------------------------------- |
-| `--page=P`         | `parity` (default, synthetic records) or `entities` (real legacy entity stream)    |
-| `--aa`             | Turn MSAA on                                                                       |
-| `--tol=N`          | Per-channel tolerance (default 2)                                                  |
-| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                 |
-| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored) |
-| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count       |
-| `--flags="…"`      | Replace the Chromium flags (space-separated)                                       |
+| Option             | Meaning                                                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `--page=P`         | `parity` (default, synthetic records), `entities` (real legacy entity stream) or `post` (post chain) |
+| `--aa`             | Turn MSAA on                                                                                         |
+| `--tol=N`          | Per-channel tolerance (default 2)                                                                    |
+| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                                   |
+| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)                   |
+| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count                         |
+| `--flags="…"`      | Replace the Chromium flags (space-separated)                                                         |
 
 **Exit codes:**
 
@@ -75,6 +76,7 @@ The page must be served from `http://127.0.0.1`. WebGPU needs a secure context, 
 | `entities.html`, `entities.js`    | The real-stream page (below)                                                                                                                                           |
 | `entities/`, `common.js`          | Copies of `gpu-webgl2/smoke/entities/*` and `common.js` (scene, assets, seam stubs, compare helpers); gpu-webgpu imports nothing from gpu-webgl2                       |
 | `webgpuKit.js`                    | Adapter/device, opaque canvas, offscreen target + blit, canvas read-back                                                                                               |
+| `post.html`, `post.js`            | The post-processing page (below)                                                                                                                                       |
 | `run-parity.mjs`                  | Starts Vite, launches Chromium, prints the results, writes the PNGs, sets the exit code                                                                                |
 
 ## Results (SwiftShader, 320×240, 40 records)
@@ -149,3 +151,94 @@ This page is gated at **0.1 %** of pixels over tolerance; every other page stays
 The CPU vertex reference rules out quad-edge and texel-boundary causes. Changing only the depth-remap arithmetic moves the residual pixels; switching to `depth32float` does not change them.
 
 The highest observed value is 0.057 % (frame t=120, 174 px). Raise the gate only with a new analysis.
+
+## Post-processing page (`--page=post`)
+
+C-11, R-PP-001…012. One deterministic synthetic scene image (gradients, a rotated square and a circle for
+diagonal edges, 1 px lines, an 8 px checkerboard, saturated R/G/B/Y patches, a black patch, grey noise and three
+white spots above the 0.88 bloom threshold) is fed to both chains at the scene size, at 322×242 (odd on purpose:
+the 0.75× scene and the 0.25×/0.125× bloom targets all floor).
+
+- **Legacy:** the real `Effects/PostProcess.js` and `Effects/Shaders/*` (unmodified) on a WebGL2 canvas. The page
+  registers the modules once in `MapRenderer.registerPostProcessModules` order, with its `detectBadWebGL` bloom
+  guard. Then, per configuration, it calls `PostProcess.prepare`, draws the scene image texel for texel into whatever
+  `prepare` bound (the RGB8 FBO, or the screen when nothing is active), and calls `PostProcess.render`.
+  `GraphicsSettings` is the seam stub (`entities/stubs.js` `graphics`), `Camera.zoomFinal` comes from the camera stub,
+  and Blind and VerticalFlip are switched with their own `setActive`.
+- **gpu-webgpu:** `buildPostPasses` (`src/post/postPasses.js`) plus `PostChain` (`src/post/PostChainRenderer.js`),
+  from an `rgba8unorm` scene texture holding the same image, into the `bgra8unorm` canvas.
+
+The image is top-down on the WebGPU side and bottom-up (GL rows) on the legacy side, so both show the same picture.
+The WGSL passes get every texel step with a negative y, so each tap is the mirror image of the legacy tap
+(`shaders/post/common.wgsl`). RGB is compared; alpha is 255 on both sides.
+
+**Gates:** each configuration must have at most 0.05 % of pixels over tolerance 2, unless it declares a `gatePct`.
+Three configurations are not gated against legacy output:
+
+- `fxaa default` runs the R-PP-006 fix (`fxaaSubpix` 0.25 drives the FXAA 3.11 subpixel term). It is gated against the
+  CPU reference `src/post/fxaa.js`, evaluated with a double-precision bilinear clamp-to-edge sampler. Its distance
+  from legacy is also printed, for information.
+- `cas sharpening 0` (R-PP-007 fix) and `vibrance 0` (R-PP-009 fix) are compared with legacy run without that module.
+  Legacy cannot express a value of 0 (`||` fallbacks); the fixed module is the identity.
+
+A sensitivity control (WebGPU bloom intensity 0.5 against legacy 0.55) must differ.
+
+**R-PP-004 on SwiftShader:** the legacy guard does **not** trigger here. Chrome reports `gl.VENDOR` as `WebKit` and
+`gl.RENDERER` as `WebKit WebGL` (masked), so `detectBadWebGL` sees neither "swiftshader" nor "intel". Legacy
+registers Bloom, and both bloom configurations compare WebGPU against real legacy bloom. `bloomSupported` is true for
+the `google swiftshader` WebGPU adapter even without `allowSoftwareAdapter`, because the vendor is not Intel.
+
+### Results (SwiftShader, 322×242, tolerance 2)
+
+| Configuration                      | WebGPU passes (→ target)                         | Max diff | Differing |           Over tol 2 |
+| ---------------------------------- | ------------------------------------------------ | -------: | --------: | -------------------: |
+| none                               | Copy → swapchain                                 |        0 |         0 |                    0 |
+| bloom                              | Bloom.prefilter → bloom 80×60, Bloom → swapchain |        1 |    1.81 % |                    0 |
+| bloom intensity 1.5                | same                                             |        1 |    1.77 % |                    0 |
+| blur                               | Blur                                             |        1 |    0.34 % |                    0 |
+| blur area 30, intensity 6          | Blur                                             |        1 |    0.02 % |                    0 |
+| fxaa subpix 0 (= legacy)           | FXAA                                             |        1 |    0.09 % |                    0 |
+| fxaa threshold 0.063, subpix 0     | FXAA                                             |        1 |    0.09 % |                    0 |
+| fxaa default (subpix 0.25), vs CPU | FXAA                                             |       18 |    0.20 % |              0.019 % |
+| cas                                | CAS                                              |        1 |    0.04 % |                    0 |
+| cas contrast 0.6, sharpening 0.5   | CAS                                              |        1 |    0.60 % |                    0 |
+| cas sharpening 0 (fix)             | CAS (identity)                                   |        0 |         0 |                    0 |
+| cartoon                            | Cartoon                                          |        1 |    0.03 % |                    0 |
+| cartoon power 3, slope 1           | Cartoon                                          |        1 |    0.01 % |                    0 |
+| vibrance / 0.8 / −0.5              | Vibrance                                         |        1 |  ≤ 0.12 % |                    0 |
+| vibrance 0 (fix)                   | Vibrance (identity)                              |        0 |         0 |                    0 |
+| vertical flip                      | VerticalFlip                                     |        0 |         0 |                    0 |
+| blind, zoom 63 / 125 / 30          | Blind                                            |        1 |  ≤ 0.02 % |                    0 |
+| performance mode                   | Upsampling (241×181 → 322×242)                   |        1 |    0.02 % |                    0 |
+| performance + bloom                | prefilter → 30×22, Bloom → 241×181, Upsampling   |        1 |    0.35 % |                    0 |
+| performance + fxaa, cas, cartoon   | 3 passes at 241×181, Upsampling                  |        2 |    0.39 % |                    0 |
+| all on (+ illusion, blind zoom 90) | 9 passes, ping-pong, Blind → swapchain           |       24 |    1.51 % | 0.058 % (gate 0.1 %) |
+| all on + performance               | 10 passes, Upsampling last                       |        2 |    0.64 % |                    0 |
+
+- Legacy draw counts match the active-only pass list on every configuration (bloom counts 2 draws), except the two
+  declared-fix configurations, where legacy runs without the module.
+- The FXAA (informational) result for the default subpix against legacy is 2.6 % over tolerance, with a max of 77. That
+  is the intended R-PP-006 divergence.
+- The sensitivity control gives about 17.4k px differing, max 2. There are no WebGPU validation errors and no GL error.
+- Every single-module configuration is within 1 level of legacy. The 1-level pixels are cross-API rounding (Tint/SPIR-V
+  vs ANGLE on the same SwiftShader): `inverseSqrt`, divisions and bilinear weights round at unorm boundaries. Flipping
+  the texel-y sign changes no legacy-path pixel (the legacy FXAA, CAS and cartoon taps are symmetric); only the FXAA 3.11
+  tie-break (CPU-reference configuration, 15 → 14 px) depends on it.
+
+### Gate for `all on` (0.1 %)
+
+Only this configuration needs more than 0.05 %. It is 45 px (0.058 %). Its passes are Bloom, Blur, FXAA, CAS, Cartoon,
+Vibrance, VerticalFlip and Blind, eight full-resolution passes in a row, each of which matches legacy to 1 level on its own.
+
+Removing modules one at a time (diagnostic runs) showed two mechanisms:
+
+- **Branch flips in FXAA.** A 1-level difference from an upstream pass flips FXAA's early exit or its `lumaB` range
+  test on a few edge pixels. Blur + FXAA alone already gives a max of 24 (4 px over tolerance); without FXAA the max
+  falls to 10.
+- **Amplification by CAS and Cartoon.** Bloom leaves about 1.8 % of pixels 1 level off. CAS sharpening and the
+  cartoon edge term amplify those differences to 2–5 levels. Without Bloom the result is 6 px (0.008 %); without Blur,
+  44 px; without CAS, 30 px.
+
+So no single pass diverges. The chain amplifies per-pass cross-API rounding. The same chain at 0.75× (`all on +
+performance`, where texel steps stay canvas-sized as in legacy) is 0 px over tolerance. Raise the gate only with a new
+analysis.

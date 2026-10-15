@@ -1,6 +1,6 @@
 /**
  * WebGPU side of the parity pages: adapter and device, an opaque canvas, the
- * gpu-webgpu offscreen target + blit, and the canvas read-back
+ * gpu-webgpu offscreen target + blit (or any canvas writer, `present`), and the canvas read-back
  * (copyTextureToBuffer + mapAsync) as bottom-up RGBA rows that line up with
  * gl.readPixels.
  */
@@ -58,14 +58,29 @@ export async function createWebGpuSide({ width, height, antialias, clearColor, l
 	 * @returns {Promise<{pixels: Uint8Array, result: T}>}
 	 * @template T
 	 */
-	async function render(encodeScene) {
-		const encoder = device.createCommandEncoder();
-		const pass = encoder.beginRenderPass(target.passDescriptor(clearColor));
-		const result = encodeScene(pass);
-		pass.end();
+	function render(encodeScene) {
+		return present(
+			encoder => {
+				const pass = encoder.beginRenderPass(target.passDescriptor(clearColor));
+				const result = encodeScene(pass);
+				pass.end();
+				return result;
+			},
+			(encoder, swapView) => blit.encode(encoder, target.resolve, swapView)
+		);
+	}
 
+	/**
+	 * Encode `encode(encoder, swapView)` (whatever writes the canvas, e.g. a post chain), then read the
+	 * canvas back. `encodeFirst(encoder)` runs before the canvas texture is acquired.
+	 * @returns {Promise<{pixels: Uint8Array, result: T}>}
+	 * @template T
+	 */
+	async function present(encodeFirst, encode) {
+		const encoder = device.createCommandEncoder();
+		const result = encodeFirst ? encodeFirst(encoder) : undefined;
 		const swap = context.getCurrentTexture();
-		blit.encode(encoder, target.resolve, swap.createView());
+		encode(encoder, swap.createView());
 
 		const bytesPerRow = Math.ceil((width * 4) / 256) * 256; // copy rows are 256-byte aligned
 		const buffer = device.createBuffer({ size: bytesPerRow * height, usage: BUFFER_MAP_READ | BUFFER_COPY_DST });
@@ -115,6 +130,8 @@ export async function createWebGpuSide({ width, height, antialias, clearColor, l
 		format,
 		sampleCount,
 		render,
+		present,
+		info,
 		toPng,
 		adapter: `${info.vendor ?? ''} ${info.architecture ?? ''} ${info.description ?? ''}`.trim(),
 		fallbackAdapter: Boolean(info.isFallbackAdapter ?? adapter.isFallbackAdapter)

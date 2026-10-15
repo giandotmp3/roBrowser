@@ -94,5 +94,7 @@ export { EffectRenderers } from './effects/EffectRenderers.js';
 export * from './gr2/gr2.js';
 export { Gr2Renderer } from './gr2/Gr2Renderer.js';
 export * from './post/postChain.js';
+export * from './post/postPasses.js';
+export { PostChain } from './post/PostChainRenderer.js';
 export { LivePreviews } from './preview/LivePreviews.js';
 export { Capture } from './capture/Capture.js';

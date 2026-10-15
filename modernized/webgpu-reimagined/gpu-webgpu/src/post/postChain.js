@@ -1,6 +1,5 @@
 import { BLIND, BLOOM, BLUR_MASK, FXAA } from '../constants.js';
 import { mix, smoothstep } from '../math.js';
-import { NotImplementedError } from '../errors.js';
 
 export { fxaaAcrossOffset, fxaaLuma, fxaaReference, fxaaSubpixH } from './fxaa.js';
 
@@ -123,7 +122,8 @@ export function blurMask(uv, settings) {
 export function fxaaUniforms(settings) {
 	const s = { ...POST_DEFAULTS, ...settings };
 	return {
-		edgeThreshold: s.fxaaEdgeThreshold,
+		// Legacy Shaders/FXAA.js `fxaaEdgeThreshold || 0.125` (not flagged: kept).
+		edgeThreshold: s.fxaaEdgeThreshold || 0.125,
 		edgeThresholdMin: 0,
 		span: FXAA.span,
 		reduceMul: FXAA.reduceMul,
@@ -167,23 +167,4 @@ export function vibranceApply(rgb, v) {
 export function blindUniforms({ zoomFinal, width, height }) {
 	const k = (BLIND.zoomRef - zoomFinal) / 1000;
 	return { radius: BLIND.radius + k, falloff: BLIND.falloff + k, aspect: width / height };
-}
-
-/** Per-resize GPU resources and encoding of the chain (C-11). */
-export class PostChain {
-	constructor(deps) {
-		this._deps = deps;
-	}
-
-	resize(_width, _height) {
-		throw new NotImplementedError('PostChain.resize (C-11)');
-	}
-
-	encode(_encoder, _plan, _sceneTexture, _swapchainView) {
-		throw new NotImplementedError('PostChain.encode (C-11)');
-	}
-
-	rebuild(_device) {
-		throw new NotImplementedError('PostChain.rebuild (R-CTX-007)');
-	}
 }

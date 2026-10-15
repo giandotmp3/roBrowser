@@ -90,6 +90,8 @@ export const PERF_SCENE_SCALE = 0.75;
 /** R-PP-004 */
 export const BLOOM = Object.freeze({
 	threshold: 0.88,
+	/** Shaders/Bloom.js uBloomSoftKnee; Bloom.fs passes threshold · softKnee as the knee. */
+	softKnee: 0.45,
 	knee: 0.88 * 0.45,
 	downsample: 0.25,
 	downsamplePerf: 0.125,
