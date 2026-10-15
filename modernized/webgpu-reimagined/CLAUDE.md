@@ -194,10 +194,24 @@ These were found at scaffold time and settled before phase 1.
 - **gpu-webgl2 remaining effect families: done.**
   - 15 GL programs, 0 px vs the real legacy classes on five frames (`npm run smoke:parity:effects2`), with 5–8× fewer draws.
   - The FXAA threshold fallback is aligned across backends.
+- **gpu-webgpu remaining effect families: done.**
+  - 20 families through 15 WGSL programs (`npm run smoke:parity:effects2`).
+  - Native gates: 0.075 % without MSAA (coplanar tile z-fighting plus fill-rule orientation) and 2.5 % with MSAA. In ANGLE orientation: ≤0.037 % / ≤0.073 %.
+- **World on both backends: done.**
+  - gpu-webgl2: 0 px on 13 frames (`smoke:parity:world`).
+  - gpu-webgpu: ≤0.005 % without MSAA; native MSAA gated at 3 % (0.013 % in ANGLE orientation).
+  - The R-MAP-010 and R-MAP-013 fixes are checked separately. R-MAP-005, 015 and 019 are promoted.
+- **GR2 on both backends: done.**
+  - gpu-webgl2: 0 px. gpu-webgpu: 0 px over tolerance without MSAA; native MSAA gated at 1 %.
+  - Legacy GR2ModelRenderer and AnimatedModels now have record seams (GL snapshots pinned on the original files). render-records' GR2 composer and computeNodeMatrices match legacy bit for bit; R-GR2-003 and R-MAP-017 are promoted.
+  - The tests use synthetic skinned models, because the repo has no real .gr2 assets.
+- **Coverage:** both backends now draw every legacy draw path (sprites, all effects, world, GR2, post), each pixel-checked against legacy.
 - **Next:**
-  - The remaining effect families on WebGPU.
-  - World rendering (ground, water, models, occluder fade) on gpu-webgl2 (in progress), then on WebGPU.
-  - GR2 on both backends.
+  - #69 fix (in progress for render-records and gpu-webgl2; then port it to gpu-webgpu).
+  - Phase 5 integration: an opt-in `GraphicsSettings.renderer`, default legacy.
+  - World mipmaps on gpu-webgpu.
+  - Clouds (R-MAP-022) pixel check.
+  - A test-harness subject adapter, so the 143 rule tests run against render-records.
 
 ## Still open
 
