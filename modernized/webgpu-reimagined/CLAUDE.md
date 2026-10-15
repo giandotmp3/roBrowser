@@ -171,7 +171,21 @@ These were found at scaffold time and settled before phase 1.
   - Residency uploads on miss through a `FrameSourcePort` (C-16 `decodeSprFrame`). Layers are recycled through per-pool free lists, with LRU reclaim of layers the current frame does not draw. Palette rows are refcounted by their owners. `evictIdle` is the scene step-24 hook. `purgeAll` handles context loss and keeps owner counts. The contract is in `src/residency/Residency.js`; the unit tests are in `test/unit/residency.test.js`.
   - `npm run smoke:parity:entities` runs the real legacy entity path (EntityManager → Entity → SpriteRenderer, unmodified, seams stubbed) on 200 entities. It captures the native record stream and replays it through gpu-webgl2. The result is 0 px diff on 3 frames (including fog, after full eviction, and after a context purge), with and without MSAA.
   - Realistic batching is about 1.7×: 1052 → 648, 1043 → 594 and 954 → 537 draws. Runs mostly break on indexed ↔ RGBA and on depth-write changes; see `gpu-webgl2/smoke/README.md`.
-- **Next:** a mixed-class sprite run (a per-instance class flag) to remove the texture-class breaks; then the effect, world, GR2 and post-processing families on WebGL2.
+- **Mixed-class batches (both backends): done.**
+  - The backend-local `batchKey` is pipelineKey minus the sprite texture class (drift-tested to be a subset of pipelineKey). A per-instance sampling flag lets indexed and RGBA layers share one draw.
+  - Real-stream draws: legacy 1052/1043/954 vs **330/327/282** on both gpu-webgl2 and gpu-webgpu.
+  - The remaining breaks are depth-write and blend state.
+- **gpu-webgpu sprites: done.**
+  - WGSL mirrors the legacy and gpu-webgl2 maths. It runs on Chromium's SwiftShader WebGPU adapter; the flags are in `gpu-webgpu/smoke/run-parity.mjs`.
+  - Gates: the synthetic page is 0 px over tolerance; real-stream ≤0.03 %; MSAA real-stream ≤0.057 %, gated at 0.1 % with the analysis in `gpu-webgpu/smoke/README.md` (cross-API depth ties).
+  - R-SPR-005 and R-SPR-014 are promoted.
+- **gpu-webgl2 STR/3D/2D effects: done.**
+  - 0 px vs the real legacy effect classes on five frames, with and without MSAA (`npm run smoke:parity:effects`).
+  - STR fog (the R-EFX-010 fix) is checked against a CPU fog mix and confined to the STR footprint.
+- **Next:**
+  - The remaining effect families on WebGL2: cylinder, quadhorn, rsm, auras, spheres, tiles, rings, targets, rain puddles, waterfall.
+  - The WebGPU post chain (in progress).
+  - Then effects on WebGPU, and world/GR2 on both backends.
 
 ## Still open
 
