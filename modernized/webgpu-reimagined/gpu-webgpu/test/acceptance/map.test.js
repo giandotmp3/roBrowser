@@ -4,6 +4,7 @@ import {
 	CLOUDS,
 	FOGGED,
 	GRID_SELECTOR,
+	MapWorld,
 	MODEL_DEPTH,
 	OCCLUDER_BLEND_PASS_DEPTH,
 	OCCLUDER_DEFAULTS,
@@ -41,6 +42,7 @@ import {
 	waveOffset,
 	waveY
 } from './_mapImports.js';
+import { createFakeGpu } from '../support/fakeGpu.js';
 
 const light = { direction: [0, 1, 0], diffuse: [0.5, 0.5, 0.5], ambient: [0.25, 0.25, 0.25], env: [1, 1, 1] };
 const seeded = (seed = 1) => () => {
@@ -208,11 +210,37 @@ describe('MAP: occluder fade', () => {
 		expect(q.beginFrame()).toBe(true);
 	});
 
-	it.fails('R-MAP-019: occlusion GPUQuerySet is created and attached to the scene pass, resolved and read back late', () => {
+	it('R-MAP-019: occlusion GPUQuerySet is created and attached to the scene pass, resolved and read back late', async () => {
+		const fake = createFakeGpu();
+		const images = { decode: async () => null };
+		const world = await new MapWorld({ device: fake.device, images }).init();
+		const querySet = fake.calls.find(c => c[0] === 'createQuerySet')[1];
+		expect(querySet).toMatchObject({ type: 'occlusion', count: 2 });
+		expect(world.occlusionQuerySet).toBeTruthy();
+		await world.accept({ type: 'MAP_MODELS', payload: { buffer: new Float32Array(9 * 3), infos: [] } });
+		const modelView = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -10, 1];
+		const view = { modelView, projection: new Float32Array(16) };
 		const calls = [];
-		const device = { createQuerySet: d => (calls.push(d), {}), createBuffer: () => ({}) };
-		new OccluderQueryScheduler().encode(device, { beginOcclusionQuery() {}, endOcclusionQuery() {} });
-		expect(calls[0]).toMatchObject({ type: 'occlusion', count: 2 });
+		const recorder = () => new Proxy({}, { get: (_, name) => () => calls.push(name) });
+		const pass = recorder();
+		const encoder = recorder();
+		const frame = tick => {
+			world.beginFrame({ view, frame: { tick, occluder: { mode: 'dither' } }, targetHeight: 480 });
+			world.encodeStep(pass, 'occluderFadeBegin');
+			world.encodeStep(pass, 'staticModels');
+			world.encodeAfterPass(encoder);
+			world.afterSubmit();
+		};
+		frame(100);
+		const expected = ['beginOcclusionQuery', 'endOcclusionQuery', 'resolveQuerySet', 'copyBufferToBuffer'];
+		expect(calls).toEqual(expect.arrayContaining(expected));
+		calls.length = 0;
+		frame(130); // read-back not collected yet: pending, no new query
+		expect(calls).not.toContain('beginOcclusionQuery');
+		await world.whenQueriesRead();
+		calls.length = 0;
+		frame(160); // collected one frame late, then re-issued
+		expect(calls).toContain('beginOcclusionQuery');
 	});
 
 	it('R-MAP-020: fade shape, Bayer dither, and alpha mode opaque/blend split', () => {

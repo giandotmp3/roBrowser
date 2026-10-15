@@ -1,52 +1,66 @@
-// C-03 ground. R-MAP-001 shading, R-MAP-002 lightmap posterise, R-MAP-003 alpha cutout.
-struct Scene {
-  view_proj : mat4x4f,
-  light_dir : vec3f, lightmap_on : u32,
-  diffuse : vec3f, smoothlight : u32,
-  ambient : vec3f, _pad0 : f32,
-  env : vec3f, _pad1 : f32,
-  fog : Fog,
-};
-@group(0) @binding(0) var<uniform> scene : Scene;
-@group(0) @binding(1) var samp : sampler;
-@group(0) @binding(2) var atlas : texture_2d<f32>;
-@group(0) @binding(3) var lightmap : texture_2d<f32>;
-@group(0) @binding(4) var tile_color : texture_2d<f32>;
+// C-03 ground: R-MAP-001/002/003 shading, R-MAP-004 fog, R-MAP-007 tile colour. Same
+// arithmetic, in the same order, as legacy Map/Ground.vs / Ground.fs (gpu-webgl2
+// shaders/world/ground.vert + shaders/ground.frag): the light weighting comes from the
+// vertex stage. Every texture is sampled up front (uniform control flow).
+@group(0) @binding(2) var diffuse_tex : texture_2d<f32>;
+@group(0) @binding(3) var lightmap_tex : texture_2d<f32>;
+@group(0) @binding(4) var tile_color_tex : texture_2d<f32>;
 
-struct VsOut {
+struct GroundOut {
   @builtin(position) pos : vec4f,
-  @location(0) normal : vec3f,
-  @location(1) uv : vec2f,
-  @location(2) lm_uv : vec2f,
-  @location(3) tc_uv : vec2f,
+  @location(0) uv : vec2f,
+  @location(1) lightmap_uv : vec2f,
+  @location(2) tile_color_uv : vec2f,
+  @location(3) light_weighting : f32,
 };
 
 @vertex
-fn vs_main(@location(0) p : vec3f, @location(1) n : vec3f, @location(2) uv : vec2f,
-           @location(3) lm_uv : vec2f, @location(4) tc_uv : vec2f) -> VsOut {
-  var o : VsOut;
-  o.pos = scene.view_proj * vec4f(p, 1.0);
-  o.normal = n; o.uv = uv; o.lm_uv = lm_uv; o.tc_uv = tc_uv;
+fn vs_main(@location(0) position : vec3f, @location(1) normal : vec3f, @location(2) uv : vec2f,
+           @location(3) lightmap_uv : vec2f, @location(4) tile_color_uv : vec2f) -> GroundOut {
+  var o : GroundOut;
+  o.pos = gl_clip(u.projection * u.model_view * vec4f(position, 1.0));
+  o.uv = uv;
+  o.lightmap_uv = lightmap_uv;
+  o.tile_color_uv = tile_color_uv;
+  let dot_product = dot(normal, u.light_dir);
+  o.light_weighting = max(dot_product, 0.0);
   return o;
 }
 
+fn posterize(c : vec3f) -> vec3f {
+  var p = c * 255.0;
+  p = floor(p / 16.0) * 16.0;
+  p = p / 255.0;
+  return p;
+}
+
 @fragment
-fn fs_main(i : VsOut) -> @location(0) vec4f {
-  let tex = textureSample(atlas, samp, i.uv);
-  if (tex.a < 0.1) { discard; }
-  var rgb = tex.rgb;
-  if (any(i.tc_uv != vec2f(0.0))) {
-    rgb *= textureSample(tile_color, samp, i.tc_uv).rgb;
+fn fs_main(i : GroundOut) -> @location(0) vec4f {
+  var tex = textureSample(diffuse_tex, samp, i.uv);
+  let tile_color = textureSample(tile_color_tex, samp, i.tile_color_uv);
+  var lightmap = textureSample(lightmap_tex, samp, i.lightmap_uv);
+  if (tex.a < 0.1) {
+    discard;
   }
-  let nl = max(dot(i.normal, scene.light_dir), 0.0);
-  rgb *= clamp(nl * scene.diffuse + scene.ambient, vec3f(0.0), vec3f(1.0));
-  rgb *= clamp(scene.env, vec3f(0.0), vec3f(1.0));
-  if (scene.lightmap_on != 0u) {
-    let lm = textureSample(lightmap, samp, i.lm_uv);
-    var lrgb = lm.rgb;
-    if (scene.smoothlight == 0u) { lrgb = floor(lrgb * 255.0 / 16.0) * 16.0 / 255.0; }
-    else if (scene.smoothlight == 2u) { lrgb = pow(lrgb, vec3f(1.1)); }
-    rgb = rgb * lm.a + clamp(lrgb, vec3f(0.0), vec3f(1.0));
+
+  // Tile colour (R-MAP-007): rgba, alpha included, where the cell has a top tile.
+  if (any(i.tile_color_uv != vec2f(0.0, 0.0))) {
+    tex *= tile_color;
   }
-  return apply_fog(vec4f(rgb, tex.a), i.pos, scene.fog);
+
+  let color = i.light_weighting * u.light_diffuse + u.light_ambient;
+  tex = vec4f(tex.rgb * clamp(color, vec3f(0.0), vec3f(1.0)), tex.a);
+  tex = vec4f(tex.rgb * clamp(u.light_env, vec3f(0.0), vec3f(1.0)), tex.a);
+
+  if (u.lightmap_use != 0u) {
+    if (u.smooth_light == 0u) {
+      lightmap = vec4f(posterize(lightmap.rgb), lightmap.a);
+    } else if (u.smooth_light == 2u) {
+      lightmap = vec4f(pow(lightmap.rgb, vec3f(1.1)), lightmap.a);
+    }
+    tex = vec4f(tex.rgb * lightmap.a, tex.a);
+    tex = vec4f(tex.rgb + clamp(lightmap.rgb, vec3f(0.0), vec3f(1.0)), tex.a);
+  }
+
+  return apply_fog(tex, i.pos, u.fog);
 }

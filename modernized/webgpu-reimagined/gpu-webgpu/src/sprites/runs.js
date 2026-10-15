@@ -29,6 +29,13 @@ import { SPRITE_EFFECT_FAMILIES } from '../effects/spriteEffect.js';
 import { meshProgramKey } from '../effects/mesh/meshFamilies.js';
 
 /**
+ * Backend-internal marker of an R-CTX-010 world step (`{kind: 'worldStep', step}`): WebGpuBackend
+ * puts one at the stream position of each world step, and the batch it forms (its own batch key,
+ * one per step) is encoded by MapWorld (`programOf` 'world'). Never part of a record stream.
+ */
+export const WORLD_STEP_KIND = 'worldStep';
+
+/**
  * @param {{kind: string, blend: {src: string, dst: string}, depthTest: boolean, depthWrite: boolean, textureClass?: string, strAttachment?: boolean}} record
  * @returns {string}
  */
@@ -54,6 +61,9 @@ export function recordRunKey(record) {
  * @returns {string}
  */
 export function batchKey(record, { mixTextureClasses = true } = {}) {
+	if (record.kind === WORLD_STEP_KIND) {
+		return `${WORLD_STEP_KIND}:${record.step}`;
+	}
 	if (record.kind === 'effect') {
 		const program = effectProgram(record);
 		// Split-class fallback: a sprite-program batch binds one texture class set.
@@ -87,11 +97,15 @@ export function effectProgram(record) {
 /**
  * Program of a batch head: 'sprite' (sprites and 2D/3D effects), 'str', 'mesh' (the
  * mesh effect families: cylinder, quadhorn, RSM, auras, spheres, tiles, rings, target
- * markers, waterfall, rain puddles), or null (a family without a renderer here).
+ * markers, waterfall, rain puddles), 'world' (a world-step marker, WORLD_STEP_KIND), or
+ * null (a family without a renderer here).
  * @param {{kind: string, family?: string, params?: Record<string, any>}} record
- * @returns {'sprite'|'str'|'mesh'|null}
+ * @returns {'sprite'|'str'|'mesh'|'world'|null}
  */
 export function programOf(record) {
+	if (record.kind === WORLD_STEP_KIND) {
+		return 'world';
+	}
 	if (record.kind === 'sprite') {
 		return 'sprite';
 	}

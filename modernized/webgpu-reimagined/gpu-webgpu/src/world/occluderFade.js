@@ -1,6 +1,5 @@
 import { OCCLUDER_QUERY } from '../constants.js';
 import { clamp, smoothstep } from '../math.js';
-import { NotImplementedError } from '../errors.js';
 
 /** R-MAP-018: active for 'dither' or 'alpha', except in first-person mode. */
 export function occluderFadeActive(mode, cameraMode) {
@@ -14,9 +13,10 @@ export function nextStrength(strength, blocked, dtMs) {
 }
 
 /**
- * R-MAP-019 query cadence over a GPUQuerySet (type 'occlusion', 2 slots).
- * Results are read back 1–2 frames late (architecture m3); a new query is
- * not issued while one is pending.
+ * R-MAP-019 query cadence (reference): a new query is not issued while one is pending;
+ * the result is read back 1–2 frames late (architecture m3). The GPU side (an `occlusion`
+ * GPUQuerySet of 2 slots attached to the scene pass, resolveQuerySet after it, mapAsync
+ * after the submit) is MapWorld's (world/MapWorld.js), with the same cadence per slot.
  */
 export class OccluderQueryScheduler {
 	constructor() {
@@ -38,16 +38,6 @@ export class OccluderQueryScheduler {
 	resolve(anySamplesPassed) {
 		this.pending = false;
 		this.lastBlocked = anySamplesPassed;
-	}
-
-	/**
-	 * GPU side: create the occlusion GPUQuerySet, encode beginOcclusionQuery
-	 * around the colour/depth-write-off model redraw (fragments within 0.7 cells
-	 * of the eye->player axis and > 0.5 cells before the focus), resolveQuerySet
-	 * into a MAP_READ buffer and mapAsync it.
-	 */
-	encode(_device, _pass) {
-		throw new NotImplementedError('OccluderQueryScheduler.encode (R-MAP-019)');
 	}
 }
 

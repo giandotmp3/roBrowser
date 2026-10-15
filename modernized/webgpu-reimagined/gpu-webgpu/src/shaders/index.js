@@ -7,6 +7,9 @@ import fog from './fog.wgsl?raw';
 import ground from './ground.wgsl?raw';
 import water from './water.wgsl?raw';
 import models from './models.wgsl?raw';
+import worldCommon from './world/common.wgsl?raw';
+import occluderFade from './world/occluderFade.wgsl?raw';
+import grid from './world/grid.wgsl?raw';
 import sprite from './sprite.wgsl?raw';
 import str from './str.wgsl?raw';
 import effect from './effect.wgsl?raw';
@@ -24,15 +27,18 @@ import blind from './post/blind.wgsl?raw';
 import upsampling from './post/upsampling.wgsl?raw';
 
 /** Shaders that include the shared fog code. */
-export const FOGGED = Object.freeze(['ground', 'water', 'models', 'sprite', 'str', 'effect']);
+export const FOGGED = Object.freeze(['ground', 'water', 'models', 'grid', 'sprite', 'str', 'effect']);
 
 const withFog = src => `${fog}\n${src}`;
+/** World passes: fog, then the shared World uniform block (world/common.wgsl). */
+const world = src => withFog(`${worldCommon}\n${src}`);
 const post = src => `${postCommon}\n${src}`;
 
 export const SHADERS = Object.freeze({
-	ground: withFog(ground),
-	water: withFog(water),
-	models: withFog(models),
+	ground: world(ground),
+	water: world(water),
+	models: world(`${occluderFade}\n${models}`),
+	grid: world(grid),
 	sprite: withFog(sprite),
 	str: withFog(str),
 	effect: withFog(effect),

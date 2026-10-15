@@ -78,7 +78,7 @@ export function decodeImageTexture(image, { createCanvas = defaultCanvas, gl } =
  * @param {CanvasImageSource & {width: number, height: number}} image
  * @param {(width: number, height: number) => HTMLCanvasElement | OffscreenCanvas} createCanvas
  */
-function keyedCanvas(image, createCanvas) {
+export function keyedCanvas(image, createCanvas) {
 	const canvas = createCanvas(image.width, image.height);
 	const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d', { willReadFrequently: true }));
 	ctx.drawImage(image, 0, 0, image.width, image.height);

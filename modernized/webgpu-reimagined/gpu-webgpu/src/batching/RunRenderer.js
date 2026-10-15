@@ -14,8 +14,9 @@ import { encodeBatches } from './encodeBatches.js';
  * the mesh effect families (cylinder, quadhorn, RSM, auras, spheres, tiles, rings,
  * target markers, waterfall, rain puddles) are one draw per batch of MeshEffectPipeline
  * (15 WGSL programs, cached meshes or streamed vertices); all sample the same
- * texture-array pools of one SpriteResidency. Batches of other families (weather,
- * world) have no renderer here yet and are skipped (`lastSkipped`).
+ * texture-array pools of one SpriteResidency. Batches of other families (weather)
+ * have no renderer here yet and are skipped (`lastSkipped`); world-step markers are
+ * encoded in place by the caller's `world` program (MapWorld).
  *
  * Same structure as gpu-webgl2's RunRenderer. Holds no rendering rules: every value
  * comes from the records.
@@ -48,7 +49,7 @@ export class RunRenderer {
 		this.lastBatches = [];
 		/** Batches drawn with the normal-alpha fallback pipeline (pair still compiling). */
 		this.lastFallbacks = 0;
-		/** Batches without a renderer here (other effect families, world). */
+		/** Batches without a renderer here (other effect families). */
 		this.lastSkipped = 0;
 		/** Frames and palettes uploaded on miss by the last `encode()`. */
 		this.lastUploads = 0;
@@ -90,9 +91,11 @@ export class RunRenderer {
 	 * @param {GPURenderPassEncoder} pass
 	 * @param {ReadonlyArray<any>} records  Legacy order
 	 * @param {import('../sprites/SpriteRunRenderer.js').SpriteView} [view]  Camera, zoom and fog of this pass
+	 * @param {{world?: import('./encodeBatches.js').DirectProgram}} [direct]  `world`: encodes the world-step
+	 *   markers of the stream (WebGpuBackend's MapWorld steps) at their stream position
 	 * @returns {{drawCalls: number, runs: number, batches: number, fallbacks: number, skipped: number}}
 	 */
-	encode(pass, records, view) {
+	encode(pass, records, view, direct = {}) {
 		// Upload on miss before packing, so slots exist.
 		this.lastUploads = this.residency.prepare?.(records) ?? 0;
 		this.lastRuns = splitRuns(records);
@@ -119,7 +122,12 @@ export class RunRenderer {
 			pass,
 			records,
 			this.lastBatches,
-			{ sprite: this.sprites, str: this.str, mesh: this.meshes },
+			{
+				sprite: this.sprites,
+				str: this.str,
+				mesh: this.meshes,
+				...(direct.world ? { world: direct.world } : {})
+			},
 			firsts
 		);
 		this.lastDrawCalls = stats.drawCalls;

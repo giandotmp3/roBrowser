@@ -9,6 +9,11 @@ import { programOf } from '../sprites/runs.js';
  * @property {(pass: GPURenderPassEncoder, staged: any, batch: {start: number, count: number}) => boolean} [drawBatch]
  *   Encode one batch from its staged value (`firsts` entry); false when it draws nothing.
  *   Without it the batch is `draw(4, count, 0, first)`: instanced 4-vertex strips.
+ *
+ * @typedef {Object} DirectProgram  A program that sets its own pass state (MapWorld's world steps)
+ * @property {(pass: GPURenderPassEncoder, head: any, batch: {start: number, count: number}) => number} encodeDirect
+ *   Encode the batch with its own pipelines, bind groups and vertex buffers; returns its draw calls.
+ *   The cached pipeline, bind group and vertex-buffer state is invalidated after it.
  */
 
 /**
@@ -21,7 +26,7 @@ import { programOf } from '../sprites/runs.js';
  * @param {GPURenderPassEncoder} pass
  * @param {ReadonlyArray<any>} records
  * @param {ReadonlyArray<{start: number, count: number}>} batches  Every batch of the stream, in order
- * @param {Partial<Record<'sprite'|'str'|'mesh', BatchProgram>>} programs
+ * @param {Partial<Record<'sprite'|'str'|'mesh', BatchProgram>> & {world?: DirectProgram}} programs
  * @param {Partial<Record<'sprite'|'str'|'mesh', any[]>>} firsts  Staged value of each of that program's batches
  *   (first instance for the strip programs, a draw descriptor for `drawBatch` programs)
  * @returns {{drawCalls: number, fallbacks: number, skipped: number}} `skipped`: batches without a program here
@@ -41,6 +46,13 @@ export function encodeBatches(pass, records, batches, programs, firsts) {
 		const program = name ? programs[name] : undefined;
 		if (!program) {
 			skipped++;
+			continue;
+		}
+		if ('encodeDirect' in program) {
+			drawCalls += program.encodeDirect(pass, head, batch);
+			bound = null;
+			group = null;
+			pipeline = null;
 			continue;
 		}
 		const first = firsts[name][next[name]++];

@@ -27,22 +27,25 @@ npm run smoke:parity:effects:aa  # the same with MSAA (0.05 % in ANGLE's raster 
 npm run smoke:parity:effects2    # real legacy mesh effect classes (0.05 % in ANGLE's raster orientation; native 0.075 %)
 npm run smoke:parity:effects2:aa # the same with MSAA (0.1 % in ANGLE's raster orientation; native 2.5 %, see below)
 npm run smoke:parity:backend     # WebGpuBackend end to end (entities + effects + post) and a real device loss (gate 0.05 %; see below)
+npm run smoke:parity:world       # the map world (ground, water, static + animated RSM, occluder fade, grid) through drawFrame (gate 0.05 %)
+npm run smoke:parity:world:aa    # the same with MSAA (0.05 % in ANGLE's raster orientation; native 3 %, see below)
 ```
 
 You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script never runs `playwright install`.
 
 **Options** (`node smoke/run-parity.mjs …`):
 
-| Option             | Meaning                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| `--page=P`         | `parity` (default), `entities`, `post`, `effects`, `effects2` or `backend`              |
-| `--aa`             | Turn MSAA on                                                                            |
-| `--tol=N`          | Per-channel tolerance (default 2)                                                       |
-| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                      |
-| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)      |
-| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count            |
-| `--only=F`         | Diagnostics: `effects` keeps one class (`str`, `3d`, `2d`); `effects2` one mesh program |
-| `--flags="…"`      | Replace the Chromium flags (space-separated)                                            |
+| Option             | Meaning                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `--page=P`         | `parity` (default), `entities`, `post`, `effects`, `effects2`, `backend` or `world`        |
+| `--aa`             | Turn MSAA on                                                                               |
+| `--tol=N`          | Per-channel tolerance (default 2)                                                          |
+| `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                         |
+| `--out=dir`        | Write `legacy`/`modern`/`diff` PNGs per frame (default `smoke/.out/`, git-ignored)         |
+| `--isolate`        | Diagnostics: also draw each record alone and print its differing pixel count               |
+| `--only=F`         | Diagnostics: `effects` keeps one class (`str`, `3d`, `2d`); `effects2` one mesh program    |
+| `--skip=L`         | Diagnostics, `world`: leave passes out on both sides (`ground,grid,models,animated,water`) |
+| `--flags="…"`      | Replace the Chromium flags (space-separated)                                               |
 
 **Exit codes:**
 
@@ -88,6 +91,8 @@ The page must be served from `http://127.0.0.1`. WebGPU needs a secure context, 
 | `effects2.html`, `effects2.js`    | The mesh effect page (below); port of `gpu-webgl2/smoke/effects2.js`                                                                                                   |
 | `effects2/`                       | `scene.js`: copy of `gpu-webgl2/smoke/effects2/scene.js` (keep identical); `assets.js`: its port (same 29 images, same four decodes)                                   |
 | `backend.html`, `backend.js`      | The backend page (below): `WebGpuBackend` end to end plus a real device loss; `REAL_FOR` serves it the real `StrEffect.js` too                                         |
+| `world.html`, `world.js`          | The world page (below): port of `gpu-webgl2/smoke/world.js`; `REAL_FOR` serves it the real `Renderer/Map/Ground.js`, `Water.js` and `Altitude.js`                      |
+| `world/`                          | Copies of `gpu-webgl2/smoke/world/*` (`assets.js`: the synthetic GND/GAT/RSW/RSM payloads and images; `scene.js`: cameras and the 12 captures); keep them identical    |
 | `run-parity.mjs`                  | Starts Vite, launches Chromium, prints the results, writes the PNGs, sets the exit code                                                                                |
 
 ## Results (SwiftShader, 320×240, 40 records)
@@ -448,3 +453,73 @@ depth-tie signature of the entities page (short horizontal runs inside entities)
 whether post is on or off. The page draws every post-chain frame a second time on a second backend whose scene
 target is `depth16unorm` (`depthFormat` port): 0.023–0.044 %, under the page gate. The blit frame, where legacy has
 24 bits too, is 0.009 % in production. Raise the gate only with a new analysis.
+
+## World page (`--page=world`)
+
+The port of `gpu-webgl2/smoke/world.js` on the same synthetic map (`world/assets.js`, `world/scene.js`, copies): the
+**real legacy map renderers**, unmodified (`Renderer/Map/Ground`, `Water`, `Models`, `AnimatedModels`, `GridSelector`,
+`Altitude`, `OccluderFade`, with the real loaders building the payloads), draw each tick into the WebGL2 canvas in
+`MapRenderer.onRender`'s order; `WebGpuBackend` receives the same `MAP_*` payloads through `acceptMapMessage` (a stale
+request is dropped) and draws them with `drawFrame` (one scene pass, then the blit), read back with `capture()`. Every
+tick from 600 to 2490 ms renders on both sides (animated RSM matrices and the occluder strength are stateful); the 12
+captures plus one frame after a device loss are compared (13 frames, as gpu-webgl2).
+
+- **World (`src/world/MapWorld.js`)**: gpu-webgl2's `MapWorld` on WebGPU. Ground (atlas, lightmap and tile colours as
+  REPEAT/LINEAR 2D textures), water (the 32 frames as one `texture_2d_array`, R-MAP-009 layer and size/class scale),
+  static RSM runs (per-size-class arrays, `LayerSet`), animated RSM (one vertex buffer, the matrices in one
+  `array<mat4x4f>` storage buffer, capped at `maxStorageBufferBindingSize`), grid selector, occluder fade, sky clear
+  colour. One `World` uniform block per draw (dynamic offsets). WGSL (`shaders/ground.wgsl`, `water.wgsl`,
+  `models.wgsl`, `world/*.wgsl`) mirrors the legacy GLSL operation for operation (GL `mod`, the vertex-stage light
+  weighting, the occluder include, GL's bottom-left `gl_FragCoord` for the Bayer cell); float32 CPU maths are gpu-webgl2's
+  (`glm32.js`, `animatedRsm.js`, `mapLight`, copies).
+- **Frame**: `drawFrame` puts a world-step marker at the stream position of each R-CTX-010 world step (ground, grid,
+  occluder begin, static, animated, water, faded); `encodeBatches` hands those batches to `MapWorld.encodeStep`, so the
+  world draws sit between the records of the neighbouring steps in one pass. `world` records steer it, as gpu-webgl2:
+  a `water` record (R-MAP-010 alpha, R-MAP-009 frame, depth state), `animatedModel` matrices.
+- **Occlusion queries (R-MAP-019)**: a 2-slot `occlusion` query set on the scene pass, the line-of-sight redraw
+  (colour writes off, depth test off) inside `begin/endOcclusionQuery`, `resolveQuerySet` after the pass, `mapAsync`
+  after the submit; a later frame collects the result. Legacy polls its GL query on the next frame; the page waits for
+  the read-back (`whenQueriesRead()`) before the next frame, so the strengths match tick by tick. In production the
+  read-back lands 1–2 frames late and no query is issued while one is pending.
+- **Texels**: the canvases legacy uploads with `texImage2D(canvas)` (ground atlas, POT-stretched water/model textures,
+  the tinted grid) are read through a scratch WebGL2 unpack (`unpackGl` port), identical to legacy's; without it
+  `getImageData`.
+- **Checks** (as gpu-webgl2): R-MAP-010 fix (0.8 once; only water pixels change, by the predicted blend), R-MAP-013 fix
+  (only animated-model pixels differ from uncompensated legacy), occluder strength equal to legacy on every occluder
+  tick, a real `device.destroy()` (overlay, purge, rebuild on a new device with the map re-uploaded from the retained
+  payloads, `setMap`), no unsupported record, payload content. The two fix checks leave out the parity frame's
+  depth-tie pixels (below; gpu-webgl2's are exact). Sensitivity control: the light direction nudged by 0.01.
+
+### Results (SwiftShader, 640×480, tolerance 2)
+
+| Frames                                                       | Over tol 2, native | ANGLE orientation |          MSAA native | MSAA, ANGLE orientation | Legacy / gpu-webgpu draws |
+| ------------------------------------------------------------ | -----------------: | ----------------: | -------------------: | ----------------------: | ------------------------: |
+| t = 660…1500 (fog, smoothlight 1/2, lightmap off, animation) |  9–11 (≤ 0.0036 %) |              same | 6454–7587 (≤ 2.47 %) |      22–39 (≤ 0.0127 %) |                   15 / 12 |
+| t = 1680, captcha grid (25 cells)                            |      15 (0.0049 %) |              same |        7434 (2.42 %) |           38 (0.0124 %) |                   39 / 12 |
+| t = 2220…2400, occluder dither                               |  5–13 (≤ 0.0042 %) |              same | 6970–6991 (≤ 2.28 %) |      26–39 (≤ 0.0127 %) |                   27 / 21 |
+| t = 2490, occluder alpha, fog                                |      12 (0.0039 %) |              same |        6277 (2.04 %) |           40 (0.0130 %) |                   39 / 30 |
+| after device loss                                            |      13 (0.0042 %) |                 — |        7541 (2.45 %) |                       — |                   15 / 12 |
+
+- No WebGPU or GL error, no WGSL message, 0 unsupported records; occluder strengths 0 → 0.2 → … → 1 on both sides.
+  Sensitivity control ≈25k px (MSAA ≈33k).
+
+### Gates for world
+
+- **Without MSAA: the page gate, 0.05 % (≤ 0.0049 %), in both orientations.** The 5–15 px left are depth ties where two
+  surfaces cross: the water plane meets the ground at the shoreline (most of them; `--skip=models,animated,grid` keeps
+  12 of them), boxes stand in the slopes, animated nodes intersect. Along the crossing both depths are equal to the last
+  bits, and the interpolated depth of the two APIs' paths (ANGLE's GL window transform vs the WGSL `z' = (z + w)/2`
+  remap) differs by an ulp, so single pixels swap ground and water. Ground, water and static models alone are 0 px;
+  the remaps `z·½ + w·½` and `(z/w·½ + ½)·w` give the same counts (precedent: effects2's tile z-fighting). Drawing in
+  ANGLE's orientation changes nothing here. The two fix checks leave these pixels out of their "only here" counts.
+- **Native with MSAA: declared 3 %** (`NATIVE_AA_GATE_PCT`, ≤ 2.47 %). ANGLE draws the WebGL default framebuffer upside
+  down, which mirrors the 4× sample pattern: every edge that is neither horizontal nor vertical resolves different
+  coverage, and the world covers the whole frame with such edges (ground tiles with texture and lightmap seams, water,
+  models); the effects pages' precedent (`effects2:aa` native 2.5 %). The same frames on a second backend in ANGLE's
+  raster orientation (y-flipped projection, rows read top-down, the Bayer cell flipped with it, `-angle-orientation`)
+  keep the page gate: ≤ 0.013 %.
+
+Raise a gate only with a new analysis.
+
+**Not covered yet:** `enableMipmap` (R-PERF-003) world textures (legacy `generateMipmap`; WebGPU has no built-in
+mip generation, the world uploads level 0 only) and clouds (R-MAP-022, drawn through the sprite path in legacy).

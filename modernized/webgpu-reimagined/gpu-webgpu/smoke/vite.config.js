@@ -59,11 +59,20 @@ const STUB_PREFIX = '\0legacy-stub:';
 
 /**
  * Stubbed seams a page drives for real: legacy module → the smoke path prefixes whose
- * importers get the real module (the effects and backend pages import the real StrEffect;
- * every other importer, e.g. the entity path's attachments, keeps the stub). Same as gpu-webgl2.
+ * importers get the real module (the effects and backend pages import the real StrEffect,
+ * the world page the real ground, water and altitude, with the legacy GridSelector reading
+ * the real Altitude; every other importer, e.g. the entity path's attachments, keeps the
+ * stub). Same as gpu-webgl2.
  */
+const WORLD_PAGE = path.join(packageRoot, 'smoke', 'world');
 const REAL_FOR = Object.freeze({
-	'Renderer/Effects/StrEffect.js': [path.join(packageRoot, 'smoke', 'effects'), path.join(packageRoot, 'smoke', 'backend')]
+	'Renderer/Effects/StrEffect.js': [
+		path.join(packageRoot, 'smoke', 'effects'),
+		path.join(packageRoot, 'smoke', 'backend')
+	],
+	'Renderer/Map/Ground.js': [WORLD_PAGE],
+	'Renderer/Map/Water.js': [WORLD_PAGE],
+	'Renderer/Map/Altitude.js': [WORLD_PAGE, path.join(legacy, 'Renderer', 'Map', 'GridSelector.js')]
 });
 
 /**
@@ -72,7 +81,8 @@ const REAL_FOR = Object.freeze({
  * with the LEGACY_STUBS seams swapped for smoke/entities/stubs.js whatever the
  * import spelling (alias or relative). `Renderer/Camera.js` is one of them, so
  * SpriteRenderer's `./Camera.js` gets smoke/cameraStub.js on every page. The
- * effects and backend pages get the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`).
+ * effects and backend pages get the real `Renderer/Effects/StrEffect.js`, the world page
+ * the real map renderers (`REAL_FOR`).
  */
 export default {
 	root: packageRoot,

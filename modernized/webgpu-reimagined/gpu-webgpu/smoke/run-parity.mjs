@@ -3,7 +3,7 @@
  * WebGPU and WebGL2 both on SwiftShader. Serves smoke/<page>.html with Vite,
  * reads `window.__parity`, prints the stats and writes legacy/modern/diff PNGs.
  *
- *   node smoke/run-parity.mjs [--page=parity|entities|post|effects|effects2|backend] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir] [--flags="--a --b"]
+ *   node smoke/run-parity.mjs [--page=parity|entities|post|effects|effects2|backend|world] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir] [--flags="--a --b"]
  *
  * Pages: `parity` (synthetic SpriteDraw records through the legacy SpriteRenderer
  * API, 40 records), `entities` (the real legacy entity path's captured record
@@ -40,7 +40,7 @@ const tolerance = Number(args.tol ?? 2);
 const maxOverPct = Number(args['max-diff-pct'] ?? 0);
 const outDir = path.resolve(args.out ?? path.join(here, '.out'));
 const pageName = args.page ?? 'parity';
-if (!['parity', 'entities', 'post', 'effects', 'effects2', 'backend'].includes(pageName)) {
+if (!['parity', 'entities', 'post', 'effects', 'effects2', 'backend', 'world'].includes(pageName)) {
 	console.error(`unknown --page=${pageName}`);
 	process.exit(1);
 }
@@ -131,7 +131,7 @@ try {
 	const logs = [];
 	page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
 	page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
-	const query = `?tol=${tolerance}${args.aa ? '&aa=1' : ''}${args.isolate ? '&isolate=1' : ''}${args.only ? `&only=${args.only}` : ''}`;
+	const query = `?tol=${tolerance}${args.aa ? '&aa=1' : ''}${args.isolate ? '&isolate=1' : ''}${args.only ? `&only=${args.only}` : ''}${args.skip ? `&skip=${args.skip}` : ''}`;
 	await page.goto(`${base}smoke/${pageName}.html${query}`);
 	await page.waitForFunction(() => window.__parity !== undefined, null, { timeout: 300000 });
 	const result = await page.evaluate(() => window.__parity);

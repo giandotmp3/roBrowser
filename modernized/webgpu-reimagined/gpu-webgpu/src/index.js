@@ -45,7 +45,7 @@ export {
 } from './residency/imageTexture.js';
 export { TextureArrayPools, padLayer } from './residency/TextureArrayPools.js';
 
-export { globalLight, skyForMap } from './world/lighting.js';
+export { globalLight, skyForMap, mapLight, clearColorFor } from './world/lighting.js';
 export { fogUniforms, applyFog } from './world/fog.js';
 export { shadeGround, lightmapRgb, groundAtlasLayout, lightmapAtlasLayout, tileColorsToRgba } from './world/ground.js';
 export {
@@ -70,6 +70,25 @@ export * from './world/occluderFade.js';
 export { gridSelectorCells, gridSelectorQuad } from './world/gridSelector.js';
 export { CLOUD_DEPTH, spawnCloud, createCloudField, cloudAlpha } from './world/sky.js';
 export { MapGpuScene } from './world/MapGpuScene.js';
+export {
+	MapWorld,
+	packWorldUniforms,
+	WORLD_STEPS,
+	WORLD_UNIFORM_BYTES,
+	WORLD_UNIFORM_STRIDE,
+	OCCLUDER_MODE,
+	QUERY_SLOT
+} from './world/MapWorld.js';
+export { LayerSet } from './world/LayerSet.js';
+export { AnimatedRsm, ANIMATED_VERTEX_FLOATS, computeRsmNormals } from './world/animatedRsm.js';
+export {
+	canvasTexels,
+	composeGridTexture,
+	composeGroundAtlas,
+	createImageDecoder,
+	potTexels,
+	stretchToPot
+} from './world/worldImages.js';
 
 export { MAP_FRAME_STEPS, runMapFrame } from './frame/mapFrame.js';
 

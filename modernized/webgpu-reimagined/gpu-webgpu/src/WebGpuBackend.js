@@ -1,12 +1,12 @@
 import { RenderDevice } from './device/RenderDevice.js';
 import { DeviceLossController } from './device/DeviceLossController.js';
 import { onRenderError } from './device/frameErrorPolicy.js';
-import { DeviceUnavailableError, NotImplementedError } from './errors.js';
+import { DeviceUnavailableError } from './errors.js';
 import { MAP_FRAME_STEPS, runMapFrame } from './frame/mapFrame.js';
 import { TextureArrayPools } from './residency/TextureArrayPools.js';
 import { SpriteResidency } from './residency/SpriteResidency.js';
 import { RunRenderer } from './batching/RunRenderer.js';
-import { batchKey, programOf } from './sprites/runs.js';
+import { WORLD_STEP_KIND, batchKey, programOf } from './sprites/runs.js';
 import { OffscreenTarget } from './target/OffscreenTarget.js';
 import { Blit } from './target/Blit.js';
 import { PostChain } from './post/PostChainRenderer.js';
@@ -14,6 +14,8 @@ import { buildPostPasses } from './post/postPasses.js';
 import { POST_DEFAULTS, bloomSupported } from './post/postChain.js';
 import { Capture } from './capture/Capture.js';
 import { LivePreviews } from './preview/LivePreviews.js';
+import { MapWorld, WORLD_STEPS } from './world/MapWorld.js';
+import { clearColorFor } from './world/lighting.js';
 
 /**
  * Backend selection entry (`GraphicsSettings.renderer = 'auto'|'webgpu'|'webgl'`,
@@ -90,7 +92,10 @@ function recordsByStep(stream) {
 	return stream;
 }
 
-/** Family label of a record without a renderer here (world, GR2, other effect families). */
+/** `world` records MapWorld consumes, by step: R-MAP-010/009 water fields, animated RSM matrices. */
+const WORLD_RECORD_STEP = Object.freeze({ water: 'water', animatedModel: 'animatedModels' });
+
+/** Family label of a record without a renderer here (GR2, other effect families, stray world parts). */
 const unsupportedKey = record => {
 	const sub = record.family ?? record.part;
 	return sub ? `${record.kind}:${sub}` : String(record.kind);
@@ -103,17 +108,21 @@ const unsupportedKey = record => {
  *   capture(), handleRenderError(err), evictIdle(ms), dispose()
  *
  * One frame (R-CTX-010) is one command encoder: the scene pass (clear colour from the
- * frame / sky, R-CTX-009; every scene-step record in legacy order through RunRenderer:
- * sprites, 2D/3D, STR and the mesh effect families; families without a renderer yet,
- * world, GR2 and the SpriteRenderer-drawn weather among them, are counted in
- * `unsupportedRecords` and left out), then the post chain when any
- * module is active, else the blit, then the C-20 capture copy, one submit. Non-GPU steps
- * run in order through ScenePort.runStep. Owns no rendering rules: every value comes from
- * the records, the settings and the frame.
+ * frame / sky, R-CTX-009; the world steps of the current map — ground, grid selector,
+ * occluder-fade begin, static and animated RSM, water, faded models — encoded by MapWorld
+ * from the MAP_* payloads at their R-CTX-010 position, each followed by the step's records;
+ * every scene-step record in legacy order through RunRenderer: sprites, 2D/3D, STR and the
+ * mesh effect families; families without a renderer yet, GR2 and the SpriteRenderer-drawn
+ * weather among them, are counted in `unsupportedRecords` and left out), the occlusion
+ * query resolve (R-MAP-019), then the post chain when any module is active, else the blit,
+ * then the C-20 capture copy, one submit. Non-GPU steps run in order through
+ * ScenePort.runStep. Owns no rendering rules: every value comes from the records, the
+ * settings, the MAP_* payloads and the frame.
  *
  * Device loss (R-CTX-006/007): DeviceLossController purges, shows the overlay, rebuilds on a
- * new device (residency re-uploads on demand, pipelines/target/blit/post recreated, previews
- * reconfigured, setMap(currentMap) re-run) or hands over to gpu-webgl2. `recovered()` waits for it.
+ * new device (residency re-uploads on demand, pipelines/target/blit/post recreated, the map
+ * re-uploaded from MapWorld's retained payloads, previews reconfigured, setMap(currentMap)
+ * re-run) or hands over to gpu-webgl2. `recovered()` waits for it.
  */
 export class WebGpuBackend {
 	/**
@@ -128,6 +137,10 @@ export class WebGpuBackend {
 	 *   now: () => number,
 	 *   frames?: import('./residency/SpriteResidency.js').FrameSourcePort|null,
 	 *   renderDevice?: RenderDevice,
+	 *   images?: import('./world/worldImages.js').ImageDecoderPort,
+	 *   files?: import('./world/worldImages.js').FilePort,
+	 *   createCanvas?: import('./world/worldImages.js').CreateCanvas,
+	 *   unpackGl?: WebGL2RenderingContext|null,
 	 *   previews?: LivePreviews,
 	 *   sampleCount?: number,
 	 *   depthFormat?: GPUTextureFormat,
@@ -137,7 +150,8 @@ export class WebGpuBackend {
 	 *   log?: (message: string, err?: unknown) => void
 	 * }} ports  `renderDevice`: an initialised RenderDevice (selectBackend's); `sampleCount` 1 turns
 	 *   MSAA off (default 4); `depthFormat` replaces the scene depth24plus (the backend smoke page's
-	 *   legacy-FBO run uses depth16unorm); `allowSoftwareAdapter`: R-PP-004 integration decision #2 (smoke goldens)
+	 *   legacy-FBO run uses depth16unorm); `allowSoftwareAdapter`: R-PP-004 integration decision #2 (smoke goldens);
+	 *   `images` / `files` / `createCanvas` / `unpackGl`: MAP_* image decoding (MapWorld, world/worldImages.js)
 	 */
 	constructor(ports) {
 		this.kind = 'webgpu';
@@ -156,6 +170,9 @@ export class WebGpuBackend {
 		this.post = null;
 		this.capturer = null;
 		this.previews = null;
+		/** @type {MapWorld|null} the current map's GPU scene */
+		this.world = null;
+		this._mapRequest = undefined;
 		this.loss = null;
 		this.bloomAllowed = true;
 		/** Handed over to gpu-webgl2 after a loss with no adapter (R-CTX-007). */
@@ -195,7 +212,10 @@ export class WebGpuBackend {
 			createDevice: () => new RenderDevice({ gpu: ports.gpu, canvas: ports.canvas }).init(),
 			previews: { reconfigureAll: device => this.previews.reconfigureAll(device) },
 			residency: {
-				purgeAll: () => this.residency.purgeAll(),
+				purgeAll: () => {
+					this.residency.purgeAll();
+					this.world?.contextLost();
+				},
 				reset: device => {
 					this.pools.device = device;
 				}
@@ -216,6 +236,15 @@ export class WebGpuBackend {
 			sampleCount,
 			depthFormat,
 			mixTextureClasses: ports.mixTextureClasses
+		}).init();
+		this.world = await new MapWorld({
+			device,
+			images: ports.images,
+			files: ports.files,
+			createCanvas: ports.createCanvas,
+			unpackGl: ports.unpackGl,
+			sampleCount,
+			depthFormat
 		}).init();
 		this.target = new OffscreenTarget(device, { sampleCount, depthFormat });
 		this.blit = await new Blit({ device, format }).init();
@@ -286,10 +315,11 @@ export class WebGpuBackend {
 		return this._recovery ?? Promise.resolve(this.retired ? 'webgl2' : 'webgpu');
 	}
 
-	/** R-CTX-007: renderers of the scene pass, target and blit on the new device. */
+	/** R-CTX-007: renderers of the scene pass, the map (retained payloads), target and blit on the new device. */
 	async _rebuildScenePass(device) {
 		this.runs.reset(device);
 		await this.runs.init();
+		await this.world.rebuild(device);
 		if (this._warmed.size) {
 			await this.runs.warm([...this._warmed.values()]);
 		}
@@ -349,8 +379,14 @@ export class WebGpuBackend {
 	 *   view?: import('./sprites/SpriteRunRenderer.js').SpriteView,
 	 *   clearColor?: ArrayLike<number>,
 	 *   sky?: {clearColor: ArrayLike<number>},
+	 *   world?: import('./world/MapWorld.js').WorldFrame & {sky?: {skyColor: number[]}|null},
 	 *   post?: {illusion?: boolean, blind?: boolean, zoomFinal?: number}
-	 * }} [frame]  `clearColor` or `sky` (skyForMap's) give the clear colour (R-CTX-009)
+	 * }} [frame]  `clearColor` or `sky` (skyForMap's) give the clear colour (R-CTX-009); `world`: the per-frame
+	 *   world inputs (gpu-webgl2's shape; `world.sky` present: clear to its skyColor, or black for null). The world
+	 *   steps draw when a map is loaded and `view` is given. `world` records steer them: a `water` record (in the
+	 *   `water` step) supplies the R-MAP-010 alpha, the R-MAP-009 frame and the depth state; an `animatedModel`
+	 *   record (in `animatedModels`) with `matrices` and `params.model` (load index) replaces that model's
+	 *   R-MAP-016/017 matrices.
 	 * @returns {object}  Frame stats; `{drawn: false, reason}` while lost / retired;
 	 *   `{drawn: false, error, action, bloomDisabled}` after a render error (R-CTX-005)
 	 */
@@ -373,14 +409,26 @@ export class WebGpuBackend {
 		const records = [];
 		const unsupportedByFamily = {};
 		let unsupported = 0;
+		const world = this.world;
+		const drawWorld = Boolean(frame.view) && world.loaded;
+		/** @type {Record<string, any[]>} */
+		const worldRecords = {};
+		let worldMarkers = 0;
 		let encoder = null;
 		let scene = null;
 		let post = null;
 		let captureJob = null;
 
 		const collect = step => {
+			if (drawWorld && WORLD_STEPS.includes(step)) {
+				// The step's world draw goes first, at the step's stream position.
+				records.push({ kind: WORLD_STEP_KIND, step });
+				worldMarkers++;
+			}
 			for (const record of byStep[step] ?? []) {
-				if (programOf(record)) {
+				if (drawWorld && record.kind === 'world' && WORLD_RECORD_STEP[record.part] === step) {
+					(worldRecords[step] ??= []).push(record);
+				} else if (programOf(record)) {
 					records.push(record);
 				} else {
 					const key = unsupportedKey(record);
@@ -412,10 +460,24 @@ export class WebGpuBackend {
 		// One scene pass for every scene step (architecture §2.2 "Frame"), encoded once the last
 		// scene step has collected its records: one instance upload per frame, stream order kept.
 		const encodeScene = () => {
-			const pass = encoder.beginRenderPass(this.target.passDescriptor(this._clearColor(frame)));
+			const querySet = drawWorld ? world.occlusionQuerySet : null;
+			const pass = encoder.beginRenderPass(this.target.passDescriptor(this._clearColor(frame), querySet));
 			this.residency.beginFrame();
-			const stats = this.runs.encode(pass, records, frame.view);
+			let direct = {};
+			if (drawWorld) {
+				world.beginFrame({
+					view: frame.view,
+					frame: frame.world,
+					targetHeight: this.target.height,
+					records: worldRecords
+				});
+				direct = { world: { encodeDirect: (p, head) => world.encodeStep(p, head.step) } };
+			}
+			const stats = this.runs.encode(pass, records, frame.view, direct);
 			pass.end();
+			if (drawWorld) {
+				world.encodeAfterPass(encoder);
+			}
 			return stats;
 		};
 		for (const step of SCENE_STEPS) {
@@ -429,6 +491,9 @@ export class WebGpuBackend {
 
 		const steps = runMapFrame(gpuSteps, this._scene);
 		device.queue.submit([encoder.finish()]);
+		if (drawWorld) {
+			world.afterSubmit();
+		}
 		captureJob?.finish();
 
 		this.stats.frames++;
@@ -436,7 +501,8 @@ export class WebGpuBackend {
 		this.lastFrame = {
 			drawn: true,
 			steps,
-			records: records.length,
+			records: records.length - worldMarkers,
+			worldDrawCalls: drawWorld ? world.frameDrawCalls : 0,
 			unsupportedRecords: unsupported,
 			unsupportedByFamily,
 			...scene,
@@ -450,6 +516,9 @@ export class WebGpuBackend {
 	}
 
 	_clearColor(frame) {
+		if (frame.world && 'sky' in frame.world) {
+			return clearColorFor(frame.world.sky);
+		}
 		const c = frame.clearColor ?? frame.sky?.clearColor ?? BLACK;
 		return [c[0], c[1], c[2], c[3] ?? 1];
 	}
@@ -497,15 +566,39 @@ export class WebGpuBackend {
 	}
 
 	/**
-	 * Map-streaming worker messages (§3.2): MAP_GROUND, MAP_MODELS, MAP_ANIMATED_MODEL, MAP_WORLD.
-	 * @param {{type: string, payload: object}} _msg
+	 * Map-streaming worker messages (spec §3.2, payload shapes unchanged): MAP_WORLD,
+	 * MAP_GROUND, MAP_ALTITUDE, MAP_MODELS, MAP_ANIMATED_MODEL. A message carrying a
+	 * `request` other than the current map load's (`beginMap`) is dropped, as legacy
+	 * MapRenderer's `loadEvent` does. Image sources decode asynchronously; the promise
+	 * settles once the message's GPU uploads are done. Same contract as gpu-webgl2.
+	 * @param {{type: string, payload: object, request?: unknown}} msg
+	 * @returns {Promise<void>}
 	 */
-	acceptMapMessage(_msg) {
-		throw new NotImplementedError('acceptMapMessage (C-17 GPU upload)');
+	acceptMapMessage(msg) {
+		if (this._mapRequest !== undefined && msg.request !== undefined && msg.request !== this._mapRequest) {
+			return Promise.resolve();
+		}
+		return this.world.accept(msg);
+	}
+
+	/**
+	 * A new map load: free the current map's GPU scene (legacy MapRenderer.free) and
+	 * accept only the messages of `request` from now on.
+	 * @param {unknown} [request]
+	 */
+	beginMap(request) {
+		this.world?.free();
+		this._mapRequest = request;
+	}
+
+	/** Resolves once every MAP_* upload started so far has finished. */
+	whenMapReady() {
+		return this.world.whenReady();
 	}
 
 	dispose() {
 		this._disposed = true;
+		this.world?.destroy();
 		this.post?.destroy();
 		this.target?.destroy();
 		this.pools?.dispose();

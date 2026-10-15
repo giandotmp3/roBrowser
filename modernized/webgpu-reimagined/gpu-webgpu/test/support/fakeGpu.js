@@ -35,6 +35,8 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 			setBindGroup: record('setBindGroup'),
 			setVertexBuffer: record('setVertexBuffer'),
 			setBlendConstant: record('setBlendConstant'),
+			beginOcclusionQuery: record('beginOcclusionQuery'),
+			endOcclusionQuery: record('endOcclusionQuery'),
 			draw: record('draw'),
 			end: record('end')
 		};
@@ -77,7 +79,7 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 							throw new Error('device lost');
 						}
 					},
-					getMappedRange: () => data
+					getMappedRange: (offset = 0, size = desc.size - offset) => data.slice(offset, offset + size)
 				};
 			},
 			createSampler: desc => {
@@ -104,6 +106,10 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 				calls.push(['createShaderModule', desc]);
 				return { desc, getCompilationInfo: async () => ({ messages: [] }) };
 			},
+			createRenderPipeline: desc => {
+				calls.push(['createRenderPipeline', desc, device.id]);
+				return { desc, device: device.id };
+			},
 			createRenderPipelineAsync: desc => {
 				calls.push(['createRenderPipelineAsync', desc, device.id]);
 				const pipeline = { desc, device: device.id };
@@ -120,6 +126,8 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 						return pass(d);
 					},
 					copyTextureToBuffer: (...a) => calls.push(['copyTextureToBuffer', a]),
+					resolveQuerySet: (...a) => calls.push(['resolveQuerySet', a]),
+					copyBufferToBuffer: (...a) => calls.push(['copyBufferToBuffer', a]),
 					finish: () => ({ commands: true, device: device.id })
 				};
 			},
