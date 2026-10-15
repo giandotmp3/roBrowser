@@ -126,6 +126,123 @@ function pickColor(flag1) {
 }
 
 /**
+ * Additive blend of the aura families (R-EFX-014), set once per pass in beforeRender.
+ */
+const BLEND_ADDITIVE = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE' });
+
+/**
+ * Vertex count of one billboard quad (2 triangles).
+ */
+const VERTEX_COUNT = 6;
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty Level99Bubble draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * One record per anchor pass (the blue variant draws each anchor twice): a camera-facing
+ * quad built on the CPU, additive, depth test on and depth write off
+ * (SpriteRenderer.runWithDepth(true, false, false)).
+ *
+ * position: billboard base (legacy GL space: x + 0.5, −ground height − 0.05, y + 0.5).
+ * params:
+ *  - column, anchor, pass: emitter column, anchor (B_pre, B_now, T_pre, T_now), draw pass
+ *  - quad: 6 vertices (x, y, z, u, v) in legacy GL space, uploaded once per anchor
+ *  - zIndex: 0.01 + column · 0.002 + anchor · 0.0001 + pass · 0.00005
+ *  - vertexCount
+ *
+ * @returns {object} record
+ */
+function createLevel99BubbleDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'level99Bubble',
+		pass: 'before',
+		texture: null,
+		position: null,
+		color: [0, 0, 0, 0],
+		blend: BLEND_ADDITIVE,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			column: 0,
+			anchor: 0,
+			pass: 0,
+			quad: null,
+			zIndex: 0,
+			vertexCount: VERTEX_COUNT
+		}
+	};
+}
+
+/**
+ * Snapshot one Level99Bubble anchor pass into a record (the quad must be filled).
+ *
+ * @param {object} record to fill
+ * @param {Level99Bubble} effect
+ * @param {Array} basePos billboard base of this render
+ * @param {number} ec column index
+ * @param {number} ai anchor index
+ * @param {number} pass draw pass
+ * @param {number} alphaValue anchor alpha
+ * @param {boolean} keep true when the record outlives the draw (arrays copied)
+ * @returns {object} record
+ */
+function fillLevel99BubbleDrawRecord(record, effect, basePos, ec, ai, pass, alphaValue, keep) {
+	const params = record.params;
+	const color = record.color;
+
+	record.pass = (effect.renderBeforeEntities ?? Level99Bubble.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = effect.texture;
+	record.position = keep ? basePos.slice() : basePos;
+	color[0] = effect.color.r;
+	color[1] = effect.color.g;
+	color[2] = effect.color.b;
+	color[3] = alphaValue;
+	record.fog = _fogUse;
+
+	params.column = ec;
+	params.anchor = ai;
+	params.pass = pass;
+	params.quad = keep ? effect.quadData.slice() : effect.quadData;
+	params.zIndex = 0.01 + ec * 0.002 + ai * 0.0001 + pass * 0.00005;
+
+	return record;
+}
+
+/**
+ * Draw one Level99Bubble record (its quad is already uploaded).
+ *
+ * @param {object} gl webgl context
+ * @param {object} record Level99Bubble draw record
+ */
+function drawLevel99BubbleRecord(gl, record) {
+	const uniform = _program.uniform;
+	const color = record.color;
+
+	gl.uniform4f(uniform.uColor, color[0], color[1], color[2], color[3]);
+	gl.uniform1f(uniform.uZIndex, record.params.zIndex);
+	gl.drawArrays(gl.TRIANGLES, 0, record.params.vertexCount);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createLevel99BubbleDrawRecord();
+
+/**
  * Create an anchor with initial state
  */
 function createAnchor(isGhost, seedMaxUnits) {
@@ -317,8 +434,6 @@ class Level99Bubble {
 			return;
 		}
 
-		const uniform = _program.uniform;
-
 		// Get ground position (world coordinates)
 		const groundZ = Altitude.getCellHeight(this.position[0], this.position[1]);
 		const basePos = [this.position[0] + 0.5, -groundZ - BASE_LIFT, this.position[1] + 0.5];
@@ -414,16 +529,39 @@ class Level99Bubble {
 				// Update GPU buffer with quad vertex data (6 vertices * (3 pos + 2 uv) = 30 floats)
 				gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.quadData);
 
-				const self = this;
-				SpriteRenderer.runWithDepth(true, false, false, function () {
-					for (let pass = 0; pass < self.passCount; pass++) {
-						gl.uniform4f(uniform.uColor, self.color.r, self.color.g, self.color.b, alphaValue);
-						gl.uniform1f(uniform.uZIndex, 0.01 + ec * 0.002 + ai * 0.0001 + pass * 0.00005);
-						gl.drawArrays(gl.TRIANGLES, 0, 6);
+				SpriteRenderer.runWithDepth(true, false, false, () => {
+					// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+					const observed = _recordSinks.size > 0;
+					for (let pass = 0; pass < this.passCount; pass++) {
+						const record = fillLevel99BubbleDrawRecord(
+							observed ? createLevel99BubbleDrawRecord() : _scratchRecord,
+							this,
+							basePos,
+							ec,
+							ai,
+							pass,
+							alphaValue,
+							observed
+						);
+						_recordSinks.forEach(sink => sink(record));
+						drawLevel99BubbleRecord(gl, record);
 					}
 				});
 			}
 		}
+	}
+
+	/**
+	 * Observe every Level99Bubble anchor pass as a backend-neutral record. Each observed
+	 * draw gets a fresh record object, so sinks may keep it. The debug spawn volume
+	 * (renderBackground, off unless the debug UI enables it) is not recorded.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	renderBackground(gl, basePos) {
@@ -514,6 +652,7 @@ class Level99Bubble {
 		gl.uniformMatrix4fv(uniform.uProjectionMat, false, projection);
 
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

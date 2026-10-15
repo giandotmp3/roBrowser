@@ -46,6 +46,129 @@ const STRIDE = 5; // x, y, z, u, v
 const VERTICES_PER_BAND = E_DIVISION * 2;
 
 /**
+ * Additive blend of the aura families (R-EFX-014), set once per pass in beforeRender.
+ */
+const BLEND_ADDITIVE = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE' });
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty SwirlingAura draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * One record per band: an indexed strip, additive, depth test on and depth write off
+ * (SpriteRenderer.runWithDepth(true, false, false)).
+ *
+ * position: model translation as uploaded (legacy GL space: x + 0.5, −ground height, y + 0.5).
+ * params:
+ *  - band: band index (0..2)
+ *  - rotStart: band rotation start in degrees
+ *  - vertices: E_DIVISION·2 vertices (x, y, z, u, v), base then top per division, in model space
+ *  - indexCount: shared index buffer length
+ *  - zIndex: 0.01 + band · 0.001
+ *
+ * @returns {object} record
+ */
+function createSwirlingAuraDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'swirlingAura',
+		pass: 'before',
+		texture: null,
+		position: null,
+		color: null,
+		blend: BLEND_ADDITIVE,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			band: 0,
+			rotStart: 0,
+			vertices: null,
+			indexCount: 0,
+			zIndex: 0
+		}
+	};
+}
+
+/**
+ * Snapshot one SwirlingAura band draw into a record (the band's mesh must be filled).
+ *
+ * @param {object} record to fill
+ * @param {SwirlingAura} effect
+ * @param {number} ec band index
+ * @param {Array} translation model translation of this render
+ * @param {boolean} keep true when the record outlives the draw (arrays copied)
+ * @returns {object} record
+ */
+function fillSwirlingAuraDrawRecord(record, effect, ec, translation, keep) {
+	const params = record.params;
+	const color = record.color ?? (record.color = new Array(4));
+
+	record.pass = (effect.renderBeforeEntities ?? SwirlingAura.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = effect.texture;
+	record.position = keep ? translation.slice() : translation;
+	color[0] = effect.color.r;
+	color[1] = effect.color.g;
+	color[2] = effect.color.b;
+	color[3] = effect.alphaB;
+	record.fog = _fogUse;
+
+	params.band = ec;
+	params.rotStart = effect.bands[ec].rotStart;
+	params.vertices = keep ? effect.vertices.slice() : effect.vertices;
+	params.indexCount = effect.indexCount;
+	params.zIndex = 0.01 + ec * 0.001;
+
+	return record;
+}
+
+/**
+ * Send one SwirlingAura band record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record SwirlingAura draw record
+ * @param {WebGLBuffer} vertexBuffer the band's dynamic vertex buffer
+ * @param {WebGLBuffer} indexBuffer the instance's shared index buffer
+ */
+function drawSwirlingAuraRecord(gl, record, vertexBuffer, indexBuffer) {
+	const uniform = _program.uniform;
+	const attribute = _program.attribute;
+	const params = record.params;
+	const color = record.color;
+
+	// Upload vertex data
+	gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+	gl.bufferSubData(gl.ARRAY_BUFFER, 0, params.vertices);
+
+	gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, STRIDE * 4, 0);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, STRIDE * 4, 3 * 4);
+
+	// Set color and alpha
+	gl.uniform4f(uniform.uColor, color[0], color[1], color[2], color[3]);
+	gl.uniform1f(uniform.uZIndex, params.zIndex);
+
+	// Draw
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+	gl.drawElements(gl.TRIANGLES, params.indexCount, gl.UNSIGNED_SHORT, 0);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createSwirlingAuraDrawRecord();
+
+/**
  * SwirlingAura constructor
  *
  * Creates THREE bands as per original inspiration game:
@@ -245,25 +368,27 @@ class SwirlingAura {
 
 		// Get ground height
 		const groundZ = Altitude.getCellHeight(this.position[0], this.position[1]);
+		const translation = [this.position[0] + 0.5, -groundZ, this.position[1] + 0.5];
 
 		// Build model matrix
 		mat4.identity(_modelMatrix);
-		mat4.translate(_modelMatrix, _modelMatrix, [this.position[0] + 0.5, -groundZ, this.position[1] + 0.5]);
+		mat4.translate(_modelMatrix, _modelMatrix, translation);
 
 		gl.uniformMatrix4fv(uniform.uModelMat, false, _modelMatrix);
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 
 		gl.enableVertexAttribArray(attribute.aPosition);
 		gl.enableVertexAttribArray(attribute.aTextureCoord);
-		const self = this;
 		const RAG_TICK_MS = 25;
 		const elapsed = tick - this.tick;
 		const process = elapsed / RAG_TICK_MS;
 
-		SpriteRenderer.runWithDepth(true, false, false, function () {
+		SpriteRenderer.runWithDepth(true, false, false, () => {
+			// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+			const observed = _recordSinks.size > 0;
 			// Render each band
-			for (let ec = 0; ec < self.bands.length; ec++) {
-				const band = self.bands[ec];
+			for (let ec = 0; ec < this.bands.length; ec++) {
+				const band = this.bands[ec];
 				if (!band.life) {
 					continue;
 				}
@@ -272,27 +397,34 @@ class SwirlingAura {
 				band.rotStart = (band.initialRotStart + process * band.spinSpeed) % 360;
 
 				// Update height profile
-				self.updateHeightProfile(band, process);
+				this.updateHeightProfile(band, process);
 
 				// fill mesh for this band
-				self.fillBandMesh(band);
+				this.fillBandMesh(band);
 
-				// Upload vertex data
-				gl.bindBuffer(gl.ARRAY_BUFFER, self.buffers[ec]);
-				gl.bufferSubData(gl.ARRAY_BUFFER, 0, self.vertices);
-
-				gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, STRIDE * 4, 0);
-				gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, STRIDE * 4, 3 * 4);
-
-				// Set color and alpha
-				gl.uniform4f(uniform.uColor, self.color.r, self.color.g, self.color.b, self.alphaB);
-				gl.uniform1f(uniform.uZIndex, 0.01 + ec * 0.001);
-
-				// Draw
-				gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.indexBuffer);
-				gl.drawElements(gl.TRIANGLES, self.indexCount, gl.UNSIGNED_SHORT, 0);
+				const record = fillSwirlingAuraDrawRecord(
+					observed ? createSwirlingAuraDrawRecord() : _scratchRecord,
+					this,
+					ec,
+					translation,
+					observed
+				);
+				_recordSinks.forEach(sink => sink(record));
+				drawSwirlingAuraRecord(gl, record, this.buffers[ec], this.indexBuffer);
 			}
 		});
+	}
+
+	/**
+	 * Observe every SwirlingAura band draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -330,6 +462,7 @@ class SwirlingAura {
 
 		// Fog
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

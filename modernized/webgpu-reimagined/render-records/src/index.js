@@ -43,3 +43,7 @@ export * from './effects/SphereEffect.js';
 export * from './effects/GroundTileEffect.js';
 export * from './effects/GroundRingEffect.js';
 export * from './effects/TargetMarkerEffect.js';
+export * from './effects/GroundAuraEffect.js';
+export * from './effects/SwirlingAuraEffect.js';
+export * from './effects/Level99BubbleEffect.js';
+export * from './effects/RsmEffect.js';

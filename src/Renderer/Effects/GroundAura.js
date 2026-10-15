@@ -75,6 +75,130 @@ function calculateSize(self, aura, auraAngle, i) {
 }
 
 /**
+ * Additive blend of the aura families (R-EFX-014), set once per pass in beforeRender.
+ */
+const BLEND_ADDITIVE = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE' });
+
+/**
+ * Vertex count of the flat ground quad (2 triangles).
+ */
+const VERTEX_COUNT = 6;
+
+/**
+ * Lift above the ground cell height (avoids z-fighting).
+ */
+const GROUND_LIFT = 0.05;
+
+/**
+ * Aura ring colour (white, alpha 0.8).
+ */
+const RING_COLOR = Object.freeze([1.0, 1.0, 1.0, 0.8]);
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty GroundAura draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * One record per ring: a flat quad on the ground, additive, depth test on and depth
+ * write off (SpriteRenderer.runWithDepth(true, false, false)).
+ *
+ * position: uWorldPosition as uploaded (x, y, ground cell height + 0.05).
+ * params:
+ *  - ring: aura index (0 inner, 1 outer)
+ *  - size: [width, height] in SpriteRenderer units (the shader converts to world units)
+ *  - angle: radians (ring · 23°)
+ *  - zIndex: 1 + ring
+ *  - vertexCount
+ *
+ * @returns {object} record
+ */
+function createGroundAuraDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'groundAura',
+		pass: 'before',
+		texture: null,
+		position: null,
+		color: RING_COLOR,
+		blend: BLEND_ADDITIVE,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			ring: 0,
+			size: null,
+			angle: 0,
+			zIndex: 1,
+			vertexCount: VERTEX_COUNT
+		}
+	};
+}
+
+/**
+ * Snapshot one GroundAura ring draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {GroundAura} effect
+ * @param {number} i ring index
+ * @param {Array} worldPos uWorldPosition of this render
+ * @param {boolean} keep true when the record outlives the draw (arrays copied)
+ * @returns {object} record
+ */
+function fillGroundAuraDrawRecord(record, effect, i, worldPos, keep) {
+	const params = record.params;
+	const auraAngle = i * 23;
+
+	record.pass = (effect.renderBeforeEntities ?? GroundAura.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = effect.texture;
+	record.position = keep ? worldPos.slice() : worldPos;
+	record.color = keep ? RING_COLOR.slice() : RING_COLOR;
+	record.fog = _fogUse;
+
+	params.ring = i;
+	params.size = keep ? effect.aura[i].size.slice() : effect.aura[i].size;
+	params.angle = (auraAngle * Math.PI) / 180;
+	params.zIndex = 1 + i;
+
+	return record;
+}
+
+/**
+ * Send one GroundAura ring record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record GroundAura draw record
+ */
+function drawGroundAuraRecord(gl, record) {
+	const uniform = _program.uniform;
+	const params = record.params;
+	const color = record.color;
+
+	// Set uniforms - size in SpriteRenderer units (shader converts to world units)
+	gl.uniform2f(uniform.uSize, params.size[0], params.size[1]);
+	gl.uniform1f(uniform.uAngle, params.angle);
+	gl.uniform4f(uniform.uColor, color[0], color[1], color[2], color[3]);
+	gl.uniform1f(uniform.uZIndex, params.zIndex);
+
+	gl.drawArrays(gl.TRIANGLES, 0, params.vertexCount);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createGroundAuraDrawRecord();
+
+/**
  * GroundAura constructor
  */
 class GroundAura {
@@ -133,11 +257,12 @@ class GroundAura {
 		this.ready = false;
 	}
 
-	render(gl, tick) {
-		const uniform = _program.uniform;
-
-		gl.bindTexture(gl.TEXTURE_2D, this.texture);
-
+	/**
+	 * Advance the ring pulse on the 25 ms game tick (dt capped at 250 ms).
+	 *
+	 * @param {number} tick game tick
+	 */
+	advancePulse(tick) {
 		const RAG_TICK_MS = 25;
 		const dt = Math.min(tick - (this._lastTick || tick), 250);
 		this._lastTick = tick;
@@ -170,32 +295,52 @@ class GroundAura {
 				}
 			}
 		}
+	}
+
+	render(gl, tick) {
+		const uniform = _program.uniform;
+
+		gl.bindTexture(gl.TEXTURE_2D, this.texture);
+
+		this.advancePulse(tick);
 
 		// Get ground height
 		const groundZ = Altitude.getCellHeight(this.position[0], this.position[1]);
 
 		// World position with small lift to avoid z-fighting
-		const worldPos = [this.position[0], this.position[1], groundZ + 0.05];
+		const worldPos = [this.position[0], this.position[1], groundZ + GROUND_LIFT];
 
 		gl.uniform3fv(uniform.uWorldPosition, worldPos);
-		const self = this;
-		SpriteRenderer.runWithDepth(true, false, false, function () {
-			for (let i = 0; i < self.aura.length; i++) {
-				if (!self.aura[i].life) {
+		SpriteRenderer.runWithDepth(true, false, false, () => {
+			// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+			const observed = _recordSinks.size > 0;
+			for (let i = 0; i < this.aura.length; i++) {
+				if (!this.aura[i].life) {
 					continue;
 				}
-
-				const auraAngle = i * 23;
-
-				// Set uniforms - size in SpriteRenderer units (shader converts to world units)
-				gl.uniform2f(uniform.uSize, self.aura[i].size[0], self.aura[i].size[1]);
-				gl.uniform1f(uniform.uAngle, (auraAngle * Math.PI) / 180);
-				gl.uniform4f(uniform.uColor, 1.0, 1.0, 1.0, 0.8);
-				gl.uniform1f(uniform.uZIndex, 1 + i);
-
-				gl.drawArrays(gl.TRIANGLES, 0, 6);
+				const record = fillGroundAuraDrawRecord(
+					observed ? createGroundAuraDrawRecord() : _scratchRecord,
+					this,
+					i,
+					worldPos,
+					observed
+				);
+				_recordSinks.forEach(sink => sink(record));
+				drawGroundAuraRecord(gl, record);
 			}
 		});
+	}
+
+	/**
+	 * Observe every GroundAura ring draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**
@@ -243,6 +388,7 @@ class GroundAura {
 
 		// Fog
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);

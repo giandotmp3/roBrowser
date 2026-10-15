@@ -531,6 +531,9 @@ function rebuildMeshAtFrame(self, gl, frame) {
 		offset += length;
 	}
 
+	// Keep the CPU copy for draw records
+	self._meshData = buffer;
+
 	// Update GPU buffer
 	if (!self.buffer) {
 		self.buffer = gl.createBuffer();
@@ -602,6 +605,8 @@ function initModel(gl, data) {
 
 	gl.bufferData(gl.ARRAY_BUFFER, data.buffer, this.isAnimated ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
 	this._bufferSize = data.buffer.byteLength;
+	// Keep the CPU copy for draw records
+	this._meshData = data.buffer;
 
 	function onTextureLoaded(texture, i) {
 		self.objects[i].texture = texture;
@@ -622,6 +627,127 @@ function initModel(gl, data) {
 	}
 }
 
+/**
+ * RSM effects set no blend state: they draw with the pass default (normal alpha).
+ */
+const BLEND_NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * Floats per mesh vertex: position, normal, uv, alpha.
+ */
+const VERTEX_STRIDE = 9;
+
+/**
+ * Model colour: RSM effects have no colour uniform (alpha is per vertex).
+ */
+const WHITE = Object.freeze([1, 1, 1, 1]);
+
+/**
+ * @var {boolean} scene fog state uploaded by the last beforeRender
+ */
+let _fogUse = false;
+
+/**
+ * Create an empty RsmEffect draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records).
+ *
+ * One record per mesh object (texture). RsmEffect sets no depth or blend state: it draws
+ * with the state of the pass it runs in (after entities: depth test and write on, normal
+ * alpha blending).
+ *
+ * params:
+ *  - object: index in the effect's object list
+ *  - size: uSize model scale
+ *  - frame: animation keyframe the current mesh was rebuilt at, or null while the static
+ *    compile is shown (static model, animLen 0, or no rebuild yet)
+ *  - vertOffset, vertCount: vertex range in the effect's buffer
+ *  - vertices: the range's vertices (9 floats each: position, normal, uv, alpha), copied
+ *    for observed records only (null in the unobserved scratch record)
+ *
+ * @returns {object} record
+ */
+function createRsmDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'rsm',
+		pass: 'after',
+		texture: null,
+		position: null,
+		color: WHITE,
+		blend: BLEND_NORMAL,
+		depthTest: true,
+		depthWrite: true,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			object: 0,
+			size: 1,
+			frame: null,
+			vertOffset: 0,
+			vertCount: 0,
+			vertices: null
+		}
+	};
+}
+
+/**
+ * Snapshot one RsmEffect object draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {RsmEffect} effect
+ * @param {number} i object index
+ * @param {boolean} keep true when the record outlives the draw (arrays copied)
+ * @returns {object} record
+ */
+function fillRsmDrawRecord(record, effect, i, keep) {
+	const params = record.params;
+	const object = effect.objects[i];
+
+	record.pass = (effect.renderBeforeEntities ?? RsmEffect.renderBeforeEntities) ? 'before' : 'after';
+	record.texture = object.texture;
+	record.position = keep ? Array.from(effect.position) : effect.position;
+	record.color = keep ? WHITE.slice() : WHITE;
+	record.fog = _fogUse;
+
+	params.object = i;
+	params.size = effect.size;
+	// lastFrame stays -1 until the first rebuild (a computed frame of -1 never rebuilds)
+	params.frame = effect.lastFrame === -1 ? null : effect.lastFrame;
+	params.vertOffset = object.vertOffset;
+	params.vertCount = object.vertCount;
+	params.vertices =
+		keep && effect._meshData
+			? effect._meshData.slice(
+					object.vertOffset * VERTEX_STRIDE,
+					(object.vertOffset + object.vertCount) * VERTEX_STRIDE
+				)
+			: null;
+
+	return record;
+}
+
+/**
+ * Draw one RsmEffect record (its buffer, attributes, position and size are bound).
+ *
+ * @param {object} gl webgl context
+ * @param {object} record RsmEffect draw record
+ */
+function drawRsmRecord(gl, record) {
+	gl.bindTexture(gl.TEXTURE_2D, record.texture);
+	gl.drawArrays(gl.TRIANGLES, record.params.vertOffset, record.params.vertCount);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createRsmDrawRecord();
+
 class RsmEffect {
 	constructor(params) {
 		this.position = params.Inst.position;
@@ -632,6 +758,7 @@ class RsmEffect {
 		this.model = null;
 		this.startTick = params.Inst.startTick || 0;
 		this.lastFrame = -1;
+		this._meshData = null;
 		this.isAnimated = false;
 		this.animLen = 0;
 		this.fps = 30;
@@ -768,6 +895,7 @@ class RsmEffect {
 			this.buffer = null;
 		}
 
+		this._meshData = null;
 		this.objects.length = 0;
 		this.ready = false;
 	}
@@ -804,6 +932,7 @@ class RsmEffect {
 
 		// Fog settings
 		gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+		_fogUse = !!(fog.use && fog.exist);
 		gl.uniform1f(uniform.uFogNear, fog.near);
 		gl.uniform1f(uniform.uFogFar, fog.far);
 		gl.uniform3fv(uniform.uFogColor, fog.color);
@@ -846,12 +975,27 @@ class RsmEffect {
 		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 9 * 4, 6 * 4);
 		gl.vertexAttribPointer(attribute.aAlpha, 1, gl.FLOAT, false, 9 * 4, 8 * 4);
 
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const observed = _recordSinks.size > 0;
 		for (let i = 0, count = this.objects.length; i < count; ++i) {
 			if (this.objects[i] && this.objects[i].complete) {
-				gl.bindTexture(gl.TEXTURE_2D, this.objects[i].texture);
-				gl.drawArrays(gl.TRIANGLES, this.objects[i].vertOffset, this.objects[i].vertCount);
+				const record = fillRsmDrawRecord(observed ? createRsmDrawRecord() : _scratchRecord, this, i, observed);
+				_recordSinks.forEach(sink => sink(record));
+				drawRsmRecord(gl, record);
 			}
 		}
+	}
+
+	/**
+	 * Observe every RsmEffect object draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	static afterRender(gl) {
