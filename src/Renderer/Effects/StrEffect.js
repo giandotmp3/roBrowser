@@ -49,6 +49,213 @@ let _lastAngle = -1;
 // Pixel to world conversion for attachment offsets
 const PIXEL_TO_WORLD_Z = 1.0 / 5.0;
 
+/**
+ * STR quad pivot in sprite pixels (pos - pivot is the billboard offset).
+ */
+const STR_PIVOT = Object.freeze([320, 320]);
+
+/**
+ * Backend-neutral factor names of the D3DBLEND codes (same table as D3DBLEND).
+ */
+const D3DBLEND_FACTOR = Object.freeze({
+	1: 'ZERO',
+	2: 'ONE',
+	3: 'SRC_COLOR',
+	4: 'ONE_MINUS_SRC_COLOR',
+	5: 'SRC_ALPHA',
+	6: 'ONE_MINUS_SRC_ALPHA',
+	7: 'DST_ALPHA',
+	8: 'ONE_MINUS_DST_ALPHA',
+	9: 'DST_COLOR',
+	10: 'ONE_MINUS_DST_COLOR',
+	11: 'SRC_ALPHA_SATURATE',
+	14: 'CONSTANT_COLOR',
+	15: 'ONE_MINUS_CONSTANT_ALPHA'
+});
+
+/**
+ * @var {object} cached blend states by [src][dst] code (allocation-free per draw)
+ */
+const _blendStates = {};
+
+/**
+ * Unified blend state of a D3D src/dst code pair, or null when a code is not in
+ * the table (the GL call then receives an invalid enum and keeps its blend state).
+ *
+ * @param {number} src D3DBLEND code
+ * @param {number} dst D3DBLEND code
+ * @returns {object|null} { src, dst } factor names
+ */
+function strBlendState(src, dst) {
+	const bySrc = _blendStates[src] || (_blendStates[src] = {});
+	if (!(dst in bySrc)) {
+		bySrc[dst] =
+			src in D3DBLEND_FACTOR && dst in D3DBLEND_FACTOR
+				? Object.freeze({ src: D3DBLEND_FACTOR[src], dst: D3DBLEND_FACTOR[dst] })
+				: null;
+	}
+	return bySrc[dst];
+}
+
+/**
+ * Create an empty STR layer draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records). Geometry stays in sprite pixels.
+ *
+ * params:
+ *  - xy: keyframe quad corners (x0..x3, y0..y3), before scale
+ *  - scale: attachment size scale (1 when not attached)
+ *  - angle: degrees
+ *  - offset: pos - pivot (+ attachment offset), sprite pixels
+ *  - yLower: world units the quad is lowered (0.5, 0 for attachments)
+ *  - pivot, clipZBias: constants of the billboard
+ *  - aniframe: interpolated texture frame
+ *  - srcBlend, dstBlend: raw D3DBLEND codes
+ *
+ * @returns {object} record
+ */
+function createStrDrawRecord() {
+	return {
+		kind: 'effect',
+		family: 'str',
+		texture: null,
+		position: null,
+		color: new Float32Array(4),
+		blend: null,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: false,
+		fog: false,
+		strAttachment: false,
+		params: {
+			xy: new Float32Array(8),
+			scale: 1,
+			angle: 0,
+			offset: new Float32Array(2),
+			yLower: 0.5,
+			pivot: STR_PIVOT,
+			clipZBias: -0.1,
+			aniframe: 0,
+			srcBlend: 0,
+			dstBlend: 0
+		}
+	};
+}
+
+/**
+ * Snapshot one STR layer draw into a record.
+ *
+ * @param {object} record to fill
+ * @param {StrEffect} effect
+ * @param {object} material texture
+ * @param {object} animat interpolated layer state
+ * @param {boolean} keep true when the record outlives the draw (position copied)
+ * @returns {object} record
+ */
+function fillStrDrawRecord(record, effect, material, animat, keep) {
+	const params = record.params;
+	const owner = effect.ownerEntity;
+
+	// Hat effects: Scale with entity size
+	const sizeScale = owner ? (owner.xSize + owner.ySize) / 2 / 5 : 1.0;
+
+	record.texture = material;
+	record.position = keep && effect.position ? Array.from(effect.position) : effect.position;
+	record.color.set(animat.color);
+	record.blend = strBlendState(animat.srcalpha, animat.destalpha);
+	record.strAttachment = !!owner;
+
+	params.xy.set(animat.xy);
+	params.scale = sizeScale;
+	params.angle = animat.angle;
+	params.aniframe = animat.aniframe;
+	params.srcBlend = animat.srcalpha;
+	params.dstBlend = animat.destalpha;
+
+	if (owner) {
+		// Attachment: center at (320,320), apply offsets, scale with entity
+		params.offset[0] = animat.pos[0] - 320 + (effect.xOffset || 0) * PIXEL_TO_WORLD_Z * 35 * sizeScale;
+		// flip Y offset only
+		params.offset[1] = animat.pos[1] - 320 - (effect.yOffset || 0) * PIXEL_TO_WORLD_Z * 35 * sizeScale;
+		params.yLower = 0.0;
+	} else {
+		params.offset[0] = animat.pos[0] - 320;
+		params.offset[1] = animat.pos[1] - 320;
+		params.yLower = 0.5;
+	}
+
+	return record;
+}
+
+/**
+ * Setup geometries, send one STR layer record to the GPU and draw it.
+ *
+ * @param {object} gl webgl context
+ * @param {object} record STR draw record
+ */
+function drawStrRecord(gl, record) {
+	const uniform = _program.uniform;
+	const attribute = _program.attribute;
+	const { xy, scale, angle } = record.params;
+
+	// Update geometries (apply size scaling only for attachments)
+	_bufferData[0] = xy[0] * scale;
+	_bufferData[1] = xy[4] * scale;
+	_bufferData[2] = 0; //anim.uv[0];
+	_bufferData[3] = 0; //anim.uv[1];
+
+	_bufferData[4] = xy[1] * scale;
+	_bufferData[5] = xy[5] * scale;
+	_bufferData[6] = 1; //anim.uv[2];
+	_bufferData[7] = 0; //anim.uv[3];
+
+	_bufferData[8] = xy[3] * scale;
+	_bufferData[9] = xy[7] * scale;
+	_bufferData[10] = 0; //anim.uv[4];
+	_bufferData[11] = 1; //anim.uv[5];
+
+	_bufferData[12] = xy[2] * scale;
+	_bufferData[13] = xy[6] * scale;
+	_bufferData[14] = 1; //anim.uv[6];
+	_bufferData[15] = 1; //anim.uv[7];
+
+	if (angle !== _lastAngle) {
+		mat4.identity(_matrix);
+		mat4.rotateZ(_matrix, _matrix, (-angle / 180) * Math.PI);
+		_lastAngle = angle;
+	}
+
+	// Send effect parameters
+	gl.uniform4fv(uniform.uSpriteColor, record.color);
+	gl.uniform2fv(uniform.uSpriteOffset, record.params.offset);
+	gl.uniform1f(uniform.uVerticalBase, record.params.yLower);
+	gl.uniform3fv(uniform.uSpritePosition, record.position);
+
+	gl.uniformMatrix4fv(uniform.uSpriteAngle, false, _matrix);
+
+	// Send new buffer
+	gl.bindBuffer(gl.ARRAY_BUFFER, _buffer);
+	gl.bufferSubData(gl.ARRAY_BUFFER, 0, _bufferData);
+
+	// Link attribute
+	gl.vertexAttribPointer(attribute.aPosition, 2, gl.FLOAT, false, 4 * 4, 0 * 4);
+	gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 4, 2 * 4);
+
+	// Send texture and data
+	gl.blendFunc(D3DBLEND[record.params.srcBlend], D3DBLEND[record.params.dstBlend]);
+	gl.bindTexture(gl.TEXTURE_2D, record.texture);
+	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createStrDrawRecord();
+
 const anim = {
 	frame: 0,
 	type: 0,
@@ -340,76 +547,27 @@ class StrEffect {
 	 * @param {StrAnimation} animation object
 	 */
 	renderAnimation(gl, material, animat) {
-		const uniform = _program.uniform;
-		const attribute = _program.attribute;
-
-		// Hat effects: Scale with entity size
-		let sizeScale = 1.0;
-		if (this.ownerEntity) {
-			sizeScale = (this.ownerEntity.xSize + this.ownerEntity.ySize) / 2 / 5;
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		if (_recordSinks.size) {
+			const record = fillStrDrawRecord(createStrDrawRecord(), this, material, animat, true);
+			_recordSinks.forEach(sink => sink(record));
+			drawStrRecord(gl, record);
+			return;
 		}
 
-		// Update geometries (apply size scaling only for attachments)
-		_bufferData[0] = animat.xy[0] * sizeScale;
-		_bufferData[1] = animat.xy[4] * sizeScale;
-		_bufferData[2] = 0; //anim.uv[0];
-		_bufferData[3] = 0; //anim.uv[1];
+		drawStrRecord(gl, fillStrDrawRecord(_scratchRecord, this, material, animat, false));
+	}
 
-		_bufferData[4] = animat.xy[1] * sizeScale;
-		_bufferData[5] = animat.xy[5] * sizeScale;
-		_bufferData[6] = 1; //anim.uv[2];
-		_bufferData[7] = 0; //anim.uv[3];
-
-		_bufferData[8] = animat.xy[3] * sizeScale;
-		_bufferData[9] = animat.xy[7] * sizeScale;
-		_bufferData[10] = 0; //anim.uv[4];
-		_bufferData[11] = 1; //anim.uv[5];
-
-		_bufferData[12] = animat.xy[2] * sizeScale;
-		_bufferData[13] = animat.xy[6] * sizeScale;
-		_bufferData[14] = 1; //anim.uv[6];
-		_bufferData[15] = 1; //anim.uv[7];
-
-		if (animat.angle !== _lastAngle) {
-			mat4.identity(_matrix);
-			mat4.rotateZ(_matrix, _matrix, (-animat.angle / 180) * Math.PI);
-			_lastAngle = animat.angle;
-		}
-
-		const spriteOffset = new Float32Array(2);
-		let verticalBase = 0.5;
-
-		if (this.ownerEntity) {
-			// Attachment: center at (320,320), apply offsets, scale with entity
-			spriteOffset[0] = animat.pos[0] - 320 + (this.xOffset || 0) * PIXEL_TO_WORLD_Z * 35 * sizeScale;
-			// flip Y offset only
-			spriteOffset[1] = animat.pos[1] - 320 - (this.yOffset || 0) * PIXEL_TO_WORLD_Z * 35 * sizeScale;
-			verticalBase = 0.0;
-		} else {
-			spriteOffset[0] = animat.pos[0] - 320;
-			spriteOffset[1] = animat.pos[1] - 320;
-		}
-
-		// Send effect parameters
-		gl.uniform4fv(uniform.uSpriteColor, animat.color);
-		gl.uniform2fv(uniform.uSpriteOffset, spriteOffset);
-		gl.uniform1f(uniform.uVerticalBase, verticalBase);
-		gl.uniform3fv(uniform.uSpritePosition, this.position);
-
-		gl.uniformMatrix4fv(uniform.uSpriteAngle, false, _matrix);
-
-		// Send new buffer
-		gl.bindBuffer(gl.ARRAY_BUFFER, _buffer);
-		gl.bufferSubData(gl.ARRAY_BUFFER, 0, _bufferData);
-
-		// Link attribute
-		gl.vertexAttribPointer(attribute.aPosition, 2, gl.FLOAT, false, 4 * 4, 0 * 4);
-		gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 4 * 4, 2 * 4);
-
-		// Send texture and data
-		gl.blendFunc(D3DBLEND[animat.srcalpha], D3DBLEND[animat.destalpha]);
-		gl.bindTexture(gl.TEXTURE_2D, material);
-		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+	/**
+	 * Observe every STR layer draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
 	}
 
 	/**

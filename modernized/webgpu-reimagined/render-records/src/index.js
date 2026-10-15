@@ -35,3 +35,4 @@ export * from './world/animatedRsm.js';
 export { NotImplementedError } from './util/errors.js';
 export { defaultClock, defaultRng } from './util/injectables.js';
 export * from './damage/DamageComposer.js';
+export * from './effects/StrPlayer.js';
