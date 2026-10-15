@@ -22,7 +22,9 @@
 		"smoke:parity:effects2:aa": "node smoke/run-parity.mjs --page=effects2 --aa --max-diff-pct=0.1",
 		"smoke:parity:backend": "node smoke/run-parity.mjs --page=backend --max-diff-pct=0.05",
 		"smoke:parity:world": "node smoke/run-parity.mjs --page=world --max-diff-pct=0.05",
-		"smoke:parity:world:aa": "node smoke/run-parity.mjs --page=world --aa --max-diff-pct=0.05"
+		"smoke:parity:world:aa": "node smoke/run-parity.mjs --page=world --aa --max-diff-pct=0.05",
+		"smoke:parity:gr2": "node smoke/run-parity.mjs --page=gr2 --max-diff-pct=0.05",
+		"smoke:parity:gr2:aa": "node smoke/run-parity.mjs --page=gr2 --aa --max-diff-pct=0.05"
 	},
 	"engines": {
 		"node": ">=22"

@@ -3,7 +3,7 @@
  * WebGPU and WebGL2 both on SwiftShader. Serves smoke/<page>.html with Vite,
  * reads `window.__parity`, prints the stats and writes legacy/modern/diff PNGs.
  *
- *   node smoke/run-parity.mjs [--page=parity|entities|post|effects|effects2|backend|world] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir] [--flags="--a --b"]
+ *   node smoke/run-parity.mjs [--page=parity|entities|post|effects|effects2|backend|world|gr2] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir] [--flags="--a --b"]
  *
  * Pages: `parity` (synthetic SpriteDraw records through the legacy SpriteRenderer
  * API, 40 records), `entities` (the real legacy entity path's captured record
@@ -16,7 +16,10 @@
  * tiles, rings, target markers, rain puddles, waterfall; drawn by MeshEffectPipeline) and
  * `backend` (WebGpuBackend.drawFrame end to end: entities + effects + post chain vs legacy
  * EntityManager / effect classes / PostProcess, read back with capture(); plus a real device
- * loss, `device.destroy()`, after which the next frame must match again).
+ * loss, `device.destroy()`, after which the next frame must match again), `world` (the real legacy
+ * map renderers vs the world steps) and `gr2` (the real legacy GR2ModelRenderer on synthetic
+ * skinned models vs the backend's GR2 step, fed `world`/`gr2` records captured from the legacy
+ * pass; plus a real device loss).
  *
  * Needs `vite` and `playwright` resolvable from this package (devDependencies,
  * or a symlinked node_modules) and a Chromium for Playwright
@@ -40,7 +43,7 @@ const tolerance = Number(args.tol ?? 2);
 const maxOverPct = Number(args['max-diff-pct'] ?? 0);
 const outDir = path.resolve(args.out ?? path.join(here, '.out'));
 const pageName = args.page ?? 'parity';
-if (!['parity', 'entities', 'post', 'effects', 'effects2', 'backend', 'world'].includes(pageName)) {
+if (!['parity', 'entities', 'post', 'effects', 'effects2', 'backend', 'world', 'gr2'].includes(pageName)) {
 	console.error(`unknown --page=${pageName}`);
 	process.exit(1);
 }

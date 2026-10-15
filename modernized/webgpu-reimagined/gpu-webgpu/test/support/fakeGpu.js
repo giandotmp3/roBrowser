@@ -34,10 +34,12 @@ export function createFakeGpu({ adapter = true, limits = {}, adapterInfo = {}, c
 			setPipeline: record('setPipeline'),
 			setBindGroup: record('setBindGroup'),
 			setVertexBuffer: record('setVertexBuffer'),
+			setIndexBuffer: record('setIndexBuffer'),
 			setBlendConstant: record('setBlendConstant'),
 			beginOcclusionQuery: record('beginOcclusionQuery'),
 			endOcclusionQuery: record('endOcclusionQuery'),
 			draw: record('draw'),
+			drawIndexed: record('drawIndexed'),
 			end: record('end')
 		};
 	};

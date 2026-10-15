@@ -104,18 +104,26 @@ export const FXAA = Object.freeze({ span: 8, reduceMul: 1 / 32, reduceMin: 1 / 1
 /** R-PP-010 */
 export const BLIND = Object.freeze({ radius: 0.2, falloff: 0.5, zoomRef: 63 });
 
-/** R-GR2-001 */
-export const GR2_ROSTER = Object.freeze([
-	'guildflag90_1',
-	'empelium90_0',
-	'kguardian',
-	'aguardian',
-	'sguardian',
-	'treasurebox_2'
-]);
+/**
+ * R-GR2-001: the 3D roster, keyed by lowercase .gr2 basename (legacy GR2ModelRenderer
+ * GR2_ROSTER), with its lighting profile: 'flag' (diffuse 100/255, ambient = Rec.601 grey
+ * of the map ambient) or 'emp' (diffuse 128/255, ambient 127/255). Same as gpu-webgl2.
+ */
+export const GR2_PROFILES = Object.freeze({
+	guildflag90_1: 'flag',
+	empelium90_0: 'emp',
+	kguardian90_7: 'emp',
+	aguardian90_8: 'emp',
+	sguardian90_9: 'emp',
+	treasurebox_2: 'emp'
+});
+export const GR2_ROSTER = Object.freeze(Object.keys(GR2_PROFILES));
 export const GR2_FALLBACK_SPRITE = 'poring';
+export const GR2_LIGHT = Object.freeze({ flagDiffuse: 100 / 255, diffuse: 128 / 255, ambient: 127 / 255 });
 /** R-GR2-002 */
 export const GR2_ALPHA_REF = 207 / 255;
+/** R-GR2-003: bone palette size (mat4 uBones[48]). */
+export const GR2_MAX_BONES = 48;
 /** R-GR2-006 */
 export const GR2_EMBLEM = Object.freeze({ srcSize: 24, potSize: 32, keyHigh: 248, keyLow: 8 });
 

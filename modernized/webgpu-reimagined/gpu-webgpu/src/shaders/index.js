@@ -27,7 +27,7 @@ import blind from './post/blind.wgsl?raw';
 import upsampling from './post/upsampling.wgsl?raw';
 
 /** Shaders that include the shared fog code. */
-export const FOGGED = Object.freeze(['ground', 'water', 'models', 'grid', 'sprite', 'str', 'effect']);
+export const FOGGED = Object.freeze(['ground', 'water', 'models', 'grid', 'sprite', 'str', 'effect', 'gr2']);
 
 const withFog = src => `${fog}\n${src}`;
 /** World passes: fog, then the shared World uniform block (world/common.wgsl). */
@@ -42,7 +42,7 @@ export const SHADERS = Object.freeze({
 	sprite: withFog(sprite),
 	str: withFog(str),
 	effect: withFog(effect),
-	gr2,
+	gr2: withFog(gr2),
 	blit,
 	Bloom: post(bloom),
 	Blur: post(blur),

@@ -29,6 +29,8 @@ npm run smoke:parity:effects2:aa # the same with MSAA (0.1 % in ANGLE's raster o
 npm run smoke:parity:backend     # WebGpuBackend end to end (entities + effects + post) and a real device loss (gate 0.05 %; see below)
 npm run smoke:parity:world       # the map world (ground, water, static + animated RSM, occluder fade, grid) through drawFrame (gate 0.05 %)
 npm run smoke:parity:world:aa    # the same with MSAA (0.05 % in ANGLE's raster orientation; native 3 %, see below)
+npm run smoke:parity:gr2         # GR2 skinned models (guild flag, Emperium, guardians, treasure box) and a device loss (gate 0.05 %)
+npm run smoke:parity:gr2:aa      # the same with MSAA (0.05 % in ANGLE's raster orientation; native 1 %, see below)
 ```
 
 You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script never runs `playwright install`.
@@ -37,7 +39,7 @@ You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script
 
 | Option             | Meaning                                                                                    |
 | ------------------ | ------------------------------------------------------------------------------------------ |
-| `--page=P`         | `parity` (default), `entities`, `post`, `effects`, `effects2`, `backend` or `world`        |
+| `--page=P`         | `parity` (default), `entities`, `post`, `effects`, `effects2`, `backend`, `world` or `gr2` |
 | `--aa`             | Turn MSAA on                                                                               |
 | `--tol=N`          | Per-channel tolerance (default 2)                                                          |
 | `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                         |
@@ -77,23 +79,25 @@ The page must be served from `http://127.0.0.1`. WebGPU needs a secure context, 
 
 ## Files
 
-| File                              | Role                                                                                                                                                                   |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scene.js`                        | Copy of `gpu-webgl2/smoke/scene.js`; keep the two identical. Camera, fog, 9 frames, 3 palettes, 40 records                                                             |
-| `parity.html`, `parity.js`        | The page. It renders both paths and puts its stats on `window.__parity`                                                                                                |
-| `vite.config.js`, `cameraStub.js` | Serve the package root and resolve the legacy `src/` aliases read-only; the legacy seams (`Renderer/Camera.js`, Client, DB, UI, …) are swapped for `entities/stubs.js` |
-| `entities.html`, `entities.js`    | The real-stream page (below)                                                                                                                                           |
-| `entities/`, `common.js`          | Copies of `gpu-webgl2/smoke/entities/*` and `common.js` (scene, assets, seam stubs, compare helpers); gpu-webgpu imports nothing from gpu-webgl2                       |
-| `webgpuKit.js`                    | Adapter/device, opaque canvas, offscreen target + blit, canvas read-back                                                                                               |
-| `post.html`, `post.js`            | The post-processing page (below)                                                                                                                                       |
-| `effects.html`, `effects.js`      | The effect page (below); `vite.config.js` serves it the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`), every other importer keeps the stub                         |
-| `effects/`                        | Copies of `gpu-webgl2/smoke/effects/*` (`assets.js`: 26 images, 3 SPRs; `scene.js`: STR, 3D and 2D spawns); keep them identical                                        |
-| `effects2.html`, `effects2.js`    | The mesh effect page (below); port of `gpu-webgl2/smoke/effects2.js`                                                                                                   |
-| `effects2/`                       | `scene.js`: copy of `gpu-webgl2/smoke/effects2/scene.js` (keep identical); `assets.js`: its port (same 29 images, same four decodes)                                   |
-| `backend.html`, `backend.js`      | The backend page (below): `WebGpuBackend` end to end plus a real device loss; `REAL_FOR` serves it the real `StrEffect.js` too                                         |
-| `world.html`, `world.js`          | The world page (below): port of `gpu-webgl2/smoke/world.js`; `REAL_FOR` serves it the real `Renderer/Map/Ground.js`, `Water.js` and `Altitude.js`                      |
-| `world/`                          | Copies of `gpu-webgl2/smoke/world/*` (`assets.js`: the synthetic GND/GAT/RSW/RSM payloads and images; `scene.js`: cameras and the 12 captures); keep them identical    |
-| `run-parity.mjs`                  | Starts Vite, launches Chromium, prints the results, writes the PNGs, sets the exit code                                                                                |
+| File                              | Role                                                                                                                                                                                          |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scene.js`                        | Copy of `gpu-webgl2/smoke/scene.js`; keep the two identical. Camera, fog, 9 frames, 3 palettes, 40 records                                                                                    |
+| `parity.html`, `parity.js`        | The page. It renders both paths and puts its stats on `window.__parity`                                                                                                                       |
+| `vite.config.js`, `cameraStub.js` | Serve the package root and resolve the legacy `src/` aliases read-only; the legacy seams (`Renderer/Camera.js`, Client, DB, UI, …) are swapped for `entities/stubs.js`                        |
+| `entities.html`, `entities.js`    | The real-stream page (below)                                                                                                                                                                  |
+| `entities/`, `common.js`          | Copies of `gpu-webgl2/smoke/entities/*` and `common.js` (scene, assets, seam stubs, compare helpers); gpu-webgpu imports nothing from gpu-webgl2                                              |
+| `webgpuKit.js`                    | Adapter/device, opaque canvas, offscreen target + blit, canvas read-back                                                                                                                      |
+| `post.html`, `post.js`            | The post-processing page (below)                                                                                                                                                              |
+| `effects.html`, `effects.js`      | The effect page (below); `vite.config.js` serves it the real `Renderer/Effects/StrEffect.js` (`REAL_FOR`), every other importer keeps the stub                                                |
+| `effects/`                        | Copies of `gpu-webgl2/smoke/effects/*` (`assets.js`: 26 images, 3 SPRs; `scene.js`: STR, 3D and 2D spawns); keep them identical                                                               |
+| `effects2.html`, `effects2.js`    | The mesh effect page (below); port of `gpu-webgl2/smoke/effects2.js`                                                                                                                          |
+| `effects2/`                       | `scene.js`: copy of `gpu-webgl2/smoke/effects2/scene.js` (keep identical); `assets.js`: its port (same 29 images, same four decodes)                                                          |
+| `backend.html`, `backend.js`      | The backend page (below): `WebGpuBackend` end to end plus a real device loss; `REAL_FOR` serves it the real `StrEffect.js` too                                                                |
+| `world.html`, `world.js`          | The world page (below): port of `gpu-webgl2/smoke/world.js`; `REAL_FOR` serves it the real `Renderer/Map/Ground.js`, `Water.js` and `Altitude.js`                                             |
+| `world/`                          | Copies of `gpu-webgl2/smoke/world/*` (`assets.js`: the synthetic GND/GAT/RSW/RSM payloads and images; `scene.js`: cameras and the 12 captures); keep them identical                           |
+| `gr2.html`, `gr2.js`              | The GR2 page (below): port of `gpu-webgl2/smoke/gr2.js`; `REAL_FOR` serves it the real `Renderer/GR2/GR2ModelRenderer.js`, `granny-ro-js/wasm` resolves to `gr2/granny.js`                    |
+| `gr2/`                            | Copies of `gpu-webgl2/smoke/gr2/*` (`assets.js`: synthetic skinned models in the granny-ro-js parse shape; `granny.js`: the parse seam; `scene.js`: instances, timeline); keep them identical |
+| `run-parity.mjs`                  | Starts Vite, launches Chromium, prints the results, writes the PNGs, sets the exit code                                                                                                       |
 
 ## Results (SwiftShader, 320×240, 40 records)
 
@@ -523,3 +527,50 @@ Raise a gate only with a new analysis.
 
 **Not covered yet:** `enableMipmap` (R-PERF-003) world textures (legacy `generateMipmap`; WebGPU has no built-in
 mip generation, the world uploads level 0 only) and clouds (R-MAP-022, drawn through the sprite path in legacy).
+
+## GR2 page (`--page=gr2`)
+
+The port of `gpu-webgl2/smoke/gr2.js` on the same scene (`gr2/assets.js`, `gr2/granny.js`, `gr2/scene.js`, copies): the
+**real legacy GR2 path**, unmodified (`Renderer/GR2/GR2ModelRenderer.js` with the real `Loaders/GR2Loader.js`, `gr2Pack`,
+`gr2World`, `actorAction`, `gr2Banks` and granny-ro-js `poseAt`, on synthetic skinned models: the repository has no
+`.gr2` file), draws each 25 ms tick into the WebGL2 canvas; `WebGpuBackend.drawFrame` draws the R-CTX-010 GR2 step
+(`gr2Models`) into the WebGPU canvas, read back with `capture()`. 4 captures (fog off/on, actions, fades) plus one frame
+after a real `device.destroy()` are compared; each capture also runs on a second backend in ANGLE's raster orientation.
+
+- **Records**: captured by observing the legacy GL while `GR2ModelRenderer.render` runs (per instance the `uBones`
+  palette and `uAlpha`, the instance identified by its bit-exact `uModelViewMat`), as gpu-webgl2:
+  `{kind: 'world', part: 'gr2', alpha, matrices, params: {type, world, emblem}}`. The backend derives the rest (normal
+  matrix and view-space light in legacy float32 arithmetic, R-GR2-001 roster light, R-GR2-002 state, R-GR2-006 emblem).
+- **GPU side** (`src/gr2/`): `Gr2Residency` uploads a type on first use (one vertex buffer of the 16-float interleave and
+  one uint16 index buffer per submesh; one rgba8unorm 2D texture per embedded texture with the legacy key and fallback
+  texels, LINEAR/clamp) and each emblem (24×24 on a 32×32 canvas, key, A4R4G4B4). `Gr2Renderer` writes each distinct
+  palette once per frame (48 mat4, 3072 bytes) and one `Gr2` block per instance into two uniform buffers bound with
+  dynamic offsets; an opaque pipeline (no blend) and a normal-alpha one for alpha < 1, depth test and write, RGB write
+  mask; one `drawIndexed` per drawn submesh. `shaders/gr2.wgsl` mirrors `GR2Model.vs/fs` operation for operation
+  (`(P·MV)·skinned`, `mat3(skin)` normals, vertex-stage light weighting, `u.alpha_ref` uniform, the shared fog include,
+  the GL clip-z remap). `drawFrame` puts one marker at the GR2 step's stream position (with or without a loaded map);
+  the map light comes from `MapWorld.frameLight`. Device loss purges the residency; the rebuild recompiles the pass on
+  the new device and the next frame re-uploads on miss.
+- **Checks** (as gpu-webgl2, plus): same draw calls as legacy (25 per frame), R-GR2-004 culled and off-screen instances
+  never drawn, R-GR2-003 shared palettes (10 records → 7–8 palettes), R-GR2-006 emblem submeshes (3/3, dev flag 2), one
+  upload per type, the device loss (overlay, purge, rebuild, `setMap`; types and emblems re-uploaded), no unsupported
+  record. Controls: the light direction nudged 0.01 (≈7.6k px), the knight with its bind-pose palette (≈2.6k px).
+
+### Results (SwiftShader, 640×480, tolerance 2)
+
+| Frames                                      |     Over tol 2, native | ANGLE orientation |          MSAA native |  MSAA, ANGLE orientation | Legacy / gpu-webgpu draws |
+| ------------------------------------------- | ---------------------: | ----------------: | -------------------: | -----------------------: | ------------------------: |
+| t = 800…2400 (actions, fog, fades 0.6/0.35) | 0 (≤ 3 px differ by 1) |              same | 1309–1514 (≤ 0.49 %) | 0 (≤ 4 px differ by ≤ 2) |                   25 / 25 |
+| after device loss                           |                      0 |                 — |        1577 (0.51 %) |                        — |                   25 / 25 |
+
+No WebGPU or GL error, no WGSL message, 0 unsupported records.
+
+### Gates for gr2
+
+- **Without MSAA: the page gate, 0.05 %, in both orientations** (0 px over tolerance; at most 3 px differ by 1).
+- **Native with MSAA: declared 1 %** (`NATIVE_AA_GATE_PCT`, ≤ 0.51 %). ANGLE draws the WebGL default framebuffer upside
+  down, which mirrors the 4× sample pattern: every GR2 silhouette edge that is neither horizontal nor vertical resolves
+  different coverage (the effects pages' and world's precedent). The same frames in ANGLE's raster orientation
+  (`-angle-orientation`) keep the page gate with 0 px over tolerance.
+
+Raise a gate only with a new analysis.

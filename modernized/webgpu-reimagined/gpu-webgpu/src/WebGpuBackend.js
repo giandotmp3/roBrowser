@@ -16,6 +16,8 @@ import { Capture } from './capture/Capture.js';
 import { LivePreviews } from './preview/LivePreviews.js';
 import { MapWorld, WORLD_STEPS } from './world/MapWorld.js';
 import { clearColorFor } from './world/lighting.js';
+import { Gr2Residency } from './gr2/Gr2Residency.js';
+import { Gr2Renderer } from './gr2/Gr2Renderer.js';
 
 /**
  * Backend selection entry (`GraphicsSettings.renderer = 'auto'|'webgpu'|'webgl'`,
@@ -95,7 +97,11 @@ function recordsByStep(stream) {
 /** `world` records MapWorld consumes, by step: R-MAP-010/009 water fields, animated RSM matrices. */
 const WORLD_RECORD_STEP = Object.freeze({ water: 'water', animatedModel: 'animatedModels' });
 
-/** Family label of a record without a renderer here (GR2, other effect families, stray world parts). */
+/** R-CTX-010 step of the GR2 pass (C-14); its `world`/`gr2` records are drawn by Gr2Renderer. */
+const GR2_STEP = 'gr2Models';
+const isGr2 = record => record.kind === 'world' && record.part === 'gr2';
+
+/** Family label of a record without a renderer here (other effect families, stray world parts). */
 const unsupportedKey = record => {
 	const sub = record.family ?? record.part;
 	return sub ? `${record.kind}:${sub}` : String(record.kind);
@@ -112,15 +118,18 @@ const unsupportedKey = record => {
  * occluder-fade begin, static and animated RSM, water, faded models — encoded by MapWorld
  * from the MAP_* payloads at their R-CTX-010 position, each followed by the step's records;
  * every scene-step record in legacy order through RunRenderer: sprites, 2D/3D, STR and the
- * mesh effect families; families without a renderer yet, GR2 and the SpriteRenderer-drawn
- * weather among them, are counted in `unsupportedRecords` and left out), the occlusion
+ * mesh effect families; the `world`/`gr2` records of the GR2 step (C-14) as one marker at the
+ * step's stream position, encoded by Gr2Renderer with the frame's map light; families without
+ * a renderer yet, the SpriteRenderer-drawn weather among them, are counted in
+ * `unsupportedRecords` and left out), the occlusion
  * query resolve (R-MAP-019), then the post chain when any module is active, else the blit,
  * then the C-20 capture copy, one submit. Non-GPU steps run in order through
  * ScenePort.runStep. Owns no rendering rules: every value comes from the records, the
  * settings, the MAP_* payloads and the frame.
  *
  * Device loss (R-CTX-006/007): DeviceLossController purges, shows the overlay, rebuilds on a
- * new device (residency re-uploads on demand, pipelines/target/blit/post recreated, the map
+ * new device (residency, GR2 types and emblems re-upload on demand, pipelines/target/blit/post
+ * recreated, the map
  * re-uploaded from MapWorld's retained payloads, previews reconfigured, setMap(currentMap)
  * re-run) or hands over to gpu-webgl2. `recovered()` waits for it.
  */
@@ -136,6 +145,7 @@ export class WebGpuBackend {
 	 *   fallback: import('./ports.js').FallbackPort,
 	 *   now: () => number,
 	 *   frames?: import('./residency/SpriteResidency.js').FrameSourcePort|null,
+	 *   gr2?: import('./gr2/Gr2Residency.js').Gr2SourcePort|null,
 	 *   renderDevice?: RenderDevice,
 	 *   images?: import('./world/worldImages.js').ImageDecoderPort,
 	 *   files?: import('./world/worldImages.js').FilePort,
@@ -151,7 +161,8 @@ export class WebGpuBackend {
 	 * }} ports  `renderDevice`: an initialised RenderDevice (selectBackend's); `sampleCount` 1 turns
 	 *   MSAA off (default 4); `depthFormat` replaces the scene depth24plus (the backend smoke page's
 	 *   legacy-FBO run uses depth16unorm); `allowSoftwareAdapter`: R-PP-004 integration decision #2 (smoke goldens);
-	 *   `images` / `files` / `createCanvas` / `unpackGl`: MAP_* image decoding (MapWorld, world/worldImages.js)
+	 *   `images` / `files` / `createCanvas` / `unpackGl`: MAP_* image decoding (MapWorld, world/worldImages.js);
+	 *   `gr2`: the GR2 type and emblem source (upload on miss, C-14/C-16; `createCanvas` builds the emblem canvas)
 	 */
 	constructor(ports) {
 		this.kind = 'webgpu';
@@ -172,6 +183,10 @@ export class WebGpuBackend {
 		this.previews = null;
 		/** @type {MapWorld|null} the current map's GPU scene */
 		this.world = null;
+		/** @type {Gr2Residency|null} */
+		this.gr2Residency = null;
+		/** @type {Gr2Renderer|null} the GR2 pass (C-14) */
+		this.gr2 = null;
 		this._mapRequest = undefined;
 		this.loss = null;
 		this.bloomAllowed = true;
@@ -215,6 +230,7 @@ export class WebGpuBackend {
 				purgeAll: () => {
 					this.residency.purgeAll();
 					this.world?.contextLost();
+					this.gr2Residency?.purgeAll();
 				},
 				reset: device => {
 					this.pools.device = device;
@@ -246,6 +262,13 @@ export class WebGpuBackend {
 			sampleCount,
 			depthFormat
 		}).init();
+		this.gr2Residency = new Gr2Residency({
+			device,
+			source: ports.gr2 ?? null,
+			createCanvas: ports.createCanvas,
+			now: ports.now
+		});
+		this.gr2 = await new Gr2Renderer({ device, residency: this.gr2Residency, sampleCount, depthFormat }).init();
 		this.target = new OffscreenTarget(device, { sampleCount, depthFormat });
 		this.blit = await new Blit({ device, format }).init();
 		this.post = await new PostChain({ device, format }).init();
@@ -320,6 +343,9 @@ export class WebGpuBackend {
 		this.runs.reset(device);
 		await this.runs.init();
 		await this.world.rebuild(device);
+		this.gr2.reset(device);
+		await this.gr2.init();
+		this.gr2Residency.reset(device, this.gr2.textureLayout);
 		if (this._warmed.size) {
 			await this.runs.warm([...this._warmed.values()]);
 		}
@@ -411,6 +437,8 @@ export class WebGpuBackend {
 		let unsupported = 0;
 		const world = this.world;
 		const drawWorld = Boolean(frame.view) && world.loaded;
+		/** @type {any[]} the GR2 step's `world`/`gr2` records (C-14), drawn at the step's marker */
+		let gr2Records = [];
 		/** @type {Record<string, any[]>} */
 		const worldRecords = {};
 		let worldMarkers = 0;
@@ -425,7 +453,17 @@ export class WebGpuBackend {
 				records.push({ kind: WORLD_STEP_KIND, step });
 				worldMarkers++;
 			}
+			if (step === GR2_STEP && frame.view) {
+				gr2Records = (byStep[step] ?? []).filter(isGr2);
+				if (gr2Records.length) {
+					records.push({ kind: WORLD_STEP_KIND, step });
+					worldMarkers++;
+				}
+			}
 			for (const record of byStep[step] ?? []) {
+				if (step === GR2_STEP && frame.view && isGr2(record)) {
+					continue;
+				}
 				if (drawWorld && record.kind === 'world' && WORLD_RECORD_STEP[record.part] === step) {
 					(worldRecords[step] ??= []).push(record);
 				} else if (programOf(record)) {
@@ -463,7 +501,6 @@ export class WebGpuBackend {
 			const querySet = drawWorld ? world.occlusionQuerySet : null;
 			const pass = encoder.beginRenderPass(this.target.passDescriptor(this._clearColor(frame), querySet));
 			this.residency.beginFrame();
-			let direct = {};
 			if (drawWorld) {
 				world.beginFrame({
 					view: frame.view,
@@ -471,8 +508,12 @@ export class WebGpuBackend {
 					targetHeight: this.target.height,
 					records: worldRecords
 				});
-				direct = { world: { encodeDirect: (p, head) => world.encodeStep(p, head.step) } };
 			}
+			const encodeDirect = (p, head) =>
+				head.step === GR2_STEP
+					? this.gr2.encode(p, gr2Records, frame.view, world.frameLight(frame.world ?? {}))
+					: world.encodeStep(p, head.step);
+			const direct = drawWorld || gr2Records.length ? { world: { encodeDirect } } : {};
 			const stats = this.runs.encode(pass, records, frame.view, direct);
 			pass.end();
 			if (drawWorld) {
@@ -503,6 +544,12 @@ export class WebGpuBackend {
 			steps,
 			records: records.length - worldMarkers,
 			worldDrawCalls: drawWorld ? world.frameDrawCalls : 0,
+			gr2: {
+				records: gr2Records.length,
+				instances: gr2Records.length ? this.gr2.lastInstances : 0,
+				drawCalls: gr2Records.length ? this.gr2.lastDrawCalls : 0,
+				palettes: gr2Records.length ? this.gr2.lastPalettes : 0
+			},
 			unsupportedRecords: unsupported,
 			unsupportedByFamily,
 			...scene,
@@ -562,7 +609,8 @@ export class WebGpuBackend {
 	 * @param {number} [maxAgeMs]
 	 */
 	evictIdle(maxAgeMs) {
-		return this.residency ? this.residency.evictIdle(maxAgeMs) : { frames: 0, palettes: 0 };
+		const evicted = this.residency ? this.residency.evictIdle(maxAgeMs) : { frames: 0, palettes: 0 };
+		return { ...evicted, gr2Emblems: this.gr2Residency ? this.gr2Residency.evictIdle(maxAgeMs) : 0 };
 	}
 
 	/**
@@ -588,6 +636,7 @@ export class WebGpuBackend {
 	 */
 	beginMap(request) {
 		this.world?.free();
+		this.gr2Residency?.free();
 		this._mapRequest = request;
 	}
 
@@ -596,9 +645,18 @@ export class WebGpuBackend {
 		return this.world.whenReady();
 	}
 
+	/**
+	 * A GR2 instance went away (legacy GR2ModelRenderer.detach): free its emblem texture.
+	 * @param {unknown} emblem  the instance's emblem handle
+	 */
+	releaseGr2Emblem(emblem) {
+		this.gr2Residency?.releaseEmblem(emblem);
+	}
+
 	dispose() {
 		this._disposed = true;
 		this.world?.destroy();
+		this.gr2Residency?.free();
 		this.post?.destroy();
 		this.target?.destroy();
 		this.pools?.dispose();

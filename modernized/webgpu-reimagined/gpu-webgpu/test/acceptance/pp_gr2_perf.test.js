@@ -139,11 +139,12 @@ describe('GR2: draw side', () => {
 		expect(emp).toMatchObject({ draw3d: true });
 		expect(emp.diffuse).toBeCloseTo(128 / 255);
 		expect(emp.ambient[1]).toBeCloseTo(127 / 255);
-		for (const m of ['kguardian', 'aguardian', 'sguardian', 'treasurebox_2']) {
+		// Legacy roster basenames (GR2ModelRenderer GR2_ROSTER), from a path too.
+		for (const m of ['kguardian90_7', 'aguardian90_8', 'data\\model\\3dmob\\SGuardian90_9.gr2', 'treasurebox_2']) {
 			expect(gr2ModelInfo(m, [0, 0, 0]).draw3d).toBe(true);
 		}
 		expect(gr2ModelInfo('somethingelse', [0, 0, 0])).toEqual({ draw3d: false, fallbackSprite: 'poring' });
-		expect(gr2ModelInfo('kguardian', [0, 0, 0], { loaded: false }).draw3d).toBe(false);
+		expect(gr2ModelInfo('kguardian90_7', [0, 0, 0], { loaded: false }).draw3d).toBe(false);
 	});
 
 	it('R-GR2-002: alpha < 207/255 discarded, rest opaque; depth test+write, correction off; blend only while fading', () => {
@@ -151,8 +152,10 @@ describe('GR2: draw side', () => {
 		expect(gr2AlphaTest([1, 0.5, 0, 207 / 255])).toEqual([1, 0.5, 0, 1]);
 		expect(gr2PipelineState(1)).toEqual({ depthTest: true, depthWrite: true, depthCorrection: false, blend: 'none' });
 		expect(gr2PipelineState(0.5).blend).toBe('normal');
-		expect(SHADERS.gr2).toContain('207.0 / 255.0');
-		expect(SHADERS.gr2).not.toContain('apply_fog');
+		// The 207/255 reference is a uniform (u.alpha_ref = GR2_ALPHA_REF), as legacy uAlphaRef.
+		expect(SHADERS.gr2).toContain('if (texture_sample.a < u.alpha_ref) {');
+		// Legacy GR2Model.fs fogs the GR2 (uFogUse): the shared include.
+		expect(SHADERS.gr2).toContain('return apply_fog(vec4f(rgb, u.alpha), i.pos, u.fog);');
 	});
 
 	it('R-GR2-006: emblem magenta-keyed (≥248, <8, ≥248), A4R4G4B4-quantised, top-left in a 32×32 pad; submesh waits for it', () => {

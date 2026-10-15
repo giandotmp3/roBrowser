@@ -69,7 +69,6 @@ export {
 export * from './world/occluderFade.js';
 export { gridSelectorCells, gridSelectorQuad } from './world/gridSelector.js';
 export { CLOUD_DEPTH, spawnCloud, createCloudField, cloudAlpha } from './world/sky.js';
-export { MapGpuScene } from './world/MapGpuScene.js';
 export {
 	MapWorld,
 	packWorldUniforms,
@@ -159,7 +158,8 @@ export { MESH_PROGRAMS, meshFloats, meshShaderSource, meshVertexBuffers } from '
 export * from './effects/effectState.js';
 export { EffectRenderers } from './effects/EffectRenderers.js';
 export * from './gr2/gr2.js';
-export { Gr2Renderer } from './gr2/Gr2Renderer.js';
+export { Gr2Renderer, GR2_INSTANCE_BYTES, GR2_PALETTE_BYTES, packGr2Instance } from './gr2/Gr2Renderer.js';
+export { Gr2Residency } from './gr2/Gr2Residency.js';
 export * from './post/postChain.js';
 export * from './post/postPasses.js';
 export { PostChain } from './post/PostChainRenderer.js';
