@@ -1,3 +1,5 @@
+import { MESH_EFFECT_PROGRAM } from './mesh/meshFamilies.js';
+
 const NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
 
 /**
@@ -17,6 +19,15 @@ const NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
  *   (`params.layer ≥ 0`) with RGBA frames samples NEAREST under pixelPerfectSprites,
  *   as `Core/Client.js` uploads those frames (`params.sampler`).
  *
+ * - Mesh families (MeshEffectPipeline): the record is used as legacy filled it, with
+ *   two additions the native record lacks (added here only, from the frame state the
+ *   legacy draw read):
+ *   - `magic-target`: `params.vertices`, the ground plane legacy built once at init
+ *     (`Altitude.generatePlane(x, y, size)`, x, y, z, u, v per vertex), from
+ *     `options.groundPlane`;
+ *   - `rainPuddle`: `params.cameraPosition`, the `Camera.position` legacy uploads as
+ *     uCameraPos for the fresnel term, from `options.cameraPosition`.
+ *
  * Not applied (cannot be recovered from a native record): the #47 self-contained
  * 3D record fix. A plain 3D effect drawn after a sprite-backed one in the same pass
  * carries the leaked offset and palette in its native record.
@@ -26,8 +37,10 @@ const NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
  * @param {{kind: 'effect', family: string, texture: unknown, position: ArrayLike<number>, color: ArrayLike<number>,
  *   blend: {src: string, dst: string}|null, depthTest: boolean, depthWrite: boolean, depthCorrection: boolean,
  *   fog: boolean, strAttachment: boolean, params: Record<string, any>}} native
- * @param {{textureHandle?: (texture: unknown) => unknown, paletteHandle?: (palette: unknown) => unknown,
- *   sceneFog?: {use: boolean}|null, pixelPerfectSprites?: boolean}} [options]
+ * @param {{textureHandle?: (texture: unknown, family: string) => unknown, paletteHandle?: (palette: unknown) => unknown,
+ *   sceneFog?: {use: boolean}|null, pixelPerfectSprites?: boolean,
+ *   groundPlane?: (x: number, y: number, size: number) => Float32Array|null,
+ *   cameraPosition?: ArrayLike<number>}} [options]
  * @returns {import('../ports.js').EffectRecord & {texture: unknown, position: ArrayLike<number>, color: ArrayLike<number>}}
  */
 export function fromLegacyEffectRecord(native, options = {}) {
@@ -36,7 +49,7 @@ export function fromLegacyEffectRecord(native, options = {}) {
 		kind: 'effect',
 		family: native.family,
 		pass: 'after',
-		texture: textureHandle(native.texture),
+		texture: textureHandle(native.texture, native.family),
 		position: native.position,
 		color: native.color,
 		blend: native.blend ?? NORMAL,
@@ -49,6 +62,9 @@ export function fromLegacyEffectRecord(native, options = {}) {
 	if (native.family === 'str') {
 		return /** @type {any} */ ({ ...base, fog: Boolean(sceneFog?.use), params: native.params });
 	}
+	if (MESH_EFFECT_PROGRAM[native.family]) {
+		return /** @type {any} */ ({ ...base, pass: native.pass ?? 'after', params: meshParams(native, options) });
+	}
 	const params = native.params;
 	const palette = params.palette === null || params.palette === undefined ? null : paletteHandle(params.palette);
 	const spriteBacked = params.layer >= 0;
@@ -60,4 +76,21 @@ export function fromLegacyEffectRecord(native, options = {}) {
 			sampler: palette === null && spriteBacked && pixelPerfectSprites ? 'nearest' : undefined
 		}
 	});
+}
+
+/**
+ * Params of a mesh family record, completed with what the native record lacks.
+ * @param {{family: string, params: Record<string, any>}} native
+ * @param {{groundPlane?: (x: number, y: number, size: number) => Float32Array|null, cameraPosition?: ArrayLike<number>}} options
+ */
+function meshParams(native, { groundPlane, cameraPosition }) {
+	const params = native.params;
+	if (native.family === 'magic-target' && !params.vertices && groundPlane) {
+		const vertices = groundPlane(params.x, params.y, params.size);
+		return { ...params, vertices, vertexCount: params.vertexCount ?? (vertices ? vertices.length / 5 : 0) };
+	}
+	if (native.family === 'rainPuddle' && !params.cameraPosition && cameraPosition) {
+		return { ...params, cameraPosition: Array.from(cameraPosition) };
+	}
+	return params;
 }

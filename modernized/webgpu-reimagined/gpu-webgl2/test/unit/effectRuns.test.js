@@ -200,7 +200,12 @@ describe('2D/3D effects through the sprite program', () => {
 			frames: { 'img:fx': rgba(48, 30), 'spr#0': { format: 'r8', width: 32, height: 32, data: new Uint8Array(1024) } },
 			palettes: { 'pal:fx': palette }
 		});
-		rr.draw([spriteFx('3d'), spriteFx('3d', { texture: 'spr#0' }, { palette: 'pal:fx' }), effect({ family: 'cylinder' })]);
+		// The cylinder (a mesh family) samples the same image: resident once, no miss.
+		rr.draw([
+			spriteFx('3d'),
+			spriteFx('3d', { texture: 'spr#0' }, { palette: 'pal:fx' }),
+			effect({ family: 'cylinder', texture: 'img:fx' })
+		]);
 		expect(residency.stats).toMatchObject({ frameUploads: 2, paletteUploads: 1, misses: 0 });
 		expect(residency.slotOf({ texture: 'img:fx' })).toMatchObject({ pool: 'rgba8:64', width: 48, height: 30 });
 	});

@@ -57,6 +57,78 @@ export function decodeImageTexture(image, { createCanvas = defaultCanvas, gl } =
 }
 
 /**
+ * Legacy `Texture.load`: the decoded image at its natural size on a `willReadFrequently`
+ * canvas, magenta keyed (R-MAP-024).
+ * @param {CanvasImageSource & {width: number, height: number}} image
+ * @param {(width: number, height: number) => HTMLCanvasElement | OffscreenCanvas} createCanvas
+ */
+function keyedCanvas(image, createCanvas) {
+	const canvas = createCanvas(image.width, image.height);
+	const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d', { willReadFrequently: true }));
+	ctx.drawImage(image, 0, 0, image.width, image.height);
+	const keyed = ctx.getImageData(0, 0, image.width, image.height);
+	applyMagentaKey(keyed.data);
+	ctx.putImageData(keyed, 0, 0);
+	return { canvas, ctx };
+}
+
+/**
+ * C-16 decode for the ground-tile textures (legacy `Tiles.loadTexture`: FlatTexture,
+ * HoveringTexture, LPEffect, SpiderWeb): the keyed image drawn rotated by 180° and
+ * stretched into a `size`×`size` canvas (default 2D context), uploaded as is (no wrap
+ * set: REPEAT, LINEAR). `size` is the class's power-of-two textureSize (64 or 128), so
+ * the image fills its texture-array layer.
+ * @param {CanvasImageSource & {width: number, height: number}} image
+ * @param {number} size
+ * @param {{createCanvas?: (width: number, height: number) => HTMLCanvasElement | OffscreenCanvas,
+ *   gl?: WebGL2RenderingContext}} [deps]
+ * @returns {import('./Residency.js').ResidentImage}
+ */
+export function decodeTileTexture(image, size, { createCanvas = defaultCanvas, gl } = {}) {
+	const { canvas: keyed } = keyedCanvas(image, createCanvas);
+	const canvas = createCanvas(size, size);
+	const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
+	ctx.save();
+	ctx.translate(canvas.width / 2, canvas.height / 2);
+	ctx.rotate(Math.PI);
+	ctx.translate(-canvas.width / 2, -canvas.height / 2);
+	ctx.drawImage(/** @type {any} */ (keyed), 0, 0, size, size);
+	ctx.restore();
+	const data = gl
+		? unpackViaGl(gl, canvas, size, size)
+		: new Uint8Array(ctx.getImageData(0, 0, size, size).data.buffer);
+	return { format: 'rgba8', width: size, height: size, data };
+}
+
+/**
+ * C-16 decode for textures legacy uploads straight from the `Texture.load` canvas after
+ * drawing that canvas onto itself (SpiritSphere / WarlockSphere `thunder_center.bmp`,
+ * unrotated; LockOnTarget `lockon128.tga`, rotated 45° about its centre). Drawing a
+ * canvas onto itself composites translucent texels over themselves, so the canvas
+ * operations are repeated here exactly. Natural size, no wrap set (REPEAT), LINEAR.
+ * @param {CanvasImageSource & {width: number, height: number}} image
+ * @param {{rotation?: number|null, createCanvas?: (width: number, height: number) => HTMLCanvasElement | OffscreenCanvas,
+ *   gl?: WebGL2RenderingContext}} [options]  rotation in radians (null: no rotate call)
+ * @returns {import('./Residency.js').ResidentImage}
+ */
+export function decodeSelfDrawnTexture(image, { rotation = null, createCanvas = defaultCanvas, gl } = {}) {
+	const { canvas, ctx } = keyedCanvas(image, createCanvas);
+	ctx.save();
+	ctx.translate(canvas.width / 2, canvas.height / 2);
+	if (rotation !== null) {
+		ctx.rotate(rotation);
+	}
+	ctx.translate(-canvas.width / 2, -canvas.height / 2);
+	ctx.drawImage(/** @type {any} */ (canvas), 0, 0);
+	ctx.restore();
+	const { width, height } = canvas;
+	const data = gl
+		? unpackViaGl(gl, canvas, width, height)
+		: new Uint8Array(ctx.getImageData(0, 0, width, height).data.buffer);
+	return { format: 'rgba8', width, height, data };
+}
+
+/**
  * The texels WebGL stores for `texImage2D(RGBA, UNSIGNED_BYTE, source)` with the
  * default unpack state: upload to a scratch texture and read it back. Restores the
  * TEXTURE_2D binding of the active unit and the framebuffer binding.

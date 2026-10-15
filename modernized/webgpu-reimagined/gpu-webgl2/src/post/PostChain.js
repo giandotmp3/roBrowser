@@ -88,7 +88,8 @@ export function blurMask(distFromCentre, intensity) {
  */
 export function fxaaUniforms(settings) {
 	return {
-		edgeThreshold: settings.fxaaEdgeThreshold,
+		// Legacy Shaders/FXAA.js `fxaaEdgeThreshold || 0.125` (not flagged: kept; matches gpu-webgpu).
+		edgeThreshold: settings.fxaaEdgeThreshold || 0.125,
 		edgeThresholdMin: 0,
 		span: FXAA.span,
 		reduceMul: FXAA.reduceMul,

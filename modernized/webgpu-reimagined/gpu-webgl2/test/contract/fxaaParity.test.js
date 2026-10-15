@@ -46,3 +46,15 @@ describe('R-PP-006 FXAA backend parity (HITL round 2)', () => {
 		}
 	});
 });
+
+describe('FXAA edge threshold fallback (legacy Shaders/FXAA.js `|| 0.125`)', () => {
+	it('both backends map a 0/unset threshold to 0.125 and agree on every setting', () => {
+		for (const fxaaEdgeThreshold of [0, undefined, 0.0625, 0.125, 0.25]) {
+			const settings = { fxaaEdgeThreshold, fxaaSubpix: 0.25 };
+			const a = webgl2Uniforms(settings).edgeThreshold;
+			expect(a).toBe(webgpuUniforms(settings).edgeThreshold);
+			expect(a).toBe(fxaaEdgeThreshold || 0.125);
+		}
+	});
+});
+

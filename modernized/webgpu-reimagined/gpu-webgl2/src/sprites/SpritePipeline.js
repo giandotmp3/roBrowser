@@ -33,6 +33,7 @@ const WEBGL2_MIN_TEXTURE_UNITS = 16;
  * @property {ArrayLike<number>} projection
  * @property {number} zoom                 Camera.zoom (R-SPR-006)
  * @property {{use: boolean, near: number, far: number, color: ArrayLike<number>}} [fog]  `use` = fog.use && fog.exist
+ * @property {ArrayLike<number>} [cameraPosition]  Camera.position (rain puddles' fresnel term)
  */
 
 /**

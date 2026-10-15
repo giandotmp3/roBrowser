@@ -1,4 +1,5 @@
 import { SPRITE_EFFECT_FAMILIES } from '../effects/spriteEffect.js';
+import { meshProgramKey } from '../effects/mesh/meshFamilies.js';
 
 /**
  * Run-length batching in legacy order (architecture §1, critic B1).
@@ -68,13 +69,18 @@ export function batchKey(record, { mixTextureClasses = true } = {}) {
 }
 
 /**
- * The GL program family that draws an effect record: 'sprite' for the 2D/3D
- * families, otherwise the family itself ('str', ...).
- * @param {{family?: string}} record
+ * The GL program that draws an effect record: 'sprite' for the 2D/3D families,
+ * `mesh:<program>:<wrap>:<mesh>` for the mesh families (MeshEffectPipeline: the
+ * program plus the sampler wrap and static mesh a run must share), otherwise the
+ * family itself ('str', ...).
+ * @param {{family?: string, params?: Record<string, any>}} record
  * @returns {string}
  */
 export function effectProgram(record) {
-	return SPRITE_EFFECT_FAMILIES.includes(/** @type {string} */ (record.family)) ? 'sprite' : String(record.family);
+	if (SPRITE_EFFECT_FAMILIES.includes(/** @type {string} */ (record.family))) {
+		return 'sprite';
+	}
+	return meshProgramKey(record) ?? String(record.family);
 }
 
 /**

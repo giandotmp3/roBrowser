@@ -1,4 +1,5 @@
 import fog from './fog.glsl?raw';
+import effectTexture from './effectTexture.glsl?raw';
 import spriteVert from './sprite.vert?raw';
 import spriteFrag from './sprite.frag?raw';
 import groundFrag from './ground.frag?raw';
@@ -9,7 +10,7 @@ import strFrag from './str.frag?raw';
 import gr2Frag from './gr2.frag?raw';
 import fxaaFrag from './fxaa.frag?raw';
 
-const INCLUDES = Object.freeze({ 'fog.glsl': fog });
+const INCLUDES = Object.freeze({ 'fog.glsl': fog, 'effectTexture.glsl': effectTexture });
 
 /**
  * Resolve `#include "name"` lines. GLSL 300 es has no includes, so the shared

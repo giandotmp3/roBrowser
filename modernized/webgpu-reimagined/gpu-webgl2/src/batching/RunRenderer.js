@@ -4,6 +4,7 @@ import { SpritePipeline } from '../sprites/SpritePipeline.js';
 import { StrPipeline } from '../effects/StrPipeline.js';
 import { packStrInstance, STR_INSTANCE_FLOATS } from '../effects/strInstance.js';
 import { spriteEffectClass, spriteEffectView } from '../effects/spriteEffect.js';
+import { MeshEffectPipeline } from '../effects/mesh/MeshEffectPipeline.js';
 
 /**
  * Draws an ordered record stream as contiguous runs (`splitBatches`: pipeline
@@ -11,9 +12,11 @@ import { spriteEffectClass, spriteEffectView } from '../effects/spriteEffect.js'
  * sprite program can bind both array sets, and effect runs split where the
  * drawing program changes). Sprites, and the 2D/3D effects (SpriteRenderer draws
  * in legacy), are instanced quads (4-vertex strip × N instances) of the sprite
- * program; STR layers are instanced quads of the STR program; both sample the
- * texture-array pools. Other effect and world records dispatch to their family
- * renderers.
+ * program; STR layers are instanced quads of the STR program; the other effect
+ * families (cylinder, quadhorn, RSM, auras, spheres, tiles, rings, target markers,
+ * waterfall, rain puddles) are one draw per run of the mesh effect pipeline; all sample
+ * the texture-array pools. World records, and any family given in `families`, dispatch
+ * to their family renderers.
  *
  * Holds no rendering rules: every value comes from the records.
  */
@@ -25,16 +28,18 @@ export class RunRenderer {
 	 *   residency: import('../residency/Residency.js').Residency,
 	 *   families?: Record<string, (records: ReadonlyArray<object>, gl: WebGL2RenderingContext) => void>,
 	 *   sprites?: SpritePipeline,
-	 *   str?: StrPipeline
+	 *   str?: StrPipeline,
+	 *   meshes?: MeshEffectPipeline
 	 * }} deps
 	 */
-	constructor({ gl, state, residency, families = {}, sprites, str }) {
+	constructor({ gl, state, residency, families = {}, sprites, str, meshes }) {
 		this.gl = gl;
 		this.state = state;
 		this.residency = residency;
 		this.families = families;
 		this.sprites = sprites ?? new SpritePipeline({ gl, pools: residency.uploader });
 		this.str = str ?? new StrPipeline({ gl, pools: residency.uploader });
+		this.meshes = meshes ?? new MeshEffectPipeline({ gl, pools: residency.uploader });
 		this._instances = new Float32Array(Math.max(SPRITE_INSTANCE_FLOATS, STR_INSTANCE_FLOATS) * 256);
 		this._slot = {};
 		this._view = {};
@@ -56,12 +61,12 @@ export class RunRenderer {
 		// texture, and creating or filling one rebinds texture units.
 		this.lastUploads = this.residency.prepare?.(records) ?? 0;
 		this.lastRuns = splitBatches(records, { mixTextureClasses: this.sprites.mixedClasses });
-		/** @type {'sprite'|'str'|null} program currently bound */
+		/** @type {'sprite'|'str'|'mesh'|null} program currently bound */
 		let bound = null;
 		for (const run of this.lastRuns) {
 			const head = /** @type {any} */ (records[run.start]);
 			this.state.apply(head);
-			const program = programOf(head);
+			const program = this._programOf(head);
 			if (program !== bound) {
 				// A family renderer may change program, VAO or textures: rebind before the next run.
 				this._unbind(bound);
@@ -70,6 +75,8 @@ export class RunRenderer {
 					this.sprites.bindFrame(view);
 				} else if (program === 'str') {
 					this.str.bindFrame(view);
+				} else if (program === 'mesh') {
+					this.meshes.bindFrame(view);
 				}
 			}
 			if (program === 'sprite') {
@@ -79,6 +86,11 @@ export class RunRenderer {
 			}
 			if (program === 'str') {
 				this._drawStrRun(/** @type {any} */ (records), run.start, run.count);
+				continue;
+			}
+			if (program === 'mesh') {
+				this.meshes.drawRun(records, run.start, run.count, this.residency);
+				this.lastDrawCalls++;
 				continue;
 			}
 			const family = head.kind === 'effect' ? head.family : head.part;
@@ -92,13 +104,30 @@ export class RunRenderer {
 		this.state.restoreDefault();
 	}
 
-	/** @param {'sprite'|'str'|null} program */
+	/** @param {'sprite'|'str'|'mesh'|null} program */
 	_unbind(program) {
 		if (program === 'sprite') {
 			this.sprites.endFrame();
 		} else if (program === 'str') {
 			this.str.endFrame();
+		} else if (program === 'mesh') {
+			this.meshes.endFrame();
 		}
+	}
+
+	/**
+	 * GL program of a run head: the instanced sprite program (sprites, 2D/3D effects),
+	 * the instanced STR program, the mesh effect pipeline, or null (a family renderer;
+	 * one given in `families` wins over the built-in programs).
+	 * @param {{kind: string, family?: string, part?: string}} head
+	 * @returns {'sprite'|'str'|'mesh'|null}
+	 */
+	_programOf(head) {
+		const family = head.kind === 'effect' ? head.family : head.part;
+		if (family && this.families[family]) {
+			return null;
+		}
+		return programOf(head);
 	}
 
 	/** @param {number} floats */
@@ -147,14 +176,14 @@ export class RunRenderer {
 	reset() {
 		this.sprites.reset();
 		this.str.reset();
+		this.meshes.reset();
 	}
 }
 
 /**
- * GL program of a run head: the instanced sprite program (sprites, 2D/3D effects),
- * the instanced STR program, or null (a family renderer).
+ * Built-in GL program of a run head (see RunRenderer._programOf).
  * @param {{kind: string, family?: string}} head
- * @returns {'sprite'|'str'|null}
+ * @returns {'sprite'|'str'|'mesh'|null}
  */
 function programOf(head) {
 	if (head.kind === 'sprite') {
@@ -162,6 +191,9 @@ function programOf(head) {
 	}
 	if (head.kind === 'effect') {
 		const program = effectProgram(head);
+		if (program.startsWith('mesh:')) {
+			return 'mesh';
+		}
 		return program === 'sprite' || program === 'str' ? program : null;
 	}
 	return null;

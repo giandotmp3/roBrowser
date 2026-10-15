@@ -1,8 +1,9 @@
 # Sprite pixel parity: legacy SpriteRenderer vs gpu-webgl2
 
-Three pages: the phase 3a synthetic record page (`parity`, below), the phase 3b real-stream entity page
-(`entities`, see [Real-stream parity](#real-stream-parity-the-legacy-entity-path-200-entities)) and the effect page
-(`effects`, see [Effect parity](#effect-parity-str-3d-and-2d-effects)).
+Four pages: the phase 3a synthetic record page (`parity`, below), the phase 3b real-stream entity page
+(`entities`, see [Real-stream parity](#real-stream-parity-the-legacy-entity-path-200-entities)), the effect page
+(`effects`, see [Effect parity](#effect-parity-str-3d-and-2d-effects)) and the mesh effect page (`effects2`, see
+[Mesh effect parity](#mesh-effect-parity-every-other-effect-family)).
 
 Phase 3a check (architecture §5, phase 3: "smoke goldens within tolerance; draw count measured").
 The same synthetic frame is drawn twice in headless Chromium (WebGL2 on SwiftShader):
@@ -27,6 +28,8 @@ npm run smoke:parity:entities    # real legacy entity stream, ~200 entities (pha
 npm run smoke:parity:entities:aa # the same with MSAA
 npm run smoke:parity:effects     # real legacy STR / 3D / 2D effect classes
 npm run smoke:parity:effects:aa  # the same with MSAA
+npm run smoke:parity:effects2    # real legacy mesh effect classes (cylinder, quadhorn, RSM, auras, spheres, ...)
+npm run smoke:parity:effects2:aa # the same with MSAA
 ```
 
 You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script never runs `playwright install`.
@@ -36,7 +39,7 @@ You need a Playwright Chromium. Set `PLAYWRIGHT_BROWSERS_PATH` to it; the script
 
 | Option             | Meaning                                                                            |
 | ------------------ | ---------------------------------------------------------------------------------- |
-| `--page=P`         | `parity` (default, phase 3a), `entities` (phase 3b) or `effects`                   |
+| `--page=P`         | `parity` (default, phase 3a), `entities` (phase 3b), `effects` or `effects2`       |
 | `--aa`             | Turn MSAA on                                                                       |
 | `--tol=N`          | Per-channel tolerance (default 2)                                                  |
 | `--max-diff-pct=P` | Fail when more than P % of pixels exceed the tolerance (default 0)                 |
@@ -54,6 +57,8 @@ The exit code is 1 on failure. The run also fails if the **sensitivity control**
 | `entities/`                    | `stubs.js` (legacy seams), `assets.js` (synthetic SPR/ACT/PAL), `scene.js` (the 200 entities)                                   |
 | `effects.html`, `effects.js`   | The effect page (below)                                                                                                         |
 | `effects/`                     | `assets.js` (images, effect SPR/ACT), `scene.js` (STR, 3D and 2D spawns)                                                        |
+| `effects2.html`, `effects2.js` | The mesh effect page (below)                                                                                                    |
+| `effects2/`                    | `assets.js` (images and their four legacy upload paths), `scene.js` (spawns of the 18 mesh-family classes)                      |
 | `common.js`                    | Shared page helpers: canvases, draw counting, read-back, comparison, diff image, camera matrices                                |
 | `cameraStub.js`                | The legacy `Renderer/Camera.js` stand-in (zoom, latitude, direction, matrices)                                                  |
 | `vite.config.js`               | Serves the package root, resolves the repo `src/` aliases read-only, and swaps the `LEGACY_STUBS` seams for `entities/stubs.js` |
@@ -257,3 +262,97 @@ record, because it has one effect per blend code, so its runs are mostly single 
 in Chromium: they differed by one level on about 0.1 % of channels. That alone gave 1–2-level diffs on about 150 px
 per frame. `decodeImageTexture(image, { gl })` therefore reads the texels back through the WebGL unpack
 (`unpackViaGl`). Without `gl` it falls back to `getImageData`.
+
+## Mesh effect parity: every other effect family
+
+The **real legacy classes**, unmodified, play a scripted scene into canvas A: `Cylinder`, `QuadHorn`, `RsmEffect`,
+`GroundAura`, `SwirlingAura`, `Level99Bubble`, `SpiritSphere`, `WarlockSphere`, `Tiles` (`FlatTexture`,
+`HoveringTexture`), `LPEffect`, `SpiderWeb`, `FlatColorTile`, `PropertyGround`, `MagicRing`, `LockOnTarget`,
+`MagicTarget`, `RainWeather` (puddles) and `WaterfallEffect`, with the real `Utils/WebGL.js` and `Utils/Texture.js`.
+Every class has an `addRecordSink`; the captured native records are redrawn by gpu-webgl2's `MeshEffectPipeline`
+(`src/effects/mesh/`) through `RunRenderer`.
+
+1. **Scene** (`effects2/scene.js`): a browser-safe port of the root suite's `cylinderQuadHornScene`, `auraScene`,
+   `sphereScene`, `groundTileScene`, `groundRingScene`, `targetMarkerScene`, `rsmEffectScene`, `waterfallScene` and
+   `rainScene`, moved around one camera target: every cylinder animation 1–5, fades, rotate / angles / camera modes /
+   to-target / with-source, `repeatTextureX` (square and wide textures), blend codes 0–16 including the constant-colour
+   ones; every QuadHorn step (grow, move, rise, emerge, sink, fade), ranges and rotations; auras (moving owner, sizes,
+   colours, ghost bubbles); sphere counts across the outer/middle/core+glow branches and the coin palette; flat (draws
+   nothing: legacy never sets `uSize`) and hovering tiles, LP, spider webs, two flat colours; property grounds and magic
+   rings (a hidden cast bar, an ended ring); lock-on markers; magic-target planes of sizes 1, 11, 7 and 7; the
+   synthetic RSM models (`FakeModel`, imported from `tests/renderer/support/rsmEffectScene.js`: static, animated and
+   attached, stale-texture and frozen); waterfalls (default, small dark vertical, with spray); five puddles injected
+   into the RainWeather instance (two of them drying). 40 ms ticks from 0 to 4400 ms; five frames are captured, one
+   with fog.
+2. **Textures** (`effects2/assets.js`): 29 PNG data URLs, each loaded by legacy through its own path and decoded by
+   residency through the matching C-16 decode (`src/residency/imageTexture.js`): `WebGL.texture` images
+   (`decodeImageTexture`), `Tiles.loadTexture` canvases rotated 180° into size² (`decodeTileTexture`), the sphere and
+   lock-on canvases drawn onto themselves (`decodeSelfDrawnTexture`; drawing a canvas onto itself recomposites its
+   translucent texels, so the operations are repeated exactly) and the procedural puddle. Every legacy texture the
+   records reference is read back: 81 textures, 0 texels differ.
+3. **Seams.** `vite.config.js` also stubs `Renderer/MapRenderer.js` (RainWeather reads `currentMap` and `fog`) and
+   `Loaders/Model.js` (the page installs `FakeModel`); the page adds `Altitude.generatePlane` over the stub terrain and
+   `Client.getFile`. The page binds the SpriteRenderer 3D context once per frame, as MapRenderer does before the effect
+   passes: legacy `runWithDepth` changes nothing until then (cylinders, spheres and auras would write depth).
+
+**Programs** (`src/effects/mesh/meshFamilies.js`): 18 classes, 20 record families, 15 GL programs. Families share a
+program where legacy's shader maths is identical: `tile` (flat, hovering, LP, spider web; the discard threshold and
+forced alpha are per-instance values), `ring` (property ground, magic ring), `sphere` (spirit, warlock). Each program
+is the legacy shader pair operation for operation (uniforms became attributes, `sampler2D` a texture-array layer),
+which is why the output is bit-exact:
+
+- **instanced** (one `drawArraysInstanced` per run): a cached static mesh (tile/sphere/lock-on quads, the XZ quad of
+  auras and puddles, the ring mesh, the QuadHorn mesh, one cylinder mesh per `totalCircleSides/circleSides/repeatTextureX`
+  key, the spray corners) or `gl_VertexID` corners (waterfall strips) × the run's records (spray: × its seeds);
+- **stream** (one `drawArrays` per run): per-record geometry written with the record's fields on every vertex (RSM
+  objects, swirling bands de-indexed in index order, bubble quads, magic-target planes).
+
+Matrices legacy computes per draw are taken from the record (cylinder, rings, spheres, markers, waterfall) or rebuilt
+with legacy gl-matrix's exact float64 steps (`legacyMatrix.js`: QuadHorn's three rotations, the RSM normal matrix).
+The batch key adds the program, the texture wrap and the static mesh to the pipelineKey, so a run never mixes them.
+
+**What the native records lack** (added in `fromLegacyEffectRecord` only, from the frame state legacy read):
+`magic-target` carries x, y and size but not its ground plane (legacy builds it once at init with
+`Altitude.generatePlane`); `rainPuddle` lacks `Camera.position` (uCameraPos), which the pipeline also accepts as
+`view.cameraPosition`. The RSM light (ambient π, diffuse 0) and the normal matrix are family constants and
+pass-derived, not record data.
+
+### Results (SwiftShader, 640×480)
+
+| Frame         | Records | Max channel diff | Pixels differing | Legacy draws | gpu-webgl2 draws |
+| ------------- | ------: | ---------------: | ---------------: | -----------: | ---------------: |
+| t = 480 ms    |     221 |                0 |                0 |          221 |       41 (5.39×) |
+| t = 1200 ms   |     226 |                0 |                0 |          226 |       41 (5.51×) |
+| t = 2000, fog |     224 |                0 |                0 |          224 |       38 (5.89×) |
+| t = 2800 ms   |     221 |                0 |                0 |          221 |       37 (5.97×) |
+| t = 4400 ms   |     209 |                0 |                0 |          209 |       25 (8.36×) |
+
+- Legacy draws are `drawArrays` + `drawElements` (swirling aura) + `drawArraysInstanced` (spray); gpu-webgl2's are
+  `drawArraysInstanced` + `drawArrays` (stream programs).
+- The MSAA run (`:aa`) also gives 0 px on all five frames. Every program is drawn (a check fails otherwise).
+- Fog control: on the fog frame, 132 records are fogged; drawn with fog off they differ on about 167k px.
+- Sensitivity controls (0.01 world units, gpu-webgl2 side only): a cylinder about 3.1k px, an RSM object about 2.4k px,
+  an LP tile about 1.7k px.
+- `?only=<program>` draws one program on both sides, for diagnosis.
+
+**Batching.** Spheres (48 and 35 layers), bubbles, auras and puddles draw in one call each; the 40 waterfall curtain
+segments in two (the spray, additive, sits between the two waterfalls). Cylinders and QuadHorns break on nearly every
+record because the scene gives each spawn its own blend code.
+
+**Kept out of the scene, by decision:** spawns whose texture never loads (legacy never draws them); invalid
+non-integer blend codes (#49: legacy keeps the previous blend, the rebuild draws normal alpha); RSM models whose
+rebuild changes the object count or whose texture fails (#56, fixed in render-records); the FlatColorTile list keying
+(#59).
+
+**Irreducible differences (not in the scene, analysed):**
+
+- **REPEAT on a texture that does not fill its layer.** The tiles (always size², a power of two), spheres, lock-on
+  and repeating cylinders wrap in legacy. The rebuild binds a REPEAT sampler object for those runs, which wraps at the
+  texture-array layer edge: exact when the image fills its layer. A cylinder with `repeatTextureX` > 1 on a texture
+  taller than wide (after the POT stretch) would wrap at the class size instead of the image width, and a sphere or
+  lock-on texture that is not a power-of-two square samples with a non-power-of-two uv scale and wraps at the layer
+  edge: its half-texel border band and sub-texel rounding can differ. The real `thunder_center.bmp` / `lockon128.tga`
+  are expected to be power-of-two squares; making a tall repeating texture exact needs its own wrap-sized layer.
+- **Legacy's texture wrap leak.** `Cylinder` sets WRAP_S = REPEAT on its texture object for good; a later draw of the
+  same texture without `repeatTextureX` would still wrap. Each legacy cylinder loads its own texture, so this is not
+  observable; the rebuild follows the record (`params.textureRepeat`).
