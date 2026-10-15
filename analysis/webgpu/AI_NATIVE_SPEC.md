@@ -1681,3 +1681,34 @@ Source paths below are relative to `src/`.
 - R-PP-011
 - R-UI-002
 - R-DMG-009
+
+### HITL decisions, round 2 (2026-10-15)
+
+The user delegated these decisions to Claude's recommendations. Every fix applies to the **rebuild only**; legacy `src/` behaviour is unchanged. Each fixed item is a narrowly declared divergence in its record-diff, named by its discrepancy number.
+
+**Proposed flags: all fixed.**
+
+| # | Rebuild behaviour |
+|---|---|
+| 34 | Attachments never leak `shadowFactor`; the body keeps its ground shadow |
+| 47, 52 | Every effect record is self-contained, with no inherited sprite state: 3D sprite effects and PokJuk set offset, palette, angle, depth and zIndex explicitly, using the values a fresh SpriteRenderer state has |
+| 51 | PokJuk fireworks draw additive (SRC_ALPHA, ONE) |
+| 53 | Level99Bubble with startTick 0 uses the spawn tick |
+| 55 | Aura frame delta is clamped to [0, 250] ms |
+| 56 | RsmEffect rebinds textures on rebuild, does not draw failed textures, and honours `endTick` |
+| 59 | Effects are tracked per instance, not by `constructor.name`; FlatColorTile caches by colour key; ForgetEffects keeps its own colour |
+| 60 | Map-flag `leaves` shows maple; EF_CLOUD2 uses its own profile |
+| 61 | CloudWeather picks from all three textures |
+| 63 | Rain splash angle is 0, not NaN |
+
+**SME items: decided.**
+
+| # | Decision |
+|---|---|
+| 41, 49 | Invalid or non-integer blend codes fall back to normal alpha. Legacy's result depends on prior GL state and is not reproducible |
+| 54 | GroundAura degrees-as-radians: **kept** (legacy look) |
+| 57 | Sphere fade-in becomes time-based, 0.005 per 16.67 ms: identical at 60 fps, frame-rate independent |
+| R-PP-006 | `fxaaSubpix` uses the standard FXAA 3.11 subpixel term. FXAA is off by default (R-PP-012) |
+| R-MAP-022, R-SPR-007 | Legacy wins, as proven by the record-diffs; the spec text defers to the diffs |
+| R-MAP-011 | Legacy corner convention, to be confirmed by a world-record diff |
+| R-UI-005 | Legacy cursor table (unlisted types use the DEFAULT multiplier, 2.0); the pending test that pinned the spec wording is removed |
