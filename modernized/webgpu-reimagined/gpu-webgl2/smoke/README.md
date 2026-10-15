@@ -384,8 +384,19 @@ with `drawFrame` (R-CTX-010 world steps) into canvas B.
   the predicted 0.8·W + 0.2·D); R-MAP-013 (the lightmap-off frame runs legacy with `light.opacity` 0, which makes
   its animated weighting the fix's full diffuse; ground and static models never read the opacity; a check shows
   the uncompensated difference is confined to animated-model pixels).
+- **Declared divergence #69 (fixed legacy bug):** before a node's first key, when that key is after frame 0, legacy
+  interpolates with t = −∞ (`src/Renderer/Map/AnimatedModels.js:571-585`, `:596-610`, `:621-640`: the bracket is
+  (first, first), so t = (frame − f0) / 0). The node and its descendants get NaN matrices and draw nothing until the
+  key, every loop. The rebuild holds the first key, the clamp legacy already applies after the last key (`:580-582`)
+  and to a single key (`:567-568`). The 'spin' root's first position key is at 300 ms of its 2400 ms loop, so ticks
+  2400–2670 (captures t2400, t2490 and the context-restore frame at 2520) are pre-key. On those ticks only, legacy
+  runs with a copy of the first key at frame 0, which makes it hold the key (lerp a + t·0 = a; outside the window the
+  bracket and every value are unchanged), and the frames stay 0 px. A check at a later pre-key tick (2640) asserts:
+  compensated legacy vs gpu-webgl2 is 0 px; legacy as is equals gpu-webgl2 fed an `animatedModel` record whose
+  pre-key nodes (and their descendants) have NaN matrices, 0 px; and the held nodes do draw (about 5k px, exactly the
+  legacy-as-is vs gpu-webgl2 difference).
 
-**Results (SwiftShader, 640×480):** 0 px on all 13 frames, with and without MSAA. Draw calls: legacy 15 / 39
+**Results (SwiftShader, 640×480):** 0 px on all 13 frames (3 of them #69-compensated), with and without MSAA. Draw calls: legacy 15 / 39
 (captcha grid) / 27–39 (occluder) vs gpu-webgl2 12 / 12 / 21–30 (static models: one draw per same-size-class
 texture run; grid cells: one draw).
 

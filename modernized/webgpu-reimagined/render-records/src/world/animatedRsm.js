@@ -139,15 +139,18 @@ const frameOfScale = kf => (typeof kf.Frame !== 'undefined' ? kf.Frame : kf.fram
 
 /**
  * Keyframe value at `frame`: none → null, one key → that key, otherwise linear (or slerp)
- * between the bracketing keys, the last key held after the end. Before the first key the
- * bracket is (first, first): legacy interpolates with t = (frame − f0) / 0 = −∞ (NaN
- * components); kept for parity.
+ * between the bracketing keys, the last key held after the end.
+ *
+ * Discrepancy #69 FIX (declared divergence): before the first key (a first key after
+ * frame 0) the first key is held, the same clamp legacy applies after the last key and to
+ * a single key. Legacy brackets (first, first) there and interpolates with
+ * t = (frame − f0) / 0 = −∞, giving NaN matrices for the node and its descendants.
  */
 function keyAt(keyframes, frame, out, field, frameOf, interpolate) {
 	if (!keyframes.length) {
 		return null;
 	}
-	if (keyframes.length === 1) {
+	if (keyframes.length === 1 || frameOf(keyframes[0]) > frame) {
 		return keyframes[0][field];
 	}
 	const { prev, next } = bracket(keyframes, frame, frameOf);

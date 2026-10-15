@@ -1620,7 +1620,7 @@ Source paths below are relative to `src/`.
     - If an action starts before its animation bank has loaded, the instance cuts to standby until the action is re-issued.
     - Instances of a model that is still loading skip entity sync, so an action's clock starts when the model becomes ready.
     - The one-frame lag also covers detaches.
-69. **[PROPOSED FLAG, parity kept pending a fix pass] R-MAP-017:** before a node's first key, when that key is later than frame 0, legacy interpolates with t = −∞. The node and its children get NaN matrices and are invisible until the key is reached, on every loop. The gpu-webgl2 world 'spin' fixture exercises this. Under the delegated HITL policy this is an unintended bug, to be fixed in render-records and both backends' world paths as a narrowly declared divergence.
+69. **[FLAG, fixed per the delegated HITL policy] R-MAP-017:** before a node's first key, when that key is later than frame 0, legacy interpolates with t = −∞. The node and its children get NaN matrices and are invisible until the key is reached, on every loop. The gpu-webgl2 world 'spin' fixture exercises this. **Fixed:** before its first key a node holds that key, consistent with legacy holding a single key (`AnimatedModels.js:567-568`) and the last key (`:580-582`). This is done in render-records and gpu-webgl2, with a narrowly declared divergence in `RecordDiff.animatedModels` and the world smoke. The gpu-webgpu port is pending.
 
 ### Visual constants (file:line)
 | Constant | Value | Source |
