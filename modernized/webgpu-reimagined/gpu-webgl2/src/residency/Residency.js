@@ -2,6 +2,9 @@ import { IDLE_EVICT_MS, PALETTE_WIDTH, POT_CLASSES } from '../constants.js';
 import { DeviceLimitError } from '../errors.js';
 import { nextPot } from './imageKey.js';
 
+/** Effect families whose textures (and 2D/3D palettes) are resident in the pools. */
+export const RESIDENT_EFFECT_FAMILIES = Object.freeze(['str', '2d', '3d']);
+
 /**
  * @typedef {Object} ResidentImage  One sprite frame, ready for a texture-array layer
  * @property {'r8'|'rgba8'} format
@@ -279,8 +282,10 @@ export class Residency {
 	}
 
 	/**
-	 * Upload-on-miss pre-pass over one ordered record stream (sprite records only).
-	 * @param {ReadonlyArray<{kind: string, texture?: unknown, palette?: unknown}>} records
+	 * Upload-on-miss pre-pass over one ordered record stream: sprite records, and the
+	 * effect families whose textures live in the pools (RESIDENT_EFFECT_FAMILIES: STR
+	 * images, 2D/3D images and SPR frames; their palette is `params.palette`).
+	 * @param {ReadonlyArray<{kind: string, family?: string, texture?: unknown, palette?: unknown, params?: {palette?: unknown}}>} records
 	 * @returns {number} uploads issued by this call
 	 */
 	prepare(records) {
@@ -288,9 +293,17 @@ export class Residency {
 			return 0;
 		}
 		const before = this.stats.frameUploads + this.stats.paletteUploads;
+		const refs = { texture: null, palette: null };
 		for (const record of records) {
 			if (record.kind === 'sprite') {
 				this.ensure(/** @type {any} */ (record));
+			} else if (
+				record.kind === 'effect' &&
+				RESIDENT_EFFECT_FAMILIES.includes(/** @type {string} */ (record.family))
+			) {
+				refs.texture = record.texture ?? null;
+				refs.palette = record.params?.palette ?? null;
+				this.ensure(refs);
 			}
 		}
 		return this.stats.frameUploads + this.stats.paletteUploads - before;

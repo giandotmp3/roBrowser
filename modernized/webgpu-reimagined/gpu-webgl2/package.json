@@ -14,7 +14,9 @@
 		"smoke:parity": "node smoke/run-parity.mjs",
 		"smoke:parity:aa": "node smoke/run-parity.mjs --aa",
 		"smoke:parity:entities": "node smoke/run-parity.mjs --page=entities",
-		"smoke:parity:entities:aa": "node smoke/run-parity.mjs --page=entities --aa"
+		"smoke:parity:entities:aa": "node smoke/run-parity.mjs --page=entities --aa",
+		"smoke:parity:effects": "node smoke/run-parity.mjs --page=effects",
+		"smoke:parity:effects:aa": "node smoke/run-parity.mjs --page=effects --aa"
 	},
 	"engines": {
 		"node": ">=22"

@@ -4,6 +4,7 @@ import spriteFrag from './sprite.frag?raw';
 import groundFrag from './ground.frag?raw';
 import waterFrag from './water.frag?raw';
 import modelsFrag from './models.frag?raw';
+import strVert from './str.vert?raw';
 import strFrag from './str.frag?raw';
 import gr2Frag from './gr2.frag?raw';
 import fxaaFrag from './fxaa.frag?raw';
@@ -42,6 +43,7 @@ export const SHADERS = Object.freeze({
 	groundFrag: resolveIncludes(groundFrag),
 	waterFrag: resolveIncludes(waterFrag),
 	modelsFrag: resolveIncludes(modelsFrag),
+	strVert,
 	strFrag: resolveIncludes(strFrag),
 	gr2Frag,
 	fxaaFrag

@@ -3,11 +3,12 @@
  * SwiftShader). Serves smoke/<page>.html with Vite, reads `window.__parity`,
  * prints the stats and writes legacy/modern/diff PNGs.
  *
- *   node smoke/run-parity.mjs [--page=parity|entities] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir]
+ *   node smoke/run-parity.mjs [--page=parity|entities|effects] [--aa] [--tol=2] [--max-diff-pct=0] [--out=dir]
  *
  * Pages: `parity` (phase 3a, synthetic SpriteDraw records through the legacy
- * SpriteRenderer API) and `entities` (phase 3b, the real legacy entity path's
- * captured record stream, ~200 entities).
+ * SpriteRenderer API), `entities` (phase 3b, the real legacy entity path's
+ * captured record stream, ~200 entities) and `effects` (the real legacy STR, 3D
+ * and 2D effect classes' captured record stream).
  *
  * Needs `vite` and `playwright` resolvable from this package (devDependencies,
  * or the repo root node_modules for vite) and a Chromium for Playwright
@@ -30,7 +31,7 @@ const tolerance = Number(args.tol ?? 2);
 const maxOverPct = Number(args['max-diff-pct'] ?? 0);
 const outDir = path.resolve(args.out ?? path.join(here, '.out'));
 const pageName = args.page ?? 'parity';
-if (!['parity', 'entities'].includes(pageName)) {
+if (!['parity', 'entities', 'effects'].includes(pageName)) {
 	console.error(`unknown --page=${pageName}`);
 	process.exit(2);
 }
@@ -76,6 +77,9 @@ try {
 		console.log(`gl errors: legacy ${result.glErrors.legacy}, gpu-webgl2 ${result.glErrors.modern}`);
 		for (const frame of result.frames) {
 			console.log(`\nframe ${frame.name}`);
+			if (frame.detail !== undefined) {
+				console.log(`  ${frame.detail}`);
+			}
 			if (frame.entities !== undefined) {
 				console.log(
 					`  ${frame.entities} entities, ${frame.records} records (${frame.indexed} indexed, ${frame.additive} additive, ${frame.unmapped} unmapped), ${frame.uploads} uploads on miss, resident ${frame.resident.frames} frames / ${frame.resident.palettes} palettes`
@@ -114,12 +118,20 @@ try {
 			failed = true;
 		}
 		const { control64 } = result;
-		console.log(
-			`#64 control (index 255 wrapped to entry 0 on one side): ${control64.differing} pixels differ, max ${control64.maxDiff}`
-		);
-		if (control64.differing === 0) {
-			console.error('#64 control shows no difference: the scene does not exercise palette index 255');
-			failed = true;
+		if (control64) {
+			console.log(
+				`#64 control (index 255 wrapped to entry 0 on one side): ${control64.differing} pixels differ, max ${control64.maxDiff}`
+			);
+			if (control64.differing === 0) {
+				console.error('#64 control shows no difference: the scene does not exercise palette index 255');
+				failed = true;
+			}
+		}
+		for (const check of result.checks ?? []) {
+			console.log(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}: ${check.detail}`);
+			if (!check.ok) {
+				failed = true;
+			}
 		}
 		console.log(`images: ${outDir}`);
 		const warnings = logs.filter(l => !l.startsWith('[debug]') && !l.includes('GPU stall due to ReadPixels'));

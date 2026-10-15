@@ -56,6 +56,15 @@ export const LEGACY_STUBS = Object.freeze([
 const STUB_PREFIX = '\0legacy-stub:';
 
 /**
+ * Stubbed seams a page drives for real: legacy module → the smoke path prefix whose
+ * importers get the real module (the effects page imports the real StrEffect; every
+ * other importer, e.g. the entity path's attachments, keeps the stub).
+ */
+const REAL_FOR = Object.freeze({
+	'Renderer/Effects/StrEffect.js': path.join(packageRoot, 'smoke', 'effects')
+});
+
+/**
  * Serves the parity pages: gpu-webgl2 sources by relative import, the legacy
  * renderer through the repo's module aliases (read-only, unmodified), with the
  * LEGACY_STUBS seams swapped for smoke/entities/stubs.js whatever the import
@@ -80,6 +89,9 @@ export default {
 					return null;
 				}
 				const rel = path.relative(legacy, resolved.id.split('?')[0]).split(path.sep).join('/');
+				if (REAL_FOR[rel] && importer.split('?')[0].startsWith(REAL_FOR[rel])) {
+					return null;
+				}
 				return LEGACY_STUBS.includes(rel) ? `${STUB_PREFIX}${rel}` : null;
 			},
 			load(id) {

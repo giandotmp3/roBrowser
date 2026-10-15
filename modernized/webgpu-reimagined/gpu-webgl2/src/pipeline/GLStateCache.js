@@ -1,6 +1,9 @@
 import { GL } from './glEnums.js';
 import { toGlBlend, usesBlendConstant } from './blendMap.js';
 
+/** GL's default blend colour; legacy never sets another (D3D 14/15, GL-order 11…14). */
+export const LEGACY_BLEND_CONSTANT = Object.freeze([0, 0, 0, 0]);
+
 /**
  * Tracks GL state so a run only issues the calls whose state actually
  * changes, and always returns to the R-CTX-002 default after a pass.
@@ -32,7 +35,8 @@ export class GLStateCache {
 			this._blend = blendId;
 		}
 		if (usesBlendConstant(state.blend)) {
-			const [r, g, b, a] = state.blendConstant ?? [1, 1, 1, 1];
+			// Legacy never calls gl.blendColor: the constant is the GL default (0, 0, 0, 0).
+			const [r, g, b, a] = state.blendConstant ?? LEGACY_BLEND_CONSTANT;
 			gl.blendColor(r, g, b, a);
 		}
 		if (this._depthTest !== state.depthTest) {

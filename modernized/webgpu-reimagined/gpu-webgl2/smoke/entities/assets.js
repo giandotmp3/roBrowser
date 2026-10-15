@@ -105,7 +105,7 @@ function rgbaFrame(width, height, seed) {
  * A real legacy SPR with raw frames: `indexed` palette frames first, then `rgba` RGBA
  * frames (the SPR 2.x layout: rgba_index = indexed count).
  */
-function makeSpr({ indexed = 0, rgba = 0, width, height, seed, toRgba = false }) {
+export function makeSpr({ indexed = 0, rgba = 0, width, height, seed, toRgba = false }) {
 	const spr = new SPR();
 	spr.palette = makePalette(seed);
 	spr.frames = [];
@@ -331,7 +331,7 @@ const PAL_FILES = [
 	['data/palette/head_2.pal', 65]
 ];
 
-function uploadPalette(gl, texture, rgba) {
+export function uploadPalette(gl, texture, rgba) {
 	gl.bindTexture(gl.TEXTURE_2D, texture);
 	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
 	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);

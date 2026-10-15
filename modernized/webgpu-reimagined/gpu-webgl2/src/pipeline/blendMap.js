@@ -27,16 +27,35 @@ export const GL_BLEND_FACTOR = Object.freeze({
 /** R-CTX-002 default pair. */
 export const DEFAULT_BLEND = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
 
+const CONSTANT_COLOR_FACTORS = Object.freeze(['CONSTANT_COLOR', 'ONE_MINUS_CONSTANT_COLOR']);
+const CONSTANT_ALPHA_FACTORS = Object.freeze(['CONSTANT_ALPHA', 'ONE_MINUS_CONSTANT_ALPHA']);
+
 /**
- * Map a unified BlendState to GL enums. Unknown factors fall back to the
- * default pair (visible, never silently additive).
+ * WebGL rejects (INVALID_OPERATION) a blend pair that mixes a constant-colour factor
+ * with a constant-alpha factor (WebGL 1.0 §6.13, kept by WebGL 2), e.g. the STR
+ * D3D pair 14/15. Legacy then keeps the previous draw's blend: not reproducible.
+ * @param {import('../ports.js').BlendState} blend
+ */
+export function isWebGLInvalidBlend(blend) {
+	const factors = [blend?.src, blend?.dst];
+	return (
+		factors.some(f => CONSTANT_COLOR_FACTORS.includes(/** @type {string} */ (f))) &&
+		factors.some(f => CONSTANT_ALPHA_FACTORS.includes(/** @type {string} */ (f)))
+	);
+}
+
+/**
+ * Map a unified BlendState to GL enums. Unknown factors, a missing state (legacy
+ * invalid codes, #41/#49) and pairs WebGL rejects (`isWebGLInvalidBlend`) fall
+ * back to the default pair (visible, never silently additive), as decided for
+ * #41/#49: legacy's result there depends on prior GL state.
  * @param {import('../ports.js').BlendState} blend
  * @returns {{src: number, dst: number}}
  */
 export function toGlBlend(blend) {
 	const src = GL_BLEND_FACTOR[blend?.src];
 	const dst = GL_BLEND_FACTOR[blend?.dst];
-	if (src === undefined || dst === undefined) {
+	if (src === undefined || dst === undefined || isWebGLInvalidBlend(blend)) {
 		return { src: GL.SRC_ALPHA, dst: GL.ONE_MINUS_SRC_ALPHA };
 	}
 	return { src, dst };
@@ -47,5 +66,8 @@ export function toGlBlend(blend) {
  * @returns {boolean} Whether a blend constant must be set as run state (D3D 14/15)
  */
 export function usesBlendConstant(blend) {
-	return [blend?.src, blend?.dst].some(f => typeof f === 'string' && f.includes('CONSTANT'));
+	return (
+		!isWebGLInvalidBlend(blend) &&
+		[blend?.src, blend?.dst].some(f => typeof f === 'string' && f.includes('CONSTANT'))
+	);
 }

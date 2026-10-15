@@ -48,8 +48,9 @@ describe('R-EFX-010 STR effects obey fog (FLAG fixed; legacy R-EFX-010 never set
 		expect(strFogUniforms({ fog: true }, { ...sceneFog, use: false }).use).toBe(false);
 		expect(strFogUniforms({ fog: true }, sceneFog).near).toBe(240);
 	});
-	it('the STR shader applies the shared fog include', () => {
-		expect(SHADERS.strFrag).toContain('applyFog(tex * uColor)');
+	it('the STR shader applies the shared fog include when its record asks for fog', () => {
+		expect(SHADERS.strFrag).toContain('uniform bool uFogUse;');
+		expect(SHADERS.strFrag).toContain('fragColor = vFog > 0.5 ? applyFog(color) : color;');
 	});
 });
 

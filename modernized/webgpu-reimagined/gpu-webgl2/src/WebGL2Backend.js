@@ -63,7 +63,7 @@ export class WebGL2Backend {
 			onLost: () => {
 				this.running = false;
 				this.residency.purgeAll();
-				this.runs.sprites.reset();
+				this.runs.reset();
 				this.state.reset();
 			},
 			reinitPost: () => this.post.reinit(),

@@ -308,8 +308,8 @@ describe('sprite runs on the GL pipeline', () => {
 	it('rebinds the sprite program after an effect family run', () => {
 		const { gl } = setup();
 		const residency = new Residency({ uploader: new TextureArrayPools({ gl }), now: () => 0 });
-		const rr = new RunRenderer({ gl, state: new GLStateCache(gl), residency, families: { str: () => {} } });
-		rr.draw([sprite(), effect(), sprite()]);
+		const rr = new RunRenderer({ gl, state: new GLStateCache(gl), residency, families: { cylinder: () => {} } });
+		rr.draw([sprite(), effect({ family: 'cylinder' }), sprite()]);
 		expect(gl.callsTo('useProgram')).toHaveLength(2);
 		expect(rr.lastDrawCalls).toBe(3);
 	});

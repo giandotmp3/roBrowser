@@ -51,6 +51,11 @@ export const GL = Object.freeze({
 	RGB8: 0x8051,
 	RGBA32F: 0x8814,
 	DEPTH_COMPONENT16: 0x81a5,
+	// framebuffers (image-texture unpack readback)
+	FRAMEBUFFER: 0x8d40,
+	FRAMEBUFFER_BINDING: 0x8ca6,
+	COLOR_ATTACHMENT0: 0x8ce0,
+	TEXTURE_BINDING_2D: 0x8069,
 	// draw
 	TRIANGLES: 0x0004,
 	TRIANGLE_STRIP: 0x0005,
