@@ -121,12 +121,14 @@ try {
 				`  pixels over tolerance (> ${result.tolerance}): ${frame.overTolerance} (${frame.overTolerancePct.toFixed(4)} %)`
 			);
 			console.log(`  diff histogram [0,1,2,3,4-7,8-15,16-63,64-127,128+]: ${frame.histogram.join(', ')}`);
-			const runs = frame.runs.length > 60 ? `${frame.runs.slice(0, 60).join(' ')} …` : frame.runs.join(' ');
+			const batches =
+				frame.batches.length > 60 ? `${frame.batches.slice(0, 60).join(' ')} …` : frame.batches.join(' ');
 			console.log(
-				`  draw calls: legacy ${frame.legacyDrawCalls} drawArrays, gpu-webgpu ${frame.modernDrawCalls} instanced draws (${(frame.legacyDrawCalls / Math.max(1, frame.modernDrawCalls)).toFixed(2)}x), ${frame.fallbacks} fallbacks (runs: ${runs})`
+				`  draw calls: legacy ${frame.legacyDrawCalls} drawArrays, gpu-webgpu ${frame.modernDrawCalls} instanced draws (${(frame.legacyDrawCalls / Math.max(1, frame.modernDrawCalls)).toFixed(2)}x), ${frame.fallbacks} fallbacks, ${frame.runs} render-records runs (batch sizes: ${batches})`
 			);
 			if (frame.breaks) {
-				console.log(`  run breaks by changed state: ${JSON.stringify(frame.breaks)}`);
+				console.log(`  state changes between records: ${JSON.stringify(frame.breaks.changes)}`);
+				console.log(`  of which split a batch: ${JSON.stringify(frame.breaks.batch)}`);
 			}
 			for (const [kind, url] of Object.entries(frame.images)) {
 				const file = path.join(outDir, `${frame.name}-${kind}${args.aa ? '-aa' : ''}.png`);

@@ -383,7 +383,8 @@ async function run() {
 			legacyDrawCalls: legacy.draws.drawArrays,
 			modernDrawCalls: stats.drawCalls,
 			fallbacks: stats.fallbacks,
-			runs: modern.sprites.lastRuns.map(r => r.count),
+			runs: modern.sprites.lastRuns.length,
+			batches: modern.sprites.lastBatches.map(r => r.count),
 			images: { legacy: toPng(a), modern: toPng(b), diff: diffImage(a, b) }
 		});
 	}

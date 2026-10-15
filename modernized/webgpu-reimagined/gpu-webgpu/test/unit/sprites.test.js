@@ -7,14 +7,17 @@ import {
 	InstanceRing,
 	OffscreenTarget,
 	PipelineSet,
-	SPRITE_FAMILIES,
+	SPRITE_FAMILY,
 	SPRITE_INSTANCE_ATTRIBUTES,
 	SPRITE_INSTANCE_FLOATS,
 	SPRITE_INSTANCE_STRIDE,
+	SPRITE_MIXED_SAMPLED_TEXTURES,
+	SPRITE_SAMPLING,
 	SPRITE_VERTEX_BUFFERS,
 	SpriteResidency,
 	SpriteRunRenderer,
 	TextureArrayPools,
+	canMixTextureClasses,
 	describePipeline,
 	packFrameUniforms,
 	packSpriteInstance,
@@ -22,7 +25,9 @@ import {
 	recordRunKey,
 	spriteBindGroupLayoutEntries,
 	spriteCensus,
+	spriteShaderSource,
 	spriteSpec,
+	splitBatches,
 	splitRuns
 } from '../../src/index.js';
 import { pipelineSpecKey } from '../../src/pipelines/pipelineKey.js';
@@ -107,9 +112,23 @@ describe('sprite instance layout (C-08, byte-identical to gpu-webgl2)', () => {
 		expect(f.slice(9, 14).map(v => +v.toFixed(4))).toEqual([1, 0.5, 0.25, 0.75, 0.6]);
 		expect(f[14]).toBe(151);
 		expect(f[15]).toBeCloseTo(0.02);
-		expect(f.slice(16)).toEqual([1, 0, 3, 2, 2, 0, 64, 128, 128, 256]);
+		expect(f.slice(16)).toEqual([1, 0, 3, 2, 2, SPRITE_SAMPLING.indexed, 64, 128, 128, 256]);
 		packSpriteInstance(sprite({ paletteSize: [10, 20], sampler: 'linear', ignoreDepthMinCap: true }), slot, out, 0);
-		expect([out[17], out[21], out[24], out[25]]).toEqual([1, 1, 10, 20]);
+		// Indexed frames take the palette path whatever their sampler.
+		expect([out[17], out[21], out[24], out[25]]).toEqual([1, SPRITE_SAMPLING.indexed, 10, 20]);
+	});
+
+	it('packs the per-instance sampling mode as gpu-webgl2 does (0 RGBA nearest, 1 RGBA linear, 2 indexed)', () => {
+		expect(SPRITE_SAMPLING).toEqual({ rgbaNearest: 0, rgbaLinear: 1, indexed: 2 });
+		const out = new Float32Array(SPRITE_INSTANCE_FLOATS);
+		const slot = { layer: 0, paletteRow: -1, classIndex: 0, width: 32, height: 32 };
+		const mode = fields => {
+			packSpriteInstance(sprite(fields), slot, out, 0);
+			return out[21];
+		};
+		expect(mode({ textureClass: 'rgba', sampler: 'nearest' })).toBe(0);
+		expect(mode({ textureClass: 'rgba', sampler: 'linear' })).toBe(1);
+		expect(mode({ textureClass: 'indexed', sampler: 'nearest' })).toBe(2);
 	});
 });
 
@@ -138,7 +157,26 @@ describe('sprite.wgsl (R-SPR-005/006/012/014/017, #64)', () => {
 	it('declares the bindings the bind group layout provides', () => {
 		const bindings = [...src.matchAll(/@group\(0\) @binding\((\d+)\)/g)].map(m => Number(m[1]));
 		expect(bindings).toEqual(spriteBindGroupLayoutEntries().map(e => e.binding));
-		expect(spriteBindGroupLayoutEntries().filter(e => e.texture)).toHaveLength(11);
+		expect(spriteBindGroupLayoutEntries().filter(e => e.texture)).toHaveLength(SPRITE_MIXED_SAMPLED_TEXTURES);
+		expect(SPRITE_MIXED_SAMPLED_TEXTURES).toBe(11);
+	});
+
+	it('has one fragment entry point that branches per instance on the sampling flag', () => {
+		expect([...src.matchAll(/@fragment\s+fn (\w+)/g)].map(m => m[1])).toEqual(['fs_main']);
+		expect(src).toContain('if (i.layer.w > 1.5) {');
+		expect(src).toContain('return finish(i, sample_indexed(i));');
+		expect(src).toContain('return finish(i, sample_rgba(i));');
+	});
+
+	it('split fallback: drops the RGBA set and reads the batch class through bindings 3..7', () => {
+		const split = spriteShaderSource({ mixTextureClasses: false });
+		const bindings = [...split.matchAll(/@group\(0\) @binding\((\d+)\)/g)].map(m => Number(m[1]));
+		const entries = spriteBindGroupLayoutEntries({ mixTextureClasses: false });
+		expect(bindings).toEqual(entries.map(e => e.binding));
+		expect(entries.filter(e => e.texture)).toHaveLength(6);
+		expect(split).not.toMatch(/\brgba[0-4]\b/);
+		expect(split).toContain('textureSampleLevel(idx0, samp_linear, uv, layer, 0.0)');
+		expect(spriteShaderSource()).toBe(src);
 	});
 });
 
@@ -231,12 +269,13 @@ describe('texture-array residency (C-16)', () => {
 });
 
 describe('sprite pipelines (architecture §2.2: census, normal-alpha fallback)', () => {
-	it('censuses both texture classes × normal/additive × every depth state, with unique keys', () => {
+	it('censuses normal/additive × every depth state (texture class is per instance), with unique keys', () => {
 		const specs = spriteCensus();
-		expect(specs).toHaveLength(16);
-		expect(new Set(specs.map(pipelineSpecKey)).size).toBe(16);
+		expect(specs).toHaveLength(8);
+		expect(new Set(specs.map(pipelineSpecKey)).size).toBe(8);
+		expect(spriteSpec(sprite({ textureClass: 'rgba' }))).toEqual(spriteSpec(sprite()));
 		expect(spriteSpec(sprite({ textureClass: 'rgba', blend: ADDITIVE }))).toEqual({
-			family: SPRITE_FAMILIES.rgba,
+			family: SPRITE_FAMILY,
 			blend: ADDITIVE,
 			depthTest: true,
 			depthWrite: true,
@@ -245,9 +284,9 @@ describe('sprite pipelines (architecture §2.2: census, normal-alpha fallback)',
 	});
 
 	it('describes entry points, strip topology and sample count; depth test off writes no depth (GL)', () => {
-		const shader = { module: {}, layout: {}, buffers: [], fragmentEntry: 'fs_rgba' };
+		const shader = { module: {}, layout: {}, buffers: [], fragmentEntry: 'fs_main' };
 		const d = describePipeline({ ...spriteSpec(sprite()), depthTest: false }, shader, { sampleCount: 1 });
-		expect(d.fragment.entryPoint).toBe('fs_rgba');
+		expect(d.fragment.entryPoint).toBe('fs_main');
 		expect(d.vertex.entryPoint).toBe('vs_main');
 		expect(d.primitive.topology).toBe('triangle-strip');
 		expect(d.multisample.count).toBe(1);
@@ -260,7 +299,7 @@ describe('sprite pipelines (architecture §2.2: census, normal-alpha fallback)',
 		const set = new PipelineSet(fake.device, () => ({ module: {}, layout: {} }), { sampleCount: 1 });
 		await set.precompile(spriteCensus());
 		await set.settled();
-		expect(set.readyCount).toBe(16);
+		expect(set.readyCount).toBe(8);
 		const descs = fake.calls.filter(c => c[0] === 'createRenderPipelineAsync').map(c => c[1]);
 		expect(descs.every(d => d.multisample.count === 1)).toBe(true);
 	});
@@ -281,6 +320,18 @@ describe('run splitting (copy of render-records)', () => {
 		expect(splitRuns([sprite(), sprite(), sprite({ blend: ADDITIVE }), sprite()]).map(r => r.count)).toEqual([
 			2, 1, 1
 		]);
+	});
+
+	it('batches merge indexed and RGBA runs with equal blend/depth state, never across it', () => {
+		const rgba = sprite({ textureClass: 'rgba' });
+		const records = [sprite(), rgba, sprite(), sprite({ blend: ADDITIVE }), rgba];
+		expect(splitRuns(records).map(r => r.count)).toEqual([1, 1, 1, 1, 1]);
+		expect(splitBatches(records).map(r => [r.start, r.count])).toEqual([
+			[0, 3],
+			[3, 1],
+			[4, 1]
+		]);
+		expect(splitBatches(records, { mixTextureClasses: false })).toEqual(splitRuns(records));
 	});
 });
 
@@ -327,17 +378,60 @@ describe('SpriteRunRenderer (C-08)', () => {
 			modelView: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
 			zoom: 30
 		});
-		expect(stats).toEqual({ drawCalls: 3, runs: 3, fallbacks: 0 });
+		expect(stats).toEqual({ drawCalls: 3, runs: 3, batches: 3, fallbacks: 0 });
 		expect(calls.filter(c => c[0] === 'draw').map(c => c.slice(1))).toEqual([
 			[4, 2, 0, 0],
 			[4, 1, 0, 2],
 			[4, 2, 0, 3]
 		]);
+		// The RGBA run follows a different blend: same pipeline as the first indexed run.
 		expect(calls.filter(c => c[0] === 'setPipeline')).toHaveLength(3);
 		expect(calls.filter(c => c[0] === 'setBindGroup')).toHaveLength(1);
 		const writes = fake.calls.slice(before).filter(c => c[0] === 'queue.writeBuffer');
 		// one instance write (5 sprites × 104 bytes) + one uniform write
 		expect(writes.map(c => c[1][4] ?? c[1][2].byteLength)).toEqual([5 * 104, FRAME_UNIFORM_BYTES]);
+	});
+
+	it('draws an indexed ↔ RGBA alternation with equal state as one batch, flagging each instance', async () => {
+		const { fake, renderer } = await setup();
+		const rgba = sprite({ texture: 'g', textureClass: 'rgba', palette: null, sampler: 'linear' });
+		const records = [sprite(), rgba, sprite(), rgba];
+		const before = fake.calls.length;
+		const { pass, calls } = fakePass();
+		expect(renderer.encode(pass, records)).toEqual({ drawCalls: 1, runs: 4, batches: 1, fallbacks: 0 });
+		expect(calls.filter(c => c[0] === 'draw').map(c => c.slice(1))).toEqual([[4, 4, 0, 0]]);
+		const [write] = fake.calls.slice(before).filter(c => c[0] === 'queue.writeBuffer');
+		const data = new Float32Array(write[1][2], write[1][3], 4 * SPRITE_INSTANCE_FLOATS);
+		const modes = [0, 1, 2, 3].map(i => data[i * SPRITE_INSTANCE_FLOATS + 21]);
+		expect(modes).toEqual([2, 1, 2, 1]);
+	});
+
+	it('split fallback (< 11 sampled textures): batches split on class and swap a per-class bind group', async () => {
+		const fake = createFakeGpu({ limits: { maxSampledTexturesPerShaderStage: 8 } });
+		expect(canMixTextureClasses(fake.device)).toBe(false);
+		expect(canMixTextureClasses({ limits: {} })).toBe(true);
+		const pools = new TextureArrayPools({ device: fake.device });
+		const residency = new SpriteResidency({ uploader: pools, now: () => 0 });
+		const renderer = await new SpriteRunRenderer({ device: fake.device, residency, sampleCount: 1 }).init();
+		expect(renderer.mixTextureClasses).toBe(false);
+		const [layout] = fake.calls.filter(c => c[0] === 'createBindGroupLayout').map(c => c[1]);
+		expect(layout.entries.filter(e => e.texture)).toHaveLength(6);
+		const [module] = fake.calls.filter(c => c[0] === 'createShaderModule').map(c => c[1]);
+		expect(module.code).toBe(spriteShaderSource({ mixTextureClasses: false }));
+		const rgba = sprite({ textureClass: 'rgba', palette: null });
+		const { pass, calls } = fakePass();
+		expect(renderer.encode(pass, [sprite(), rgba, rgba, sprite()])).toEqual({
+			drawCalls: 3,
+			runs: 3,
+			batches: 3,
+			fallbacks: 0
+		});
+		expect(calls.filter(c => c[0] === 'setBindGroup')).toHaveLength(3);
+		expect(calls.filter(c => c[0] === 'setPipeline')).toHaveLength(1);
+		expect(fake.calls.filter(c => c[0] === 'createBindGroup').map(c => c[1].label)).toEqual([
+			'sprite group 0 (indexed)',
+			'sprite group 0 (rgba)'
+		]);
 	});
 
 	it('creates the bind group once and rebuilds it only when a pool texture is created', async () => {
@@ -357,7 +451,7 @@ describe('SpriteRunRenderer (C-08)', () => {
 		const residency = new SpriteResidency({ uploader: pools, now: () => 0 });
 		const renderer = await new SpriteRunRenderer({ device: fake.device, residency }).init();
 		const stats = renderer.encode(fakePass().pass, [sprite({ blend: { src: 'DST_COLOR', dst: 'ZERO' } })]);
-		expect(stats).toEqual({ drawCalls: 1, runs: 1, fallbacks: 1 });
+		expect(stats).toEqual({ drawCalls: 1, runs: 1, batches: 1, fallbacks: 1 });
 	});
 });
 

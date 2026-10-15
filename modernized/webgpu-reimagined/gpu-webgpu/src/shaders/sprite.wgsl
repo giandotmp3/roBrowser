@@ -38,7 +38,7 @@ struct Instance {
   @location(7) shadow : f32,
   @location(8) zindex_bias : vec2f,   // x: zIndex, y: depthBias
   @location(9) depth_flags : vec2f,   // x: depthCorrection, y: ignoreDepthMinCap
-  @location(10) layer : vec4f,        // x: array layer, y: palette row, z: POT class, w: sampler (1 linear)
+  @location(10) layer : vec4f,        // x: array layer, y: palette row, z: POT class, w: SPRITE_SAMPLING mode
   @location(11) frame_size : vec4f,   // xy: frame size (px), zw: palette bilinear size (legacy uTextSize)
 };
 
@@ -209,20 +209,21 @@ fn finish(i : VsOut, sampled : vec4f) -> vec4f {
   return apply_fog(shaded * i.color, i.pos, frame.fog);
 }
 
-// Runs never mix texture classes, so the class is a pipeline (entry point), not a uniform.
+// One batch may mix indexed and RGBA layers (runs.js batchKey): every array set and the
+// palette table sit in group 0, and each instance picks its path from layer.w
+// (SPRITE_SAMPLING: 0 RGBA nearest, 1 RGBA linear, 2 indexed). layer.w is a flat
+// varying, so the branch is uniform within a primitive. When the device cannot bind 11
+// sampled textures per fragment stage, SpriteRunRenderer compiles a split variant
+// (spriteShaderSource) that drops rgba0..4 and reads the batch's class from idx0..4;
+// batches then split on texture class again.
 @fragment
-fn fs_indexed(i : VsOut) -> @location(0) vec4f {
+fn fs_main(i : VsOut) -> @location(0) vec4f {
   // Not resident (residency miss) or fully transparent colour: nothing to draw.
   if (i.layer.x < 0.0 || i.color.a == 0.0) {
     discard;
   }
-  return finish(i, sample_indexed(i));
-}
-
-@fragment
-fn fs_rgba(i : VsOut) -> @location(0) vec4f {
-  if (i.layer.x < 0.0 || i.color.a == 0.0) {
-    discard;
+  if (i.layer.w > 1.5) {
+    return finish(i, sample_indexed(i));
   }
   return finish(i, sample_rgba(i));
 }

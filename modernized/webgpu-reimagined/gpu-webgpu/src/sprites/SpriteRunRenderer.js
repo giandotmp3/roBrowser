@@ -5,7 +5,7 @@ import { ADDITIVE, NORMAL } from '../pipelines/pipelineKey.js';
 import { SHADERS } from '../shaders/index.js';
 import { InstanceRing } from './InstanceRing.js';
 import { SPRITE_INSTANCE_FLOATS, SPRITE_QUAD, SPRITE_VERTEX_BUFFERS, packSpriteInstance } from './instanceLayout.js';
-import { splitRuns } from './runs.js';
+import { splitBatches, splitRuns } from './runs.js';
 
 export { SPRITE_INSTANCE_FLOATS };
 
@@ -178,10 +178,47 @@ export function samplePaletteBilinear(indexImage, paletteRow, u, v, textSize) {
 	return mix4(mix4(c00, c10, fx), mix4(c01, c11, fx), fy);
 }
 
-/** Pipeline families: runs never mix texture classes, so the class picks the fragment entry point. */
-export const SPRITE_FAMILIES = Object.freeze({ indexed: 'sprite:indexed', rgba: 'sprite:rgba' });
+/**
+ * One sprite pipeline family: the texture class is a per-instance flag (`layer.w`),
+ * not a pipeline, so indexed and RGBA records share `fs_main` (runs.js batchKey).
+ */
+export const SPRITE_FAMILY = 'sprite';
 
-const FRAGMENT_ENTRY = Object.freeze({ [SPRITE_FAMILIES.indexed]: 'fs_indexed', [SPRITE_FAMILIES.rgba]: 'fs_rgba' });
+/** Sampled textures `sprite.wgsl` binds in its fragment stage: palette table + 5 indexed + 5 RGBA pools. */
+export const SPRITE_MIXED_SAMPLED_TEXTURES = 1 + 2 * POT_CLASSES.length;
+
+/** WebGPU's guaranteed maxSampledTexturesPerShaderStage, assumed when the device reports none. */
+const WEBGPU_MIN_SAMPLED_TEXTURES = 16;
+
+/**
+ * Whether one batch may mix indexed and RGBA layers: true when the device binds the
+ * SPRITE_MIXED_SAMPLED_TEXTURES (11) sampled textures the mixed shader needs in one
+ * fragment stage. Every conformant WebGPU device allows at least 16, so the split
+ * fallback (palette + the batch's 5 class pools, batches split on texture class)
+ * exists only for adapters that report less.
+ * @param {{limits?: {maxSampledTexturesPerShaderStage?: number}}} device
+ */
+export function canMixTextureClasses(device) {
+	const limit = device?.limits?.maxSampledTexturesPerShaderStage ?? WEBGPU_MIN_SAMPLED_TEXTURES;
+	return limit >= SPRITE_MIXED_SAMPLED_TEXTURES;
+}
+
+/**
+ * `sprite.wgsl` for the chosen mode. The split variant drops the rgba0..4 bindings
+ * and reads every class pool through idx0..4 (bindings 3..7), where the renderer binds
+ * the batch's class (indexed or RGBA views); fs_main still branches on layer.w.
+ * @param {{mixTextureClasses?: boolean}} [options]
+ */
+export function spriteShaderSource({ mixTextureClasses = true } = {}) {
+	if (mixTextureClasses) {
+		return SHADERS.sprite;
+	}
+	return SHADERS.sprite
+		.split('\n')
+		.filter(line => !/^@group\(0\) @binding\(\d+\) var rgba\d /.test(line))
+		.join('\n')
+		.replace(/\brgba([0-4])\b/g, 'idx$1');
+}
 
 const DEPTH_STATES = Object.freeze([
 	{ depthTest: true, depthWrite: true },
@@ -196,7 +233,7 @@ const DEPTH_STATES = Object.freeze([
  */
 export function spriteSpec(record) {
 	return {
-		family: record.textureClass === 'rgba' ? SPRITE_FAMILIES.rgba : SPRITE_FAMILIES.indexed,
+		family: SPRITE_FAMILY,
 		blend: record.blend,
 		depthTest: record.depthTest,
 		depthWrite: record.depthWrite,
@@ -206,16 +243,15 @@ export function spriteSpec(record) {
 
 /**
  * Sprite blend/depth census (architecture §2.2 "Pipelines"): SpriteDraw blends are
- * normal alpha or additive (R-SPR-023), with any depth test/write combination.
+ * normal alpha or additive (R-SPR-023), with any depth test/write combination. The
+ * texture class is per instance, so there is one family: 2 blends × 4 depth states.
  * @param {ReadonlyArray<{src: string, dst: string}>} [blends]
  */
 export function spriteCensus(blends = [NORMAL, ADDITIVE]) {
 	const specs = [];
-	for (const family of Object.values(SPRITE_FAMILIES)) {
-		for (const blend of blends) {
-			for (const depth of DEPTH_STATES) {
-				specs.push(spriteSpec({ textureClass: family.split(':')[1], blend, ...depth }));
-			}
+	for (const blend of blends) {
+		for (const depth of DEPTH_STATES) {
+			specs.push(spriteSpec({ blend, ...depth }));
 		}
 	}
 	return specs;
@@ -258,8 +294,11 @@ export function packFrameUniforms(view, out = new ArrayBuffer(FRAME_UNIFORM_BYTE
 const BUFFER = Object.freeze({ COPY_DST: 0x08, VERTEX: 0x20, UNIFORM: 0x40 });
 const STAGE = Object.freeze({ VERTEX: 0x1, FRAGMENT: 0x2 });
 
-/** Bind group layout entries of `sprite.wgsl` group 0. */
-export function spriteBindGroupLayoutEntries() {
+/**
+ * Bind group layout entries of `sprite.wgsl` group 0 (the split variant has no RGBA set).
+ * @param {{mixTextureClasses?: boolean}} [options]
+ */
+export function spriteBindGroupLayoutEntries({ mixTextureClasses = true } = {}) {
 	const texture = (binding, viewDimension) => ({
 		binding,
 		visibility: STAGE.FRAGMENT,
@@ -270,14 +309,15 @@ export function spriteBindGroupLayoutEntries() {
 		{ binding: 1, visibility: STAGE.FRAGMENT, sampler: { type: 'filtering' } },
 		texture(2, '2d'),
 		...POT_CLASSES.map((_, i) => texture(3 + i, '2d-array')),
-		...POT_CLASSES.map((_, i) => texture(3 + POT_CLASSES.length + i, '2d-array'))
+		...(mixTextureClasses ? POT_CLASSES.map((_, i) => texture(3 + POT_CLASSES.length + i, '2d-array')) : [])
 	];
 }
 
 /**
- * Draws SpriteDraw runs (contiguous, legacy order) as instanced quads: one
- * pipeline switch (when the state changes) and one `draw(4, count, 0, first)`
- * per run, all instances of the frame in one instance-step vertex buffer write.
+ * Draws SpriteDraw batches (contiguous, legacy order; runs.js `splitBatches`, unions
+ * of whole render-records runs that mix texture classes) as instanced quads: one
+ * pipeline switch (when the state changes) and one `draw(4, count, 0, first)` per
+ * batch, all instances of the frame in one instance-step vertex buffer write.
  */
 export class SpriteRunRenderer {
 	/**
@@ -286,11 +326,14 @@ export class SpriteRunRenderer {
 	 *   residency: import('../residency/SpriteResidency.js').SpriteResidency,
 	 *   pools?: import('../residency/TextureArrayPools.js').TextureArrayPools,
 	 *   sampleCount?: number,
-	 *   ring?: InstanceRing
-	 * }} deps
+	 *   ring?: InstanceRing,
+	 *   mixTextureClasses?: boolean
+	 * }} deps  `mixTextureClasses` defaults to `canMixTextureClasses(device)`
 	 */
-	constructor({ device, residency, pools, sampleCount, ring }) {
+	constructor({ device, residency, pools, sampleCount, ring, mixTextureClasses }) {
 		this.device = device;
+		/** One bind group with both array sets, batches mix texture classes (else split fallback). */
+		this.mixTextureClasses = mixTextureClasses ?? canMixTextureClasses(device);
 		this.residency = residency;
 		this.pools = pools ?? /** @type {any} */ (residency.uploader);
 		this.sampleCount = sampleCount;
@@ -303,15 +346,18 @@ export class SpriteRunRenderer {
 		this.quad = null;
 		this.uniforms = null;
 		this.sampler = null;
-		this._bindGroup = null;
+		/** @type {Map<string, GPUBindGroup>} keyed 'mixed', or the class in split mode */
+		this._bindGroups = new Map();
 		this._bindGroupVersion = -1;
 		this._uniformData = new ArrayBuffer(FRAME_UNIFORM_BYTES);
 		this._instances = new Float32Array(SPRITE_INSTANCE_FLOATS * 256);
 		this._slot = {};
 		/** Draw calls issued by the last `encode()` (draw count is measured, §5 phase 3). */
 		this.lastDrawCalls = 0;
-		/** Runs of the last `encode()`, for diagnostics. */
+		/** Sprite render-records runs of the last `encode()` (pipeline-state boundaries), for diagnostics. */
 		this.lastRuns = [];
+		/** Draw batches of the last `encode()` (batchKey boundaries: what was drawn). */
+		this.lastBatches = [];
 		/** Runs drawn with the normal-alpha fallback pipeline in the last `encode()`. */
 		this.lastFallbacks = 0;
 		/** Frames and palette rows uploaded on miss by the last `encode()`. */
@@ -325,20 +371,21 @@ export class SpriteRunRenderer {
 	 */
 	async init(census = spriteCensus()) {
 		const { device } = this;
-		this.module = device.createShaderModule({ label: 'sprite.wgsl', code: SHADERS.sprite });
+		const mode = { mixTextureClasses: this.mixTextureClasses };
+		this.module = device.createShaderModule({ label: 'sprite.wgsl', code: spriteShaderSource(mode) });
 		this.bindGroupLayout = device.createBindGroupLayout({
 			label: 'sprite group 0',
-			entries: spriteBindGroupLayoutEntries()
+			entries: spriteBindGroupLayoutEntries(mode)
 		});
 		this.pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] });
 		this.pipelines = new PipelineSet(
 			device,
-			family => ({
+			() => ({
 				module: this.module,
 				layout: this.pipelineLayout,
 				buffers: /** @type {any} */ (SPRITE_VERTEX_BUFFERS),
 				vertexEntry: 'vs_main',
-				fragmentEntry: FRAGMENT_ENTRY[family]
+				fragmentEntry: 'fs_main'
 			}),
 			this.sampleCount === undefined ? undefined : { sampleCount: this.sampleCount }
 		);
@@ -367,30 +414,46 @@ export class SpriteRunRenderer {
 		return this;
 	}
 
-	_bindGroupFor() {
-		const version = this.pools.version;
-		if (!this._bindGroup || this._bindGroupVersion !== version) {
+	/**
+	 * Group 0 for a batch: one group with both array sets when classes mix, else one
+	 * per class (its pools on bindings 3..7). Rebuilt when a pool texture is created.
+	 * @param {string} [textureClass]  Batch class (split fallback only)
+	 */
+	_bindGroupFor(textureClass) {
+		const key = this.mixTextureClasses ? 'mixed' : textureClass === 'rgba' ? 'rgba' : 'indexed';
+		if (this._bindGroupVersion !== this.pools.version) {
+			this._bindGroups.clear();
+		}
+		let group = this._bindGroups.get(key);
+		if (!group) {
 			const views = this.pools.views();
+			const pools = key === 'rgba' ? views.rgba : views.indexed;
 			const resources = [
 				{ binding: 0, resource: { buffer: this.uniforms } },
 				{ binding: 1, resource: this.sampler },
 				{ binding: 2, resource: views.palette },
-				...views.indexed.map((resource, i) => ({ binding: 3 + i, resource })),
-				...views.rgba.map((resource, i) => ({ binding: 3 + POT_CLASSES.length + i, resource }))
+				...pools.map((resource, i) => ({ binding: 3 + i, resource })),
+				...(key === 'mixed'
+					? views.rgba.map((resource, i) => ({ binding: 3 + POT_CLASSES.length + i, resource }))
+					: [])
 			];
-			this._bindGroup = this.device.createBindGroup({
-				label: 'sprite group 0',
+			group = this.device.createBindGroup({
+				label: `sprite group 0 (${key})`,
 				layout: this.bindGroupLayout,
 				entries: resources
 			});
 			// views() may create the palette table or dummies; read the version after it.
-			this._bindGroupVersion = this.pools.version;
+			if (this._bindGroupVersion !== this.pools.version) {
+				this._bindGroups.clear();
+				this._bindGroupVersion = this.pools.version;
+			}
+			this._bindGroups.set(key, group);
 		}
-		return this._bindGroup;
+		return group;
 	}
 
 	/**
-	 * Encode every sprite run of `records` into `pass`. Uploads missing frames and
+	 * Encode every sprite batch of `records` into `pass`. Uploads missing frames and
 	 * palettes through the residency's source first (C-16), then writes the frame
 	 * uniforms and instance data with queue writes, so call once per submitted frame
 	 * (after `residency.beginFrame()`).
@@ -398,26 +461,29 @@ export class SpriteRunRenderer {
 	 * @param {GPURenderPassEncoder} pass
 	 * @param {ReadonlyArray<any>} records  Legacy order
 	 * @param {SpriteView} [view]
-	 * @returns {{drawCalls: number, runs: number, fallbacks: number}}
+	 * @returns {{drawCalls: number, runs: number, batches: number, fallbacks: number}}
 	 */
 	encode(pass, records, view) {
 		this.lastDrawCalls = 0;
 		this.lastFallbacks = 0;
 		// C-16 upload on miss (no-op without a FrameSourcePort): before packing, so slots exist.
 		this.lastUploads = this.residency.prepare?.(records) ?? 0;
-		this.lastRuns = splitRuns(records).filter(run => records[run.start].kind === 'sprite');
-		if (!this.lastRuns.length) {
-			return { drawCalls: 0, runs: 0, fallbacks: 0 };
+		const isSprite = run => records[run.start].kind === 'sprite';
+		this.lastRuns = splitRuns(records).filter(isSprite);
+		this.lastBatches = splitBatches(records, { mixTextureClasses: this.mixTextureClasses }).filter(isSprite);
+		const runs = this.lastRuns.length;
+		if (!runs) {
+			return { drawCalls: 0, runs: 0, batches: 0, fallbacks: 0 };
 		}
 
-		// Pack all sprite instances of the frame, in run order, then one queue write.
-		const total = this.lastRuns.reduce((n, run) => n + run.count, 0);
+		// Pack all sprite instances of the frame, in batch order, then one queue write.
+		const total = this.lastBatches.reduce((n, batch) => n + batch.count, 0);
 		if (this._instances.length < total * SPRITE_INSTANCE_FLOATS) {
 			this._instances = new Float32Array(total * SPRITE_INSTANCE_FLOATS * 2);
 		}
 		let offset = 0;
-		for (const run of this.lastRuns) {
-			for (let i = run.start; i < run.start + run.count; i++) {
+		for (const batch of this.lastBatches) {
+			for (let i = batch.start; i < batch.start + batch.count; i++) {
 				offset = packSpriteInstance(
 					records[i],
 					this.residency.slotOf(records[i], this._slot),
@@ -430,27 +496,38 @@ export class SpriteRunRenderer {
 		const at = this.ring.write(this._instances.subarray(0, offset));
 		this.device.queue.writeBuffer(this.uniforms, 0, packFrameUniforms(view, this._uniformData));
 
-		pass.setBindGroup(0, this._bindGroupFor());
 		pass.setVertexBuffer(0, this.quad);
 		pass.setVertexBuffer(1, at.buffer, at.offset);
 		let first = 0;
 		let current = null;
-		for (const run of this.lastRuns) {
-			const { pipeline, fellBack } = this.pipelines.get(spriteSpec(records[run.start]));
+		let boundGroup = null;
+		for (const batch of this.lastBatches) {
+			const head = records[batch.start];
+			const group = this._bindGroupFor(head.textureClass);
+			if (group !== boundGroup) {
+				pass.setBindGroup(0, group);
+				boundGroup = group;
+			}
+			const { pipeline, fellBack } = this.pipelines.get(spriteSpec(head));
 			if (pipeline) {
 				if (pipeline !== current) {
 					pass.setPipeline(pipeline);
 					current = pipeline;
 				}
-				pass.draw(4, run.count, 0, first);
+				pass.draw(4, batch.count, 0, first);
 				this.lastDrawCalls++;
 				if (fellBack) {
 					this.lastFallbacks++;
 				}
 			}
-			first += run.count;
+			first += batch.count;
 		}
-		return { drawCalls: this.lastDrawCalls, runs: this.lastRuns.length, fallbacks: this.lastFallbacks };
+		return {
+			drawCalls: this.lastDrawCalls,
+			runs,
+			batches: this.lastBatches.length,
+			fallbacks: this.lastFallbacks
+		};
 	}
 
 	/** Device loss: every GPU object died; `init()` again on the new device. */
@@ -458,7 +535,8 @@ export class SpriteRunRenderer {
 		this.device = device;
 		this.ring = new InstanceRing({ device });
 		this.module = this.bindGroupLayout = this.pipelineLayout = this.pipelines = null;
-		this.quad = this.uniforms = this.sampler = this._bindGroup = null;
+		this.quad = this.uniforms = this.sampler = null;
+		this._bindGroups.clear();
 		this._bindGroupVersion = -1;
 	}
 }

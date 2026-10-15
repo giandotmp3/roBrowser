@@ -66,7 +66,10 @@ export {
 	spriteVertexClip,
 	samplePaletteBilinear,
 	SPRITE_INSTANCE_FLOATS,
-	SPRITE_FAMILIES,
+	SPRITE_FAMILY,
+	SPRITE_MIXED_SAMPLED_TEXTURES,
+	canMixTextureClasses,
+	spriteShaderSource,
 	spriteSpec,
 	spriteCensus,
 	packFrameUniforms,
@@ -79,12 +82,13 @@ export {
 	SPRITE_INSTANCE_STRIDE,
 	SPRITE_VERTEX_BUFFERS,
 	SPRITE_QUAD,
+	SPRITE_SAMPLING,
 	packSpriteInstance,
 	unpackSpriteInstance
 } from './sprites/instanceLayout.js';
 export { fromLegacySpriteRecord } from './sprites/legacyRecord.js';
 export { InstanceRing } from './sprites/InstanceRing.js';
-export { splitRuns, recordRunKey } from './sprites/runs.js';
+export { splitRuns, splitBatches, recordRunKey, batchKey } from './sprites/runs.js';
 export * from './effects/effectState.js';
 export { EffectRenderers } from './effects/EffectRenderers.js';
 export * from './gr2/gr2.js';

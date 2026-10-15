@@ -16,9 +16,17 @@ export const SPRITE_INSTANCE_FIELDS = Object.freeze([
 	['shadow', 1],
 	['zIndexBias', 2], // x: zIndex, y: depthBias (R-SPR-006)
 	['depthFlags', 2], // x: depthCorrection, y: ignoreDepthMinCap (R-SPR-005)
-	['layer', 4], // x: array layer, y: palette row (R-SPR-014), z: POT class index, w: sampler (1 linear)
+	['layer', 4], // x: array layer, y: palette row (R-SPR-014), z: POT class index, w: SPRITE_SAMPLING mode
 	['frame', 4] // xy: frame size in texels, zw: palette bilinear size (legacy uTextSize)
 ]);
+
+/**
+ * Per-instance sampling mode (`layer.w`), same values as gpu-webgl2's aLayer.w. It
+ * carries the texture class, so one instanced batch can mix indexed and RGBA layers
+ * (runs.js `batchKey`): `fs_main` branches on it per instance. Indexed frames always
+ * take the palette path (its own manual bilinear), whatever the record's sampler.
+ */
+export const SPRITE_SAMPLING = Object.freeze({ rgbaNearest: 0, rgbaLinear: 1, indexed: 2 });
 
 /** First instance shader location (0: corner, 1: tex_coord). */
 export const SPRITE_INSTANCE_FIRST_LOCATION = 2;
@@ -123,7 +131,12 @@ export function packSpriteInstance(r, slot, out, offset) {
 	out[o++] = slot.layer;
 	out[o++] = slot.paletteRow;
 	out[o++] = slot.classIndex ?? 0;
-	out[o++] = r.sampler === 'linear' ? 1 : 0;
+	out[o++] =
+		r.textureClass === 'indexed'
+			? SPRITE_SAMPLING.indexed
+			: r.sampler === 'linear'
+				? SPRITE_SAMPLING.rgbaLinear
+				: SPRITE_SAMPLING.rgbaNearest;
 	out[o++] = width;
 	out[o++] = height;
 	out[o++] = textW;

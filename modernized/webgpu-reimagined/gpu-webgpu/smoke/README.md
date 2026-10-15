@@ -6,7 +6,7 @@ Headless Chromium draws the same synthetic frame twice:
 - **Legacy:** `src/Renderer/SpriteRenderer.js` (unmodified) draws into a WebGL2 canvas, through its normal static API.
   This is one `drawArrays` per layer, with per-frame `TEXTURE_2D` uploads made the way `Core/Client.js` makes them.
   This is the same driver as `gpu-webgl2/smoke/parity.js`, including the spec #64 palette compensation.
-- **gpu-webgpu:** draws into a WebGPU canvas. `SpriteResidency`/`TextureArrayPools` (texture_2d_array per POT class plus the palette table, `queue.writeTexture`) and `SpriteRunRenderer` (`sprite.wgsl`, instance-step vertex buffer through `queue.writeBuffer`, census pipelines from `createRenderPipelineAsync`) draw one instanced draw per run into the `rgba8unorm` `OffscreenTarget`.
+- **gpu-webgpu:** draws into a WebGPU canvas. `SpriteResidency`/`TextureArrayPools` (texture_2d_array per POT class plus the palette table, `queue.writeTexture`) and `SpriteRunRenderer` (`sprite.wgsl`, instance-step vertex buffer through `queue.writeBuffer`, census pipelines from `createRenderPipelineAsync`) draw one instanced draw per batch into the `rgba8unorm` `OffscreenTarget`.
   `Blit` then copies the target to the `bgra8unorm` canvas.
 
 The WebGPU canvas texture is read back with `copyTextureToBuffer` and `mapAsync`. The readback strips the 256-byte row padding, swizzles BGRA to RGBA, and flips rows to match `readPixels`, which returns bottom-up rows.
@@ -81,17 +81,22 @@ The page must be served from `http://127.0.0.1`. WebGPU needs a secure context, 
 
 | Frame        | Max channel diff | Pixels differing |  Over tol 2 |    Legacy draws | gpu-webgpu draws |
 | ------------ | ---------------: | ---------------: | ----------: | --------------: | ---------------: |
-| no fog       |                1 |      7 (0.009 %) |           0 | 39 `drawArrays` |     23 instanced |
-| fog          |                1 |     11 (0.014 %) |           0 |              39 |               23 |
-| no fog, MSAA |               45 |     17 (0.022 %) | 9 (0.012 %) |              39 |               23 |
-| fog, MSAA    |               39 |     564 (0.73 %) | 9 (0.012 %) |              39 |               23 |
+| no fog       |                1 |      7 (0.009 %) |           0 | 39 `drawArrays` |     15 instanced |
+| fog          |                1 |     11 (0.014 %) |           0 |              39 |               15 |
+| no fog, MSAA |               45 |     17 (0.022 %) | 9 (0.012 %) |              39 |               15 |
+| fog, MSAA    |               39 |     564 (0.73 %) | 9 (0.012 %) |              39 |               15 |
 
 **Controls:**
 
 - Sensitivity: 615 px differ, max 58 (1155 px with MSAA).
 - #64: 5242 px differ, max 194.
 
-**Run and pipeline counts:** 23 runs, 0 normal-alpha fallbacks, 16 census pipelines.
+**Run, batch and pipeline counts:** 23 render-records runs drawn as 15 batches, 0 normal-alpha fallbacks, 8 census pipelines.
+A batch is a union of whole runs whose only difference is the texture class: one `fs_main` binds the indexed and
+RGBA pools plus the palette table (11 sampled textures) and branches per instance on `layer.w` (`SPRITE_SAMPLING`,
+same packing as gpu-webgl2). Merging changed no pixel on any page (before: 23 draws here, 648/594/537 on the entity
+page). A device reporting fewer than 11 `maxSampledTexturesPerShaderStage` (below the WebGPU minimum of 16) gets the
+split fallback: one class set on bindings 3..7, batches split on texture class again.
 40 records give 39 legacy draws because legacy skips the zero-alpha layer before drawing. gpu-webgpu packs it, and the shader discards it.
 
 **Residual differences, all believed to come from the API and not from the port:**
@@ -122,9 +127,9 @@ device loss. Legacy palettes carry the #64 compensation; the sensitivity and #64
 
 | Frame                    | Records | Legacy `drawArrays` | gpu-webgpu draws | Uploads on miss | Max diff | Differing |   Over tol 2 | Over tol 2, MSAA |
 | ------------------------ | ------: | ------------------: | ---------------: | --------------: | -------: | --------: | -----------: | ---------------: |
-| t = 120 ms               |    1052 |                1052 |      648 (1.62×) |              86 |      237 |       184 | 89 (0.029 %) |    174 (0.057 %) |
-| t = 520 ms, fog, evicted |    1043 |                1043 |      594 (1.76×) |              91 |      206 |        98 | 48 (0.016 %) |    128 (0.042 %) |
-| t = 1240 ms, after purge |     954 |                 954 |      537 (1.78×) |              88 |       99 |       124 | 32 (0.010 %) |     85 (0.028 %) |
+| t = 120 ms               |    1052 |                1052 |      330 (3.19×) |              86 |      237 |       184 | 89 (0.029 %) |    174 (0.057 %) |
+| t = 520 ms, fog, evicted |    1043 |                1043 |      327 (3.19×) |              91 |      206 |        98 | 48 (0.016 %) |    128 (0.042 %) |
+| t = 1240 ms, after purge |     954 |                 954 |      282 (3.38×) |              88 |       99 |       124 | 32 (0.010 %) |     85 (0.028 %) |
 
 - Controls: sensitivity ≈9.4k px (max 237), #64 ≈18.3k px. No WebGPU validation errors, no GL error, 0 fallbacks.
 - `smoke:parity:entities` passes the 0.05 % gate; `smoke:parity:entities:aa` misses it on frame 1 (0.057 %).
@@ -144,4 +149,3 @@ This page is gated at **0.1 %** of pixels over tolerance; every other page stays
 The CPU vertex reference rules out quad-edge and texel-boundary causes. Changing only the depth-remap arithmetic moves the residual pixels; switching to `depth32float` does not change them.
 
 The highest observed value is 0.057 % (frame t=120, 174 px). Raise the gate only with a new analysis.
-
