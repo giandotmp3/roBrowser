@@ -38,3 +38,4 @@ export * from './damage/DamageComposer.js';
 export * from './effects/StrPlayer.js';
 export * from './effects/CylinderEffect.js';
 export * from './effects/QuadHornEffect.js';
+export * from './effects/SpriteBillboardEffect.js';

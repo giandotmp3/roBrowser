@@ -10,7 +10,215 @@ function randBetween(minimum, maximum) {
 	return parseFloat(Math.min(minimum + Math.random() * (maximum - minimum), maximum).toFixed(3));
 }
 
-const blendMode = {};
+/**
+ * Backend-neutral factor names of the 2D/3D `blendMode` codes. The numbering
+ * follows the GL enum order (R-EFX-011), unlike the STR D3DBLEND table; the
+ * source factor is always SRC_ALPHA.
+ */
+export const GL_ORDER_BLEND_FACTOR = Object.freeze({
+	1: 'ZERO',
+	2: 'ONE',
+	3: 'SRC_COLOR',
+	4: 'ONE_MINUS_SRC_COLOR',
+	5: 'DST_COLOR',
+	6: 'ONE_MINUS_DST_COLOR',
+	7: 'SRC_ALPHA',
+	8: 'ONE_MINUS_SRC_ALPHA',
+	9: 'DST_ALPHA',
+	10: 'ONE_MINUS_DST_ALPHA',
+	11: 'CONSTANT_COLOR',
+	12: 'ONE_MINUS_CONSTANT_COLOR',
+	13: 'CONSTANT_ALPHA',
+	14: 'ONE_MINUS_CONSTANT_ALPHA',
+	15: 'SRC_ALPHA_SATURATE'
+});
+
+const BLEND_NORMAL = Object.freeze({ src: 'SRC_ALPHA', dst: 'ONE_MINUS_SRC_ALPHA' });
+
+/**
+ * @var {object} cached blend states by blendMode code (allocation-free per draw)
+ */
+const _blendStates = {};
+
+/**
+ * Unified blend state of a 2D/3D `blendMode` (R-EFX-011): 0 or out of range is
+ * normal alpha blending. A code inside 1..15 that is not in the table (not an
+ * integer) gives null: GL then receives an undefined factor.
+ *
+ * @param {number} mode blendMode
+ * @returns {object|null} { src, dst } factor names
+ */
+export function effectBlendState(mode) {
+	if (!(mode > 0 && mode < 16)) {
+		return BLEND_NORMAL;
+	}
+	if (!(mode in _blendStates)) {
+		_blendStates[mode] =
+			mode in GL_ORDER_BLEND_FACTOR
+				? Object.freeze({ src: 'SRC_ALPHA', dst: GL_ORDER_BLEND_FACTOR[mode] })
+				: null;
+	}
+	return _blendStates[mode];
+}
+
+/**
+ * Set the GL blend function of a 2D/3D effect blend state.
+ *
+ * @param {object} gl webgl context
+ * @param {object|null} blend state
+ */
+export function applyEffectBlend(gl, blend) {
+	gl.blendFunc(gl.SRC_ALPHA, blend ? gl[blend.dst] : undefined);
+}
+
+/**
+ * Create an empty 2D/3D effect draw record (backend-neutral EffectDraw shape, see
+ * modernized/webgpu-reimagined/render-records). The draw goes through
+ * SpriteRenderer, so params mirror its state; sizes and offsets are sprite pixels
+ * (xSize/ySize convert them to world units).
+ *
+ * params:
+ *  - size, offset, angle (degrees): billboard geometry
+ *  - zIndex, depthBias: depth offsets consumed by the draw
+ *  - shadowFactor, xSize, ySize, ignoreDepthMinCap: SpriteRenderer state
+ *  - palette, paletteSize: indexed sprite layers (3D sprite effects), else null
+ *  - spriteType: uIsRGBA value (uploaded, never read by the shader)
+ *  - blendMode: raw code, overlay: R-EFX-013 flag
+ *  - layer: ACT layer index of a sprite-backed 3D effect, -1 otherwise
+ *
+ * @param {string} family '3d' | '2d'
+ * @returns {object} record
+ */
+export function createSpriteEffectRecord(family) {
+	return {
+		kind: 'effect',
+		family,
+		texture: null,
+		position: new Float32Array(3),
+		color: new Float32Array(4),
+		blend: BLEND_NORMAL,
+		depthTest: true,
+		depthWrite: false,
+		depthCorrection: true,
+		fog: false,
+		strAttachment: false,
+		params: {
+			size: new Float32Array(2),
+			offset: new Float32Array(2),
+			angle: 0,
+			zIndex: 0,
+			depthBias: 0,
+			shadowFactor: 1,
+			xSize: 5,
+			ySize: 5,
+			ignoreDepthMinCap: false,
+			palette: null,
+			paletteSize: new Float32Array(2),
+			spriteType: 1,
+			blendMode: 0,
+			overlay: false,
+			layer: -1
+		}
+	};
+}
+
+/**
+ * Fill the fields every 2D/3D draw shares. SpriteRenderer state the effect does
+ * not own (zIndex counter, depth bias, shadow, sizes) is read as it stands.
+ *
+ * @param {object} record to fill
+ * @param {object} effect TwoDEffect or ThreeDEffect
+ * @param {object|null} blend state
+ * @param {boolean} depthWrite
+ * @param {boolean} fog scene fog applies (SpriteRenderer shader)
+ * @returns {object} record
+ */
+export function fillSpriteEffectRecord(record, effect, blend, depthWrite, fog) {
+	const sr = SpriteRenderer;
+	const params = record.params;
+
+	// R-EFX-013: an overlay neither tests depth nor applies the depth correction
+	record.depthTest = effect.overlay === false;
+	record.depthWrite = depthWrite;
+	record.depthCorrection = effect.overlay !== true;
+	record.blend = blend;
+	record.fog = fog;
+
+	params.zIndex = sr.zIndex;
+	params.depthBias = sr.depth;
+	params.shadowFactor = sr.shadow;
+	params.xSize = sr.xSize;
+	params.ySize = sr.ySize;
+	params.ignoreDepthMinCap = sr.ignoreDepthMinCap;
+	params.spriteType = sr.sprite ? sr.sprite.type : 1;
+	params.blendMode = effect.blendMode;
+	params.overlay = effect.overlay;
+	params.layer = -1;
+
+	return record;
+}
+
+const renderSprite = () => {
+	SpriteRenderer.render();
+};
+
+/**
+ * Hand a record to observers (when it draws something) and draw it through
+ * SpriteRenderer.
+ *
+ * @param {Set<function>} sinks record observers
+ * @param {object} record 2D/3D effect draw record
+ */
+export function drawSpriteEffectRecord(sinks, record) {
+	const sr = SpriteRenderer;
+	const params = record.params;
+
+	// SpriteRenderer skips texture-less and fully transparent draws
+	if (sinks.size && record.texture && record.color[3]) {
+		sinks.forEach(sink => sink(record));
+	}
+
+	sr.image.texture = record.texture;
+	sr.image.palette = params.palette;
+	sr.image.size.set(params.paletteSize);
+	sr.position.set(record.position);
+	sr.color.set(record.color);
+	sr.size.set(params.size);
+	sr.offset.set(params.offset);
+	sr.angle = params.angle;
+	sr.zIndex = params.zIndex;
+
+	sr.runWithDepth(record.depthTest, record.depthWrite, !record.depthCorrection, renderSprite);
+}
+
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createSpriteEffectRecord('3d');
+
+/**
+ * @var {boolean} scene fog of the current pass (SpriteRenderer fogs effects)
+ */
+let _fog = false;
+
+/**
+ * @var {Float32Array} per-render effect state shared by the layers of a sprite effect
+ */
+const _position = new Float32Array(3);
+const _color = new Float32Array(4);
+
+/**
+ * @returns {object} a fresh record when observed, otherwise the scratch record
+ */
+function nextRecord() {
+	return _recordSinks.size ? createSpriteEffectRecord('3d') : _scratchRecord;
+}
+
 let _soulStrikeFirstEffect = null;
 
 class ThreeDEffect {
@@ -415,11 +623,9 @@ class ThreeDEffect {
 			return;
 		} //not yet
 
-		if (this.blendMode > 0 && this.blendMode < 16) {
-			gl.blendFunc(gl.SRC_ALPHA, blendMode[this.blendMode]);
-		} else {
-			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-		}
+		// R-EFX-011: GL-order blend table, source always SRC_ALPHA
+		const blend = effectBlendState(this.blendMode);
+		applyEffectBlend(gl, blend);
 
 		const start = tick - this.startTick;
 		const end = this.endTick - this.startTick;
@@ -451,7 +657,6 @@ class ThreeDEffect {
 			this.texture = this.textureList[frame];
 		}
 
-		SpriteRenderer.image.texture = this.texture;
 		SpriteRenderer.zIndex = this.zIndex;
 
 		let posDelta = 0;
@@ -486,7 +691,7 @@ class ThreeDEffect {
 				}
 			}
 		}
-		SpriteRenderer.position[0] = this.position[0] + posDelta;
+		_position[0] = this.position[0] + posDelta;
 		posDelta = 0;
 
 		if (this.rotatePosY > 0) {
@@ -516,7 +721,7 @@ class ThreeDEffect {
 				}
 			}
 		}
-		SpriteRenderer.position[1] = this.position[1] + posDelta;
+		_position[1] = this.position[1] + posDelta;
 		posDelta = 0;
 
 		if (this.retreat !== 0) {
@@ -545,8 +750,8 @@ class ThreeDEffect {
 				linearX = linearX - dx * retreatFactor;
 				linearY = linearY - dy * retreatFactor;
 			}
-			SpriteRenderer.position[0] = this.position[0] + linearX;
-			SpriteRenderer.position[1] = this.position[1] + linearY;
+			_position[0] = this.position[0] + linearX;
+			_position[1] = this.position[1] + linearY;
 		}
 
 		if (this.poszSmooth) {
@@ -575,10 +780,10 @@ class ThreeDEffect {
 			posDelta += this.arc * Math.sin((steps * Math.PI) / 100);
 		}
 
-		SpriteRenderer.position[2] = this.position[2] + posDelta;
+		_position[2] = this.position[2] + posDelta;
 
 		if (this.shadowTexture) {
-			SpriteRenderer.position[2] = Altitude.getCellHeight(SpriteRenderer.position[0], SpriteRenderer.position[1]);
+			_position[2] = Altitude.getCellHeight(_position[0], _position[1]);
 		}
 
 		let alpha = this.alphaMax;
@@ -597,10 +802,10 @@ class ThreeDEffect {
 			alpha = 1.0;
 		}
 
-		SpriteRenderer.color[3] = alpha;
-		SpriteRenderer.color[0] = this.red;
-		SpriteRenderer.color[1] = this.green;
-		SpriteRenderer.color[2] = this.blue;
+		_color[3] = alpha;
+		_color[0] = this.red;
+		_color[1] = this.green;
+		_color[2] = this.blue;
 		let sizeX, sizeY;
 
 		if (this.sizeSmooth) {
@@ -643,16 +848,14 @@ class ThreeDEffect {
 			}
 		}
 
-		SpriteRenderer.size[0] = sizeX;
-		SpriteRenderer.size[1] = sizeY;
-
+		let angle;
 		if (this.rotate) {
 			const angleStep = (this.toAngle - this.angle) / 100;
 			const startAngle = this.angle;
-			const angle = steps * angleStep + startAngle;
-			SpriteRenderer.angle = this.rotateWithCamera ? angle + Camera.angle[1] : angle;
+			const rotated = steps * angleStep + startAngle;
+			angle = this.rotateWithCamera ? rotated + Camera.angle[1] : rotated;
 		} else {
-			SpriteRenderer.angle = this.rotateWithCamera ? this.angle + Camera.angle[1] : this.angle;
+			angle = this.rotateWithCamera ? this.angle + Camera.angle[1] : this.angle;
 		}
 
 		if (this.actRessource && this.spriteRessource) {
@@ -680,24 +883,31 @@ class ThreeDEffect {
 				animations = actions.animations[0];
 			}
 			const layers = animations.layers;
+			const sprite = this.spriteRessource;
+			// Legacy drew layers > 0 through a shallow copy of SpriteRenderer: only the
+			// first layer's angle and sprite reached the renderer. Kept as is.
+			let spriteAngle = angle;
 			let i = 0;
 			const layercount = layers.length;
 			do {
-				let renderer;
-
-				if (i == 0) {
-					renderer = SpriteRenderer;
-				} else {
-					renderer = Object.assign({}, SpriteRenderer);
+				const layer = layers[i];
+				if (i === 0) {
+					SpriteRenderer.sprite = sprite.frames[layer.index];
+					SpriteRenderer.palette = sprite.palette;
 				}
 
-				// Reset channels every layer to effect global color
-				renderer.color[0] = this.red;
-				renderer.color[1] = this.green;
-				renderer.color[2] = this.blue;
-				renderer.color[3] = alpha;
+				const record = fillSpriteEffectRecord(nextRecord(), this, blend, false, _fog);
+				const params = record.params;
+				params.layer = i;
+				record.position.set(_position);
 
-				const layer = layers[i];
+				// Reset channels every layer to effect global color
+				const color = record.color;
+				color[0] = this.red;
+				color[1] = this.green;
+				color[2] = this.blue;
+				color[3] = alpha;
+
 				const ctE = new Int16Array(2);
 				ctE[0] = 0;
 				ctE[1] = 0;
@@ -705,20 +915,21 @@ class ThreeDEffect {
 					ctE[0] = this.position[0] - animations.pos[0].x;
 					ctE[1] = this.position[1] - animations.pos[0].y;
 				}
-				renderer.image.texture = this.spriteRessource.frames[layer.index].texture;
-				renderer.image.palette = null;
-				renderer.sprite = this.spriteRessource.frames[layer.index];
-				renderer.palette = this.spriteRessource.palette;
+				record.texture = sprite.frames[layer.index].texture;
+				params.palette = null;
 				let ctF = layer.index + 0;
-				const ctG = layer.spr_type === 1 || this.spriteRessource.rgba_index === 0;
+				const ctG = layer.spr_type === 1 || sprite.rgba_index === 0;
 				if (!ctG) {
-					renderer.image.palette = this.spriteRessource.texture;
-					renderer.image.size[0] = this.spriteRessource.frames[ctF].width;
-					renderer.image.size[1] = this.spriteRessource.frames[ctF].height;
-				} else if (layer.spr_type === 1) {
-					ctF += this.spriteRessource.old_rgba_index;
+					params.palette = sprite.texture;
+					params.paletteSize[0] = sprite.frames[ctF].width;
+					params.paletteSize[1] = sprite.frames[ctF].height;
+				} else {
+					params.paletteSize.set(SpriteRenderer.image.size);
+					if (layer.spr_type === 1) {
+						ctF += sprite.old_rgba_index;
+					}
 				}
-				const frame = this.spriteRessource.frames[ctF];
+				const frame = sprite.frames[ctF];
 				let width = frame.width;
 				let height = frame.height;
 				width *= (layer.scale[0] / 100) * sizeX;
@@ -726,52 +937,46 @@ class ThreeDEffect {
 				if (layer.is_mirror) {
 					width = -width;
 				}
-				renderer.color[0] *= layer.color[0];
-				renderer.color[1] *= layer.color[1];
-				renderer.color[2] *= layer.color[2];
-				renderer.color[3] *= layer.color[3];
-				if (!this.rotateToTarget) {
-					renderer.angle += layer.angle;
+				color[0] *= layer.color[0];
+				color[1] *= layer.color[1];
+				color[2] *= layer.color[2];
+				color[3] *= layer.color[3];
+				if (i === 0 && !this.rotateToTarget) {
+					spriteAngle += layer.angle;
 				}
-				renderer.offset[0] = layer.pos[0] + ctE[0];
-				renderer.offset[1] = layer.pos[1] + ctE[1];
-				renderer.size[0] = width;
-				renderer.size[1] = height;
+				params.angle = spriteAngle;
+				params.offset[0] = layer.pos[0] + ctE[0];
+				params.offset[1] = layer.pos[1] + ctE[1];
+				params.size[0] = width;
+				params.size[1] = height;
 
 				// default true, false, false
-				SpriteRenderer.runWithDepth(this.overlay === false, false, this.overlay === true, () => {
-					SpriteRenderer.render();
-				});
+				drawSpriteEffectRecord(_recordSinks, record);
 
 				++i;
 			} while (i < layercount);
 		} else {
+			const record = fillSpriteEffectRecord(nextRecord(), this, blend, false, _fog);
+			const params = record.params;
+			record.texture = this.texture;
+			record.position.set(_position);
+			record.color.set(_color);
+			params.size[0] = sizeX;
+			params.size[1] = sizeY;
+			params.angle = angle;
+			// not owned by plain 3D effects: whatever SpriteRenderer holds
+			params.offset.set(SpriteRenderer.offset);
+			params.palette = SpriteRenderer.image.palette;
+			params.paletteSize.set(SpriteRenderer.image.size);
+
 			// default true, false, false
-			SpriteRenderer.runWithDepth(this.overlay === false, false, this.overlay === true, () => {
-				SpriteRenderer.render();
-			});
+			drawSpriteEffectRecord(_recordSinks, record);
 		}
 
 		this.needCleanUp = this.endTick < tick;
 	}
 
 	static init(gl) {
-		blendMode[1] = gl.ZERO;
-		blendMode[2] = gl.ONE;
-		blendMode[3] = gl.SRC_COLOR;
-		blendMode[4] = gl.ONE_MINUS_SRC_COLOR;
-		blendMode[5] = gl.DST_COLOR;
-		blendMode[6] = gl.ONE_MINUS_DST_COLOR;
-		blendMode[7] = gl.SRC_ALPHA;
-		blendMode[8] = gl.ONE_MINUS_SRC_ALPHA;
-		blendMode[9] = gl.DST_ALPHA;
-		blendMode[10] = gl.ONE_MINUS_DST_ALPHA;
-		blendMode[11] = gl.CONSTANT_COLOR;
-		blendMode[12] = gl.ONE_MINUS_CONSTANT_COLOR;
-		blendMode[13] = gl.CONSTANT_ALPHA;
-		blendMode[14] = gl.ONE_MINUS_CONSTANT_ALPHA;
-		blendMode[15] = gl.SRC_ALPHA_SATURATE;
-
 		this.ready = true;
 		this.renderBeforeEntities = false;
 	}
@@ -780,8 +985,21 @@ class ThreeDEffect {
 		this.ready = false;
 	}
 
+	/**
+	 * Observe every 3D effect draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
+	}
+
 	static beforeRender(gl, modelView, projection, fog, tick) {
 		SpriteRenderer.bind3DContext(gl, modelView, projection, fog);
+		_fog = Boolean(fog.use && fog.exist);
 		SpriteRenderer.shadow = 1;
 		SpriteRenderer.angle = 0;
 		SpriteRenderer.size[0] = 100;

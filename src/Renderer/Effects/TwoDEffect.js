@@ -2,6 +2,13 @@ import WebGL from 'Utils/WebGL.js';
 import Client from 'Core/Client.js';
 import SpriteRenderer from 'Renderer/SpriteRenderer.js';
 import Camera from 'Renderer/Camera.js';
+import {
+	applyEffectBlend,
+	createSpriteEffectRecord,
+	drawSpriteEffectRecord,
+	effectBlendState,
+	fillSpriteEffectRecord
+} from 'Renderer/Effects/ThreeDEffect.js';
 
 function getRandomIntInclusive(min, max) {
 	min = Math.ceil(min);
@@ -9,7 +16,20 @@ function getRandomIntInclusive(min, max) {
 	return Math.floor(Math.random() * (max - min + 1) + min); //The maximum is inclusive and the minimum is inclusive
 }
 
-const blendMode = {};
+/**
+ * @var {Set<function>} record observers
+ */
+const _recordSinks = new Set();
+
+/**
+ * @var {object} reused record when nobody observes (no per-draw allocation)
+ */
+const _scratchRecord = createSpriteEffectRecord('2d');
+
+/**
+ * @var {boolean} scene fog of the current pass (SpriteRenderer fogs effects)
+ */
+let _fog = false;
 
 let shadow_index = 0;
 
@@ -442,14 +462,25 @@ class TwoDEffect {
 			steps = 100;
 		}
 
-		if (this.blendMode > 0 && this.blendMode < 16) {
-			gl.blendFunc(gl.SRC_ALPHA, blendMode[this.blendMode]);
-		} else {
-			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-		}
+		// R-EFX-011: GL-order blend table, source always SRC_ALPHA
+		const blend = effectBlendState(this.blendMode);
+		applyEffectBlend(gl, blend);
 
-		SpriteRenderer.image.texture = this.texture;
 		SpriteRenderer.zIndex = this.zIndex;
+
+		// Observed draws get their own record; otherwise reuse one (no per-draw allocation).
+		const record = fillSpriteEffectRecord(
+			_recordSinks.size ? createSpriteEffectRecord('2d') : _scratchRecord,
+			this,
+			blend,
+			this.overlay === false,
+			_fog
+		);
+		const params = record.params;
+		record.texture = this.texture;
+		// not owned by 2D effects: whatever SpriteRenderer holds
+		params.palette = SpriteRenderer.image.palette;
+		params.paletteSize.set(SpriteRenderer.image.size);
 
 		const cRad = (Camera.angle[1] * Math.PI) / 180;
 
@@ -501,8 +532,8 @@ class TwoDEffect {
 		}
 
 		//Rotate coordinates with camera for 2D effect
-		SpriteRenderer.position[0] = this.position[0] + (currentX * Math.cos(cRad) - currentY * Math.sin(cRad));
-		SpriteRenderer.position[1] = this.position[1] + (currentY * Math.cos(cRad) + currentX * Math.sin(cRad));
+		record.position[0] = this.position[0] + (currentX * Math.cos(cRad) - currentY * Math.sin(cRad));
+		record.position[1] = this.position[1] + (currentY * Math.cos(cRad) + currentX * Math.sin(cRad));
 
 		let currentZ = 0;
 		if (this.poszSmooth) {
@@ -526,7 +557,7 @@ class TwoDEffect {
 				currentZ = this.poszStart;
 			}
 		}
-		SpriteRenderer.position[2] = this.position[2] + currentZ;
+		record.position[2] = this.position[2] + currentZ;
 
 		// Offset
 		let currentOffsetX = 0;
@@ -575,8 +606,8 @@ class TwoDEffect {
 			}
 		}
 
-		SpriteRenderer.offset[0] = currentOffsetX;
-		SpriteRenderer.offset[1] = currentOffsetY;
+		params.offset[0] = currentOffsetX;
+		params.offset[1] = currentOffsetY;
 
 		// Color
 		let alpha = this.alphaMax;
@@ -593,10 +624,10 @@ class TwoDEffect {
 			alpha = 1;
 		}
 
-		SpriteRenderer.color[3] = alpha;
-		SpriteRenderer.color[0] = this.red;
-		SpriteRenderer.color[1] = this.green;
-		SpriteRenderer.color[2] = this.blue;
+		record.color[3] = alpha;
+		record.color[0] = this.red;
+		record.color[1] = this.green;
+		record.color[2] = this.blue;
 
 		// Size
 		let currentXSize, currentYSize;
@@ -642,23 +673,21 @@ class TwoDEffect {
 			}
 		}
 
-		SpriteRenderer.size[0] = currentXSize;
-		SpriteRenderer.size[1] = currentYSize;
+		params.size[0] = currentXSize;
+		params.size[1] = currentYSize;
 
 		// Angle
 		if (this.rotate) {
 			const step = (this.toAngle - this.angle) / 100;
 			const startAngle = this.angle;
 			const angle = steps * step + startAngle;
-			SpriteRenderer.angle = angle;
+			params.angle = angle;
 		} else {
-			SpriteRenderer.angle = this.angle;
+			params.angle = this.angle;
 		}
 
 		// default true, true, false
-		SpriteRenderer.runWithDepth(this.overlay === false, this.overlay === false, this.overlay === true, () => {
-			SpriteRenderer.render();
-		});
+		drawSpriteEffectRecord(_recordSinks, record);
 
 		if (this.ownerEntity) {
 			if (this.endTick < tick) {
@@ -668,7 +697,7 @@ class TwoDEffect {
 					this.spriteName + '-' + this.sizeStartX + '-' + this.rotateLate
 				);
 				if (attachment) {
-					attachment.position = new Int16Array([SpriteRenderer.position[0], SpriteRenderer.position[1]]);
+					attachment.position = new Int16Array([record.position[0], record.position[1]]);
 				}
 			}
 		}
@@ -676,22 +705,6 @@ class TwoDEffect {
 	}
 
 	static init(gl) {
-		blendMode[1] = gl.ZERO;
-		blendMode[2] = gl.ONE;
-		blendMode[3] = gl.SRC_COLOR;
-		blendMode[4] = gl.ONE_MINUS_SRC_COLOR;
-		blendMode[5] = gl.DST_COLOR;
-		blendMode[6] = gl.ONE_MINUS_DST_COLOR;
-		blendMode[7] = gl.SRC_ALPHA;
-		blendMode[8] = gl.ONE_MINUS_SRC_ALPHA;
-		blendMode[9] = gl.DST_ALPHA;
-		blendMode[10] = gl.ONE_MINUS_DST_ALPHA;
-		blendMode[11] = gl.CONSTANT_COLOR;
-		blendMode[12] = gl.ONE_MINUS_CONSTANT_COLOR;
-		blendMode[13] = gl.CONSTANT_ALPHA;
-		blendMode[14] = gl.ONE_MINUS_CONSTANT_ALPHA;
-		blendMode[15] = gl.SRC_ALPHA_SATURATE;
-
 		this.ready = true;
 		this.renderBeforeEntities = false;
 	}
@@ -700,8 +713,21 @@ class TwoDEffect {
 		this.ready = false;
 	}
 
+	/**
+	 * Observe every 2D effect draw as a backend-neutral record. Each observed draw
+	 * gets a fresh record object, so sinks may keep it.
+	 *
+	 * @param {function} sink called with each draw record
+	 * @returns {function} unsubscribe
+	 */
+	static addRecordSink(sink) {
+		_recordSinks.add(sink);
+		return () => _recordSinks.delete(sink);
+	}
+
 	static beforeRender(gl, modelView, projection, fog, tick) {
 		SpriteRenderer.bind3DContext(gl, modelView, projection, fog);
+		_fog = Boolean(fog.use && fog.exist);
 		SpriteRenderer.shadow = 1;
 		SpriteRenderer.angle = 0;
 		SpriteRenderer.size[0] = 100;
