@@ -4,7 +4,8 @@
  *
  * - drawX/drawY: 2D origin used when baking each frame into its 50x50 cell.
  * - startX/startY: hotspot; the cursor element is translated by (-startX, -startY).
- * - delayMult: frame delay multiplier (R-UI-005: DEFAULT 2.0, TARGET 0.5, others 1.0).
+ * - delayMult: frame delay multiplier (R-UI-005, legacy table per HITL round 2: DEFAULT 2.0,
+ *   TARGET 0.5, the other listed types 1.0; unlisted types use DEFAULT's 2.0).
  */
 export const CURSOR_ACTION = Object.freeze({
 	DEFAULT: 0,
@@ -41,11 +42,8 @@ export const CURSOR_INFO = Object.freeze({
 
 /**
  * Per-type info; unknown types (CLICK, LOCK, ATTACK, ...) fall back to DEFAULT
- * for hotspot and draw origin.
- *
- * Note: legacy falls back to DEFAULT's delayMult (2.0) for types missing from the
- * table, while the spec text says "others 1.0". The table lookup is reproduced
- * as-is; the acceptance test pins the spec wording for the listed types only.
+ * for hotspot, draw origin and delayMult (2.0), as legacy CursorManager.js:230 does.
+ * HITL round 2 kept this legacy table over the spec wording "others 1.0".
  *
  * @param {number} type
  * @returns {Readonly<CursorInfo>}

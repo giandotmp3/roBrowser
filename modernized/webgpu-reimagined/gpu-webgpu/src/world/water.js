@@ -48,5 +48,11 @@ export function shadeWater(tex, opacity) {
 	return [tex[0], tex[1], tex[2], opacity];
 }
 
-/** R-MAP-011: water pipeline depth state; drawn after opaque entities. */
+/**
+ * R-MAP-011: water pipeline depth state; drawn after opaque entities.
+ * Water geometry is not rebuilt here: uploadWater consumes the legacy MAP payload built by
+ * Loaders/Ground.js:547-585 unchanged, so the corner convention is legacy (HITL round 2,
+ * to be confirmed by a world-record diff). gpu-webgl2 world/water.js mirrors it as
+ * `hasWaterQuad` / `waterQuadVertices`.
+ */
 export const WATER_DEPTH = Object.freeze({ depthTest: true, depthWrite: false });

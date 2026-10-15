@@ -64,17 +64,61 @@ export function waterAlpha(type) {
 	return WATER_OPAQUE_TYPES.includes(type) ? 1.0 : WATER_OPACITY_DEFAULT;
 }
 
-/** R-MAP-011: a water quad exists only where at least one ground corner is below the surface. */
-export function hasWaterQuad(cornerHeights, waterLevel) {
-	// Heights are in RO's inverted-Y convention: "below" means larger value.
-	return cornerHeights.some(h => h > waterLevel);
+/**
+ * R-MAP-011 corner convention (HITL round 2: legacy convention, to be confirmed by a
+ * world-record diff). Mirrors legacy Loaders/Ground.js:547-585, which builds the water
+ * mesh the backends receive in the MAP payload.
+ *
+ * A water quad exists where at least one of the cell's four ground corners is below the
+ * wave crest. Heights use RO's inverted-Y convention ("below" means a larger value), and
+ * legacy tests against `level - waveHeight`, not `level` (both already /5, R-MAP-008).
+ * @param {number[]} cornerHeights  the cell's four corner heights
+ * @param {number} waterLevel
+ * @param {number} [waveHeight]
+ */
+export function hasWaterQuad(cornerHeights, waterLevel, waveHeight = 0) {
+	return cornerHeights.some(h => h > waterLevel - waveHeight);
 }
 
-/** R-MAP-011: UVs repeat every 5 ground tiles. */
+/** R-MAP-011: UVs repeat every 5 ground tiles (near corner of tile x, y). */
 export function waterUV(tileX, tileY) {
 	return [
 		(tileX % WATER_UV_REPEAT_TILES) / WATER_UV_REPEAT_TILES,
 		(tileY % WATER_UV_REPEAT_TILES) / WATER_UV_REPEAT_TILES
+	];
+}
+
+/**
+ * R-MAP-011 legacy far-corner convention: the x + 1 / y + 1 corners use `|| 1`, so a
+ * coordinate that wraps to 0 on a 5-tile boundary reads 1 instead; the near (x, y)
+ * corners keep 0. Each quad therefore spans [u, u + 0.2] without a backwards wrap.
+ * @param {number} tile  x + 1 or y + 1
+ */
+const farUV = tile => (tile % WATER_UV_REPEAT_TILES) / WATER_UV_REPEAT_TILES || 1;
+
+/**
+ * R-MAP-011: the six water vertices of cell (x, y), `[x, level, z, u, v]` each, in legacy
+ * order (Ground.js:555-585): two triangles (x0,y0)(x1,y0)(x1,y1) and (x1,y1)(x0,y1)(x0,y0),
+ * at world scale 2 per tile.
+ * @param {number} x
+ * @param {number} y
+ * @param {number} waterLevel
+ */
+export function waterQuadVertices(x, y, waterLevel) {
+	const [u0, v0] = waterUV(x, y);
+	const u1 = farUV(x + 1);
+	const v1 = farUV(y + 1);
+	const x0 = x * 2;
+	const x1 = (x + 1) * 2;
+	const z0 = y * 2;
+	const z1 = (y + 1) * 2;
+	return [
+		[x0, waterLevel, z0, u0, v0],
+		[x1, waterLevel, z0, u1, v0],
+		[x1, waterLevel, z1, u1, v1],
+		[x1, waterLevel, z1, u1, v1],
+		[x0, waterLevel, z1, u0, v1],
+		[x0, waterLevel, z0, u0, v0]
 	];
 }
 

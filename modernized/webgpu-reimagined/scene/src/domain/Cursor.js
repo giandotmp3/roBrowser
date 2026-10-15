@@ -6,8 +6,11 @@ import { notImplemented } from '../errors.js';
  * frame cadence, magnetism and the standalone loop when the scene loop is stopped.
  */
 
-/** @param {string} type */
-export const cursorSpeedMultiplier = type => CURSOR_SPEED[type] ?? CURSOR_SPEED.OTHER;
+/**
+ * Unlisted types (CLICK, LOCK, ATTACK, ...) fall back to DEFAULT, 2.0 (legacy table, HITL round 2).
+ * @param {string} type
+ */
+export const cursorSpeedMultiplier = type => CURSOR_SPEED[type] ?? CURSOR_SPEED.DEFAULT;
 
 /**
  * @param {object} p

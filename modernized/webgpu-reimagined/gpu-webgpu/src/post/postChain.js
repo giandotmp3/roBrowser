@@ -2,6 +2,8 @@ import { BLIND, BLOOM, BLUR_MASK, FXAA } from '../constants.js';
 import { mix, smoothstep } from '../math.js';
 import { NotImplementedError } from '../errors.js';
 
+export { fxaaAcrossOffset, fxaaLuma, fxaaReference, fxaaSubpixH } from './fxaa.js';
+
 /** R-PP-001 module order. */
 export const POST_ORDER = Object.freeze([
 	'Bloom',
@@ -115,8 +117,8 @@ export function blurMask(uv, settings) {
 }
 
 /**
- * R-PP-006 FIX: fxaaSubpix is uploaded AND used by shaders/post/fxaa.wgsl
- * (legacy uploaded it but never read it).
+ * R-PP-006 FIX (HITL round 2): fxaaSubpix drives the FXAA 3.11 subpixel term in
+ * shaders/post/fxaa.wgsl (CPU reference: post/fxaa.js). Legacy uploaded it but never read it.
  */
 export function fxaaUniforms(settings) {
 	const s = { ...POST_DEFAULTS, ...settings };

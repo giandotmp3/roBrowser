@@ -6,6 +6,7 @@ import waterFrag from './water.frag?raw';
 import modelsFrag from './models.frag?raw';
 import strFrag from './str.frag?raw';
 import gr2Frag from './gr2.frag?raw';
+import fxaaFrag from './fxaa.frag?raw';
 
 const INCLUDES = Object.freeze({ 'fog.glsl': fog });
 
@@ -30,5 +31,6 @@ export const SHADERS = Object.freeze({
 	waterFrag: resolveIncludes(waterFrag),
 	modelsFrag: resolveIncludes(modelsFrag),
 	strFrag: resolveIncludes(strFrag),
-	gr2Frag
+	gr2Frag,
+	fxaaFrag
 });

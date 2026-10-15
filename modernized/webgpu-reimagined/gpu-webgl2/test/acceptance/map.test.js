@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyFog, fogUniforms } from '../../src/world/fog.js';
 import { composeGroundAtlas, groundAtlasLayout, lightmapBlockUV, lightmapColor, shadeGround, tileColorRgba } from '../../src/world/ground.js';
-import { hasWaterQuad, waterAlpha, waterFrameIndex, waterParamsFromRsw, waterUV, waveOffset, waveY, WATER_PASS_STATE } from '../../src/world/water.js';
+import { hasWaterQuad, waterAlpha, waterFrameIndex, waterParamsFromRsw, waterQuadVertices, waterUV, waveOffset, waveY, WATER_PASS_STATE } from '../../src/world/water.js';
 import { batchStaticModels, computeRsmNormals, MODEL_PASS_STATE, normalMode, rsmAlpha, rsmInstanceMatrix, shadeModel } from '../../src/world/models.js';
 import { alphaModeOpaqueDiscard, ditherDiscard, FADED_PASS_STATE, OccluderFade, occluderFadeActive, occluderVisibility, queryKeepsFragment } from '../../src/world/occluderFade.js';
 import { GRID_MATERIAL, selectorQuads } from '../../src/world/gridSelector.js';
@@ -141,6 +141,32 @@ describe('R-MAP-011 water geometry and depth', () => {
 	});
 	it('UVs repeat every 5 tiles', () => {
 		expect(waterUV(5, 7)).toEqual([0, 2 / 5]);
+	});
+	// HITL round 2: the rebuild keeps the legacy corner convention (Loaders/Ground.js:547-585);
+	// to be confirmed by a world-record diff once world records are seamed.
+	it('legacy corner convention (HITL round 2): quad when a corner is below level - waveHeight', () => {
+		expect(hasWaterQuad([1, 1, 1, 1], 2, 0.5)).toBe(false);
+		expect(hasWaterQuad([1, 1, 1.6, 1], 2, 0.5)).toBe(true); // below the crest (1.5), above the level (2)
+		expect(hasWaterQuad([1, 1, 1.4, 1], 2, 0.5)).toBe(false);
+	});
+	it('legacy corner convention (HITL round 2): far corners use `|| 1`, vertex order matches Ground.js', () => {
+		// Transcription of Ground.js:555-585.
+		const legacy = (x, y, L) => [
+			[(x + 0) * 2, L, (y + 0) * 2, ((x + 0) % 5) / 5, ((y + 0) % 5) / 5],
+			[(x + 1) * 2, L, (y + 0) * 2, ((x + 1) % 5) / 5 || 1, ((y + 0) % 5) / 5],
+			[(x + 1) * 2, L, (y + 1) * 2, ((x + 1) % 5) / 5 || 1, ((y + 1) % 5) / 5 || 1],
+			[(x + 1) * 2, L, (y + 1) * 2, ((x + 1) % 5) / 5 || 1, ((y + 1) % 5) / 5 || 1],
+			[(x + 0) * 2, L, (y + 1) * 2, ((x + 0) % 5) / 5, ((y + 1) % 5) / 5 || 1],
+			[(x + 0) * 2, L, (y + 0) * 2, ((x + 0) % 5) / 5, ((y + 0) % 5) / 5]
+		];
+		for (let y = 0; y < 11; y++) {
+			for (let x = 0; x < 11; x++) {
+				expect(waterQuadVertices(x, y, -3.5)).toEqual(legacy(x, y, -3.5));
+			}
+		}
+		// The tile before a 5-tile boundary ends at u = 1, not 0; the next one starts at 0.
+		expect(waterQuadVertices(4, 0, 0)[1][3]).toBe(1);
+		expect(waterQuadVertices(5, 0, 0)[0][3]).toBe(0);
 	});
 	it('depth test on, depth write off', () => {
 		expect(WATER_PASS_STATE).toMatchObject({ depthTest: true, depthWrite: false });

@@ -91,7 +91,7 @@ describe('PP: post-processing', () => {
 		expect(u).toMatchObject({ edgeThreshold: 0.125, edgeThresholdMin: 0, span: 8, subpix: 0.75 });
 		expect(u.reduceMul).toBeCloseTo(1 / 32);
 		expect(u.reduceMin).toBeCloseTo(1 / 128);
-		expect(SHADERS.FXAA).toMatch(/mix\(1\.0, contrast, u\.subpix\)/);
+		expect(SHADERS.FXAA).toContain('let subpix_h = subpix_g * u.subpix;'); // FXAA 3.11 term, HITL round 2 (pp_fxaa.test.js)
 	});
 
 	it('R-PP-007: FIX (legacy R-PP-007 `|| 1.0` made sharpening 0 impossible): casSharpening 0 is honoured; peak = 8 − 3·contrast', () => {

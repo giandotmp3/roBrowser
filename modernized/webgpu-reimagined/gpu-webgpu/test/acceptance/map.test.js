@@ -130,6 +130,8 @@ describe('MAP: water', () => {
 		expect(shadeWater([0.2, 0.3, 0.4, 0.1], waterOpacity(0))).toEqual([0.2, 0.3, 0.4, 0.8]);
 	});
 
+	// R-MAP-011 corner convention: legacy (HITL round 2). Water geometry comes unchanged from the legacy
+	// MAP payload (Loaders/Ground.js:547-585), to be confirmed by a world-record diff; gpu-webgl2 tests the mirror.
 	it('R-MAP-011: water is drawn after opaque entities with depth test on and depth write off', async () => {
 		const { MAP_FRAME_STEPS } = await import('../../src/index.js');
 		const steps = MAP_FRAME_STEPS.map(s => s.step);

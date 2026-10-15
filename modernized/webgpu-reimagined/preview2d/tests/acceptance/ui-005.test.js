@@ -24,10 +24,14 @@ describe('R-UI-005 game cursor: animation rate', () => {
 		expect(frameAt(CURSOR_ACTION.TALK, 100)).toBe(1);
 	});
 
-	// Spec wording: "others 1.0". Legacy table lookup falls back to DEFAULT (2.0) for
-	// types missing from ActionInformations (CLICK, LOCK, ATTACK). Pending HITL clarification.
-	it.fails('[R-UI-005] PENDING: unlisted types (CLICK/LOCK/ATTACK) animate at 1.0x per spec wording', () => {
-		expect(cursorInfo(CURSOR_ACTION.CLICK).delayMult).toBe(1.0);
+	// HITL round 2: the legacy table wins (CursorManager.js:230, 317-323). Types missing from
+	// ActionInformations (CLICK, LOCK, ATTACK, ...) use DEFAULT's multiplier, 2.0, not the spec's "others 1.0".
+	it('[R-UI-005] unlisted types (CLICK/LOCK/ATTACK) use the DEFAULT multiplier 2.0 (legacy table, HITL round 2)', () => {
+		for (const t of [CURSOR_ACTION.CLICK, CURSOR_ACTION.LOCK, CURSOR_ACTION.ATTACK, 99]) {
+			expect(cursorInfo(t).delayMult).toBe(2.0);
+		}
+		expect(frameAt(CURSOR_ACTION.CLICK, 199)).toBe(0);
+		expect(frameAt(CURSOR_ACTION.CLICK, 200)).toBe(1);
 	});
 
 	it('[R-UI-005] looping cursors wrap; one-shot cursors clamp at their last frame', () => {

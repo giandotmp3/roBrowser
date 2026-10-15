@@ -100,16 +100,26 @@ describe('R-UI-004 signboards', () => {
 });
 
 describe('R-UI-005 game cursor', () => {
-	it('[R-UI-005] frame rate = ACT delay x per-type multiplier (DEFAULT 2.0, TARGET 0.5, others 1.0)', () => {
+	it('[R-UI-005] frame rate = ACT delay x legacy per-type multiplier (DEFAULT 2.0, TARGET 0.5, listed others 1.0; HITL round 2)', () => {
 		expect(cursorSpeedMultiplier('DEFAULT')).toBe(2.0);
 		expect(cursorSpeedMultiplier('TARGET')).toBe(0.5);
 		expect(cursorSpeedMultiplier('TALK')).toBe(1.0);
+		for (const t of ['WARP', 'ROTATE', 'PICK', 'NOWALK']) {
+			expect(cursorSpeedMultiplier(t)).toBe(1.0);
+		}
 		expect(cursorFrame({ elapsed: 400, actDelay: 100, type: 'DEFAULT', frameCount: 10, oneShot: false })).toBe(2);
 	});
 
 	it('[R-UI-005] one-shot cursors clamp at their last frame', () => {
 		expect(cursorFrame({ elapsed: 10_000, actDelay: 100, type: 'CLICK', frameCount: 4, oneShot: true })).toBe(3);
-		expect(cursorFrame({ elapsed: 500, actDelay: 100, type: 'CLICK', frameCount: 4, oneShot: false })).toBe(1);
+		expect(cursorFrame({ elapsed: 500, actDelay: 100, type: 'TALK', frameCount: 4, oneShot: false })).toBe(1);
+	});
+
+	it('[R-UI-005] unlisted types (CLICK/LOCK/ATTACK) use the DEFAULT multiplier 2.0 (legacy table, HITL round 2)', () => {
+		for (const t of ['CLICK', 'LOCK', 'ATTACK']) {
+			expect(cursorSpeedMultiplier(t)).toBe(2.0);
+		}
+		expect(cursorFrame({ elapsed: 500, actDelay: 100, type: 'CLICK', frameCount: 4, oneShot: false })).toBe(2);
 	});
 
 	it('[R-UI-005] magnetism snaps to hovered mob (snap) or item (itemsnap) centre', () => {

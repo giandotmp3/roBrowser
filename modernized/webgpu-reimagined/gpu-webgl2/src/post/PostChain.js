@@ -1,6 +1,8 @@
 import { BLIND, BLOOM, BLUR_MASK, FXAA, PERF_SCENE_SCALE, POST_ORDER } from '../constants.js';
 import { smoothstep } from '../math.js';
 
+export { fxaaAcrossOffset, fxaaLuma, fxaaReference, fxaaSubpixH } from './fxaa.js';
+
 /** R-PP-012: every module defaults to off. */
 export const POST_DEFAULTS = Object.freeze({
 	bloom: false,
@@ -80,7 +82,10 @@ export function blurMask(distFromCentre, intensity) {
 	return { mask, offsetTexels: mask * intensity * 0.5 };
 }
 
-/** R-PP-006 [FLAG → fixed]: `fxaaSubpix` is now consumed by the shader. */
+/**
+ * R-PP-006 [FLAG → fixed, HITL round 2]: `fxaaSubpix` drives the FXAA 3.11 subpixel term in
+ * shaders/fxaa.frag (CPU reference: post/fxaa.js). Legacy uploaded it but never read it.
+ */
 export function fxaaUniforms(settings) {
 	return {
 		edgeThreshold: settings.fxaaEdgeThreshold,

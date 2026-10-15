@@ -124,9 +124,17 @@ export const SIGNBOARD = Object.freeze({
 	ICON_ONLY: Object.freeze({ lift: 120 / 35, shiftLeftPx: 15 })
 });
 
-/** R-UI-005 cursor frame-rate multipliers. */
+/**
+ * R-UI-005 cursor frame-rate multipliers: the legacy table (CursorManager.js:317-323), kept
+ * by HITL round 2. Types missing from it use DEFAULT (2.0), as legacy CursorManager.js:230 does;
+ * must match preview2d CURSOR_INFO.delayMult.
+ */
 export const CURSOR_SPEED = Object.freeze({
 	DEFAULT: 2.0,
+	TALK: 1.0,
+	WARP: 1.0,
+	ROTATE: 1.0,
+	PICK: 1.0,
 	TARGET: 0.5,
-	OTHER: 1.0
+	NOWALK: 1.0
 });
