@@ -1533,6 +1533,31 @@ Source paths below are relative to `src/`.
 40. **R-EFX-009:** keyframe `uv` is ignored; the quad always samples the full texture (`StrEffect.js:203-217`).
 41. **[SME] R-EFX-008:** D3D codes 0/12/13 call `blendFunc(undefined)` (INVALID_ENUM), so the previous blend stays. render-records falls back to normal alpha. This is kept out of the diff until decided.
 
+**Found by the 3D/2D and Cylinder/QuadHorn record-diffs** (2026-10-15):
+
+42. **R-EFX-003:**
+    - A Cylinder finishes when `endTick < tick`, *after* drawing that frame, so an open-ended cylinder (endTick −1) draws exactly one frame (`Cylinder.js:370`).
+    - EffectManager has no start gate, so effects draw before `startTick` with negative elapsed time (negative heights or alpha).
+43. **R-EFX-012:** Cylinder's `fade` is one flag for both fade in and fade out, and it is unclamped (`Cylinder.js:288`). 2D effects have no sparkling.
+44. **R-EFX-011:**
+    - QuadHorn's `blendMode || 1` maps 0 or unset to ZERO, not normal alpha (`QuadHorn.js:49`).
+    - QuadHorn's `offsetZ || 0.5` turns 0 into 0.5 (offsetX/Y use `??`) (`QuadHorn.js:69-77`).
+45. **R-EFX-013:**
+    - Cylinder always tests depth and never writes it (`Cylinder.js:366`). QuadHorn inherits the pass's depth state.
+    - The 2D depth bias is 10 and the 3D bias is 0.
+    - Cylinder, QuadHorn, 2D and 3D effects all follow scene fog (unlike STR before the R-EFX-010 fix).
+46. **3D sprite effects:**
+    - Layers after the first lose their own angle (`ThreeDEffect.js:945`).
+    - The anchor is `Int16(worldPos − anim.pos)`, mixing world units into a pixel offset (`:915`).
+    - Parity is kept for both.
+47. **[PROPOSED FLAG, parity kept pending HITL] 3D state leak:** a plain 3D effect drawn after a sprite-backed one in the same pass inherits its offset and palette (`ThreeDEffect.js:968-969`).
+48. **2D:**
+    - `angleDelta` multiplies the wrong ID, giving NaN; it is unused by the table (`TwoDEffect.js:382`).
+    - `durationRand` mutates the shared EffectTable entry, changing the *next* spawn; the rebuild does not mutate (`:418`).
+    - The shadow attachment key never matches, so it is never moved or removed (`:694-697`).
+49. **[SME] Invalid blend codes** for 2D/3D/cylinder/QuadHorn (in-range non-integers) give an undefined GL factor in legacy, the same class of issue as #41.
+50. **Leaks fixed by construction:** a per-instance texture in TwoD/ThreeD (`ThreeDEffect.js:595,607`; `TwoDEffect.js:441`) and a per-instance buffer in Cylinder (`Cylinder.js:181,199,406`). The rebuild uses residency and a shared mesh cache.
+
 ### Visual constants (file:line)
 | Constant | Value | Source |
 |---|---|---|
